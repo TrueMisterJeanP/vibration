@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="vibration-build" content="call-ui-v114">
+  <script src="/js/theme.js"></script>
+  <title>Vibration</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <main id="app-shell" hidden>
+    <aside id="sidebar">
+      <header class="sidebar-header">
+        <div class="brand">
+          <button id="close-sidebar-logo" class="brand-logo-button sidebar-navigation-button" type="button"
+            title="Revenir aux messages" aria-label="Revenir à la zone des messages">
+            <img class="header-avatar" alt="" hidden><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4.5 21a7.5 7.5 0 0 1 15 0"></path></svg><span class="menu-mark" aria-hidden="true">×</span>
+          </button>
+          <button id="profile-button" class="profile-trigger" type="button" title="Ouvrir mon profil">
+            <strong>Vibration</strong><small id="identity-label">Chargement…</small>
+          </button>
+        </div>
+        <button id="logout-button" class="icon-button" title="Déconnexion">↪</button>
+      </header>
+      <div class="connection-row"><span id="ws-dot"></span><span id="ws-label">Hors ligne</span></div>
+      <a id="admin-link" class="admin-link" href="/admin.html" hidden>Administration</a>
+      <div class="actions">
+        <button id="contact-button" class="outline">+ Contact</button>
+        <button id="group-button" class="outline">+ Groupe</button>
+      </div>
+      <nav id="conversation-list" aria-label="Conversations"></nav>
+    </aside>
+    <section id="chat-panel">
+      <header class="chat-header">
+        <button id="open-sidebar-logo" class="brand-logo-button mobile-navigation-button" type="button"
+          title="Afficher les contacts et groupes" aria-label="Afficher les contacts, groupes et conversations"
+          aria-controls="sidebar" aria-expanded="false"><img class="header-avatar" alt="" hidden><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4.5 21a7.5 7.5 0 0 1 15 0"></path></svg><span class="menu-mark" aria-hidden="true">☰</span></button>
+        <div><strong id="chat-title">Sélectionnez une conversation</strong><small id="chat-description"></small><small id="typing-label"></small></div>
+        <div class="call-buttons" aria-label="Appels">
+          <button id="audio-call-button" class="icon-button" type="button" title="Appel audio" aria-label="Appel audio" disabled><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.11 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.95.34 1.88.64 2.77a2 2 0 0 1-.45 2.11L8.03 9.87a16 16 0 0 0 6.1 6.1l1.27-1.27a2 2 0 0 1 2.11-.45c.89.3 1.82.52 2.77.64A2 2 0 0 1 22 16.92Z"></path></svg></button>
+          <button id="video-call-button" class="icon-button" type="button" title="Appel vidéo" aria-label="Appel vidéo" disabled><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 10.5V6.8A2.8 2.8 0 0 0 12.2 4H5.8A2.8 2.8 0 0 0 3 6.8v10.4A2.8 2.8 0 0 0 5.8 20h6.4a2.8 2.8 0 0 0 2.8-2.8v-3.7l4.15 3.05A1.15 1.15 0 0 0 21 15.62V8.38a1.15 1.15 0 0 0-1.85-.93L15 10.5Z"></path></svg></button>
+        </div>
+      </header>
+      <div id="message-list"><div id="empty-chat">Ajoutez un contact ou créez un groupe pour commencer.</div></div>
+      <div id="thread-typing-label" aria-live="polite" hidden></div>
+      <div id="call-banner" class="call-banner" hidden>
+        <span id="call-banner-label"></span>
+        <span id="call-turn-indicator" class="call-turn-indicator" hidden></span>
+        <audio id="remote-call-audio" autoplay playsinline controls hidden></audio>
+        <div id="remote-call-audio-peers" class="call-audio-peers" hidden></div>
+        <div id="call-video-stage" class="call-video-stage" hidden>
+          <div id="remote-call-videos" class="call-video-grid">
+            <video id="remote-call-video" autoplay playsinline webkit-playsinline></video>
+          </div>
+          <video id="local-call-video" autoplay playsinline muted></video>
+        </div>
+        <section id="call-whiteboard" class="call-whiteboard" aria-label="Tableau blanc" hidden>
+          <div class="whiteboard-tools">
+            <button class="whiteboard-tool selected" type="button" data-whiteboard-tool="pen" title="Crayon" aria-label="Crayon">✎</button>
+            <button class="whiteboard-tool" type="button" data-whiteboard-tool="brush" title="Pinceau" aria-label="Pinceau">●</button>
+            <button class="whiteboard-tool" type="button" data-whiteboard-tool="line" title="Ligne" aria-label="Ligne">╱</button>
+            <button class="whiteboard-tool" type="button" data-whiteboard-tool="rect" title="Rectangle" aria-label="Rectangle">□</button>
+            <button class="whiteboard-tool" type="button" data-whiteboard-tool="ellipse" title="Cercle" aria-label="Cercle">○</button>
+            <button class="whiteboard-tool" type="button" data-whiteboard-tool="text" title="Texte" aria-label="Texte">T</button>
+            <button class="whiteboard-tool" type="button" data-whiteboard-tool="eraser" title="Gomme" aria-label="Gomme">⌫</button>
+            <input id="whiteboard-color" type="color" value="#111827" title="Couleur" aria-label="Couleur">
+            <input id="whiteboard-size" type="range" min="2" max="28" value="4" title="Épaisseur" aria-label="Épaisseur">
+            <button id="whiteboard-undo" class="outline whiteboard-tool" type="button" title="Annuler" aria-label="Annuler">↶</button>
+            <button id="whiteboard-clear" class="outline whiteboard-tool" type="button" title="Effacer" aria-label="Effacer">×</button>
+            <button id="whiteboard-save" class="outline whiteboard-tool" type="button" title="Enregistrer en PNG" aria-label="Enregistrer en PNG">⇩</button>
+            <button id="whiteboard-fullscreen" class="outline whiteboard-tool" type="button" title="Plein écran" aria-label="Plein écran">⛶</button>
+          </div>
+          <canvas id="whiteboard-canvas"></canvas>
+        </section>
+        <div class="call-actions">
+          <button id="call-open-conversation-button" class="outline call-action-button" type="button" title="Ouvrir la conversation" aria-label="Ouvrir la conversation"><svg class="call-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path></svg></button>
+          <button id="call-accept-button" class="call-action-button" type="button" title="Accepter l’appel" aria-label="Accepter l’appel"><svg class="call-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.11 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.95.34 1.88.64 2.77a2 2 0 0 1-.45 2.11L8.03 9.87a16 16 0 0 0 6.1 6.1l1.27-1.27a2 2 0 0 1 2.11-.45c.89.3 1.82.52 2.77.64A2 2 0 0 1 22 16.92Z"></path></svg></button>
+          <button id="call-reject-button" class="outline call-action-button" type="button" title="Refuser l’appel" aria-label="Refuser l’appel"><svg class="call-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m21 15.5-5-5"></path><path d="m16 15.5 5-5"></path><path d="M13.2 6.72a2 2 0 0 1 2.05-.47c.89.3 1.82.52 2.77.64A2 2 0 0 1 19.74 8.2"></path><path d="M8.03 9.87a16 16 0 0 0 6.1 6.1"></path><path d="M9.75 6.49a2 2 0 0 1-.45 2.11L8.03 9.87"></path><path d="M2.11 4.18A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.95.34 1.88.64 2.77"></path></svg></button>
+          <button id="call-mute-button" class="outline call-action-button" type="button" title="Couper le micro" aria-label="Couper le micro"><svg class="call-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><path d="M12 19v3"></path><path d="M8 22h8"></path></svg></button>
+          <button id="call-camera-button" class="outline call-action-button" type="button" title="Couper la caméra" aria-label="Couper la caméra"><svg class="call-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 10.5V6.8A2.8 2.8 0 0 0 12.2 4H5.8A2.8 2.8 0 0 0 3 6.8v10.4A2.8 2.8 0 0 0 5.8 20h6.4a2.8 2.8 0 0 0 2.8-2.8v-3.7l4.15 3.05A1.15 1.15 0 0 0 21 15.62V8.38a1.15 1.15 0 0 0-1.85-.93L15 10.5Z"></path></svg></button>
+          <button id="call-fullscreen-button" class="outline call-action-button" type="button" title="Plein écran" aria-label="Plein écran"><svg class="call-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5"></path><path d="M16 3h5v5"></path><path d="M21 16v5h-5"></path><path d="M8 21H3v-5"></path></svg></button>
+          <button id="call-screen-share-button" class="outline call-action-button" type="button" title="Partager l’écran" aria-label="Partager l’écran"><svg class="call-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v12H3Z"></path><path d="M8 21h8"></path><path d="M12 17v4"></path><path d="m9 10 3-3 3 3"></path><path d="M12 7v7"></path></svg></button>
+          <button id="call-whiteboard-button" class="outline call-action-button" type="button" title="Tableau blanc" aria-label="Tableau blanc"><svg class="call-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4Z"></path><path d="M8 16h8"></path><path d="m8 12 2-2 2 2 4-4"></path></svg></button>
+          <button id="call-switch-camera-button" class="outline call-action-button" type="button" title="Changer de caméra" aria-label="Changer de caméra"><svg class="call-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h3l2-3h8l2 3h3v13H3Z"></path><path d="M9 13a3 3 0 0 0 5.83 1"></path><path d="M15 11a3 3 0 0 0-5.83-1"></path><path d="m14 14 1 1 1-1"></path><path d="m10 10-1-1-1 1"></path></svg></button>
+          <button id="call-hangup-button" class="danger-button call-action-button" type="button" title="Raccrocher" aria-label="Raccrocher"><svg class="call-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.6 14.6c.3.9-.2 1.9-1.1 2.2l-3.1 1a2 2 0 0 1-2.1-.6l-1.5-1.7a15.2 15.2 0 0 0-3.6 0l-1.5 1.7a2 2 0 0 1-2.1.6l-3.1-1a1.8 1.8 0 0 1-1.1-2.2C4 9.1 8.2 6 12 6s8 3.1 9.6 8.6Z"></path></svg></button>
+        </div>
+      </div>
+      <form id="composer">
+        <div id="reply-target" class="reply-target" hidden><span></span><button id="reply-clear" type="button" aria-label="Annuler la réponse">×</button></div>
+        <div id="voice-draft" class="voice-draft" hidden>
+          <span class="voice-draft-status">Message vocal prêt</span>
+          <audio id="voice-draft-audio" controls preload="auto"></audio>
+          <button id="voice-draft-clear" type="button" aria-label="Supprimer le message vocal">×</button>
+        </div>
+        <div class="composer-tools">
+          <label class="file-picker" title="Envoyer un fichier" aria-label="Envoyer un fichier">📎<input id="file-input" type="file" hidden></label>
+          <button id="emoji-button" class="composer-tool-button" type="button" title="Ajouter un emoji"
+            aria-label="Ajouter un emoji" aria-expanded="false" aria-controls="emoji-picker" disabled>😊</button>
+          <button id="voice-button" class="composer-tool-button" type="button" title="Enregistrer un message vocal"
+            aria-label="Enregistrer un message vocal" disabled>🎙</button>
+          <div id="emoji-picker" role="dialog" aria-label="Choisir un emoji" hidden></div>
+        </div>
+        <textarea id="message-input" rows="1" maxlength="200000" placeholder="Message chiffré…" disabled></textarea>
+        <button id="send-button" type="submit" disabled>Envoyer</button>
+      </form>
+    </section>
+  </main>
+
+  <dialog id="unlock-dialog"><form method="dialog" id="unlock-form">
+    <h3>Déverrouiller les messages</h3>
+    <p>Entrez votre phrase secrète de chiffrement. Elle n’est jamais envoyée au serveur.</p>
+    <label>Phrase secrète<input id="unlock-phrase" type="password" minlength="10" required autofocus></label>
+    <label id="unlock-remember-label" class="checkbox-label"><input id="unlock-remember" type="checkbox" checked> Mémoriser la clé sur cet appareil</label>
+    <p class="error" id="unlock-error"></p><button type="submit">Déverrouiller</button>
+  </form></dialog>
+  <dialog id="expiration-dialog">
+    <form method="dialog" id="expiration-form">
+      <h3>Expiration du message</h3>
+      <div id="expiration-options" class="expiration-options" role="radiogroup" aria-label="Durée d’expiration">
+        <button type="button" data-expiration="0">Permanent</button>
+        <button type="button" data-expiration="300">5 min</button>
+        <button type="button" data-expiration="3600">1 h</button>
+        <button type="button" data-expiration="86400">1 j</button>
+        <button type="button" data-expiration="604800">7 j</button>
+      </div>
+      <div class="dialog-actions">
+        <button id="expiration-cancel" class="outline" type="button">Annuler</button>
+        <button id="expiration-apply" type="submit">Appliquer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="contact-dialog"><form method="dialog" id="contact-form">
+    <button class="dialog-close" value="cancel">×</button><h3>Ajouter un contact</h3>
+    <label>Nom d’utilisateur<input id="contact-search" minlength="2" autocomplete="off" placeholder="alice ou alice@chat.example.com"></label>
+    <div id="contact-results" class="picker-list"></div>
+  </form></dialog>
+
+  <dialog id="group-dialog"><form method="dialog" id="group-form">
+    <button id="group-close" class="dialog-close" type="button" aria-label="Fermer">×</button><h3>Nouveau groupe</h3>
+    <section class="profile-avatar-editor">
+      <img id="group-avatar-preview" class="profile-avatar-preview" src="/icons/group.svg" alt="Aperçu de l’avatar du groupe">
+      <div>
+        <label class="avatar-file-button">Choisir une image<input id="group-avatar-input" type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
+        <button id="group-avatar-remove" class="outline" type="button" hidden>Supprimer l’avatar</button>
+        <small>Image carrée, redimensionnée automatiquement à 256 × 256.</small>
+      </div>
+    </section>
+    <label>Nom du groupe<input id="group-name" required maxlength="80"></label>
+    <label>Description<textarea id="group-description" rows="3" maxlength="280" placeholder="Décrivez le groupe"></textarea></label>
+    <fieldset><legend>Membres</legend><div id="group-members" class="picker-list"></div></fieldset>
+    <button type="submit">Créer le groupe chiffré</button>
+  </form></dialog>
+
+  <dialog id="group-edit-dialog">
+    <form id="group-edit-form">
+      <button id="group-edit-close" class="dialog-close" type="button" aria-label="Fermer">×</button>
+      <h3>Modifier le groupe</h3>
+      <section class="profile-avatar-editor">
+        <img id="group-edit-avatar-preview" class="profile-avatar-preview" alt="Aperçu de l’avatar du groupe">
+        <div>
+          <label class="avatar-file-button">Choisir une image<input id="group-edit-avatar-input" type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
+          <button id="group-edit-avatar-remove" class="outline" type="button">Supprimer l’avatar</button>
+          <small>Image carrée, redimensionnée automatiquement à 256 × 256.</small>
+        </div>
+      </section>
+      <label>Nouveau nom<input id="group-edit-name" required maxlength="80"></label>
+      <label>Description<textarea id="group-edit-description" rows="3" maxlength="280"></textarea></label>
+      <p id="group-edit-error" class="error" role="alert"></p>
+      <div class="dialog-actions">
+        <button id="group-edit-cancel" class="outline" type="button">Annuler</button>
+        <button type="submit">Enregistrer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="profile-dialog">
+    <form id="profile-form">
+      <button id="profile-close" class="dialog-close" type="button" aria-label="Fermer">×</button>
+      <h3>Mon profil</h3>
+      <section class="profile-avatar-editor">
+        <img id="profile-avatar-preview" class="profile-avatar-preview" alt="Aperçu de l’avatar">
+        <div>
+          <label class="avatar-file-button">Choisir une image<input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
+          <button id="profile-avatar-remove" class="outline" type="button">Supprimer l’avatar</button>
+          <small>Image carrée, redimensionnée automatiquement à 256 × 256.</small>
+        </div>
+      </section>
+      <label>Nom d’utilisateur<input id="profile-username" required pattern="[a-z0-9_]{3,32}" autocomplete="username"></label>
+      <label>Nom affiché<input id="profile-display-name" maxlength="80" required autocomplete="name"></label>
+      <label>Description<textarea id="profile-description" rows="3" maxlength="280" placeholder="Quelques mots à propos de vous"></textarea></label>
+      <label>Instance serveur<input id="profile-instance-url" type="url" required autocomplete="url"></label>
+      <fieldset class="profile-password">
+        <legend>Modifier le mot de passe</legend>
+        <label>Mot de passe actuel<input id="profile-current-password" type="password" autocomplete="current-password"><small>Requis pour modifier le nom d’utilisateur ou le mot de passe.</small></label>
+        <label>Nouveau mot de passe<input id="profile-new-password" type="password" minlength="8" maxlength="256" autocomplete="new-password"></label>
+        <label>Confirmer le nouveau mot de passe<input id="profile-confirm-password" type="password" minlength="8" maxlength="256" autocomplete="new-password"></label>
+      </fieldset>
+      <p id="profile-error" class="error" role="alert"></p>
+      <button id="profile-save" type="submit">Enregistrer le profil</button>
+      <label class="profile-theme-label"><strong>Thème</strong><select id="profile-theme"><option value="auto">Automatique</option><option value="light">Clair</option><option value="dark">Sombre</option></select></label>
+      <section class="profile-notifications" aria-labelledby="profile-security-title">
+        <h4 id="profile-security-title">Clé de chiffrement locale</h4>
+        <small id="remembered-key-status">Vérification…</small>
+        <button id="forget-key-button" class="outline" type="button">Oublier la clé sur cet appareil</button>
+      </section>
+      <section class="profile-notifications" aria-labelledby="profile-recovery-title">
+        <h4 id="profile-recovery-title">Récupération du compte</h4>
+        <small id="recovery-code-status">Générez un nouveau code si l’ancien est perdu. L’ancien code sera immédiatement invalide.</small>
+        <button id="recovery-code-button" class="outline" type="button">Générer un nouveau code</button>
+      </section>
+      <section class="profile-notifications" aria-labelledby="profile-notifications-title">
+        <h4 id="profile-notifications-title">Notifications</h4>
+        <small id="notification-status">Notifications non vérifiées</small>
+        <div>
+          <button id="notification-button" class="secondary" type="button">Réactiver les notifications</button>
+          <button id="notification-test-button" class="outline" type="button">Tester</button>
+        </div>
+      </section>
+    </form>
+  </dialog>
+  <dialog id="action-dialog">
+    <form id="action-form">
+      <h3 id="action-title"></h3>
+      <p id="action-message"></p>
+      <label id="action-input-label" hidden><span></span><textarea id="action-input" rows="4" maxlength="200000"></textarea><input id="action-single-input" maxlength="200000" hidden></label>
+      <label id="action-secondary-label" hidden><span></span><textarea id="action-secondary-input" rows="3" maxlength="280"></textarea></label>
+      <div class="dialog-actions">
+        <button id="action-cancel" class="outline" type="button">Annuler</button>
+        <button id="action-confirm" type="submit">Confirmer</button>
+      </div>
+    </form>
+  </dialog>
+  <div id="toasts" aria-live="polite"></div>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

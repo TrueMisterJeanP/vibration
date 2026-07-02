@@ -1,0 +1,4289 @@
+import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js";
+import {
+  decryptBytes,
+  decryptEnvelope,
+  decryptText,
+  encryptBytes,
+  encryptEnvelope,
+  encryptText,
+  generateGroupKey,
+  privateConversationKey,
+  unlockIdentity,
+  unwrapGroupKey,
+  wrapGroupKey,
+} from "./crypto.js";
+import {
+  forgetRememberedIdentity,
+  hasRememberedIdentity,
+  loadRememberedIdentity,
+  rememberIdentity,
+  resetLoginVerificationCounter,
+} from "./device-vault.js";
+import {
+  enableNotifications,
+  notificationStatus,
+  registerServiceWorker,
+  renewPushSubscription,
+  showIncomingCallNotification,
+  showIncomingMessageNotification,
+  showLocalTestNotification,
+  syncBrowserSubscription,
+  testNotification,
+} from "./notifications.js";
+import { ChatSocket } from "./websocket.js";
+import { actionIcon, bindSwipeActions, frenchErrorMessage, renderMessage, setBusy, toast } from "./ui.js";
+
+const CALL_INVITE_TIMEOUT_MS = 45000;
+const CALL_SIGNAL_LOSS_GRACE_MS = 15000;
+const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
+const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
+const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
+const APP_BUILD = "group-letter-avatar-v119";
+
+window.VIBRATION_BUILD = APP_BUILD;
+console.info(`Vibration build ${APP_BUILD}`);
+
+const state = {
+  me: null,
+  edition: { edition: "enterprise", admin_panel: true, manager_panel: true },
+  privateKey: null,
+  contacts: [],
+  conversations: [],
+  current: null,
+  keys: new Map(),
+  members: new Map(),
+  socket: null,
+  typing: new Map(),
+  typingTimers: new Map(),
+  onlineUsers: new Set(),
+  files: new Map(),
+  fileLoads: new Map(),
+  messageClears: new Map(),
+  messageExpiryTimers: new Map(),
+  filePreviewObservers: new Set(),
+  previewURLs: new Set(),
+  fileCacheGeneration: 0,
+  callConfig: null,
+  replyTo: null,
+  messageExpirationSeconds: 0,
+  call: null,
+  pendingVoiceFile: null,
+  pendingVoiceURL: null,
+  recorder: null,
+  recordingChunks: [],
+  recordingStopTimer: null,
+};
+
+let profileAvatar = null;
+let groupAvatar = null;
+let pdfJSModule;
+let callPageExitHandled = false;
+
+const elements = {
+  shell: document.querySelector("#app-shell"),
+  conversations: document.querySelector("#conversation-list"),
+  messages: document.querySelector("#message-list"),
+  title: document.querySelector("#chat-title"),
+  description: document.querySelector("#chat-description"),
+  typing: document.querySelector("#typing-label"),
+  threadTyping: ensureThreadTypingLabel(),
+  audioCallButton: document.querySelector("#audio-call-button"),
+  videoCallButton: document.querySelector("#video-call-button"),
+  callBanner: document.querySelector("#call-banner"),
+  callBannerLabel: document.querySelector("#call-banner-label"),
+  callTurnIndicator: document.querySelector("#call-turn-indicator"),
+  remoteCallAudio: document.querySelector("#remote-call-audio"),
+  remoteCallAudioPeers: document.querySelector("#remote-call-audio-peers"),
+  callVideoStage: document.querySelector("#call-video-stage"),
+  remoteCallVideos: document.querySelector("#remote-call-videos"),
+  remoteCallVideo: document.querySelector("#remote-call-video"),
+  localCallVideo: document.querySelector("#local-call-video"),
+  callOpenConversationButton: document.querySelector("#call-open-conversation-button"),
+  callAcceptButton: document.querySelector("#call-accept-button"),
+  callRejectButton: document.querySelector("#call-reject-button"),
+  callMuteButton: document.querySelector("#call-mute-button"),
+  callCameraButton: document.querySelector("#call-camera-button"),
+  callFullscreenButton: document.querySelector("#call-fullscreen-button"),
+  callSwitchCameraButton: document.querySelector("#call-switch-camera-button"),
+  callScreenShareButton: ensureCallScreenShareButton(),
+  callWhiteboardButton: document.querySelector("#call-whiteboard-button"),
+  callWhiteboard: document.querySelector("#call-whiteboard"),
+  whiteboardCanvas: document.querySelector("#whiteboard-canvas"),
+  whiteboardColor: document.querySelector("#whiteboard-color"),
+  whiteboardSize: document.querySelector("#whiteboard-size"),
+  whiteboardUndo: document.querySelector("#whiteboard-undo"),
+  whiteboardClear: document.querySelector("#whiteboard-clear"),
+  whiteboardSave: document.querySelector("#whiteboard-save"),
+  whiteboardFullscreen: document.querySelector("#whiteboard-fullscreen"),
+  callHangupButton: document.querySelector("#call-hangup-button"),
+  composer: document.querySelector("#composer"),
+  input: document.querySelector("#message-input"),
+  send: document.querySelector("#send-button"),
+  file: document.querySelector("#file-input"),
+  voiceButton: document.querySelector("#voice-button"),
+  expirationOptions: document.querySelector("#expiration-options"),
+  voiceDraft: document.querySelector("#voice-draft"),
+  voiceDraftAudio: document.querySelector("#voice-draft-audio"),
+  voiceDraftClear: document.querySelector("#voice-draft-clear"),
+  replyTarget: document.querySelector("#reply-target"),
+  replyClear: document.querySelector("#reply-clear"),
+  emojiButton: document.querySelector("#emoji-button"),
+  emojiPicker: document.querySelector("#emoji-picker"),
+};
+
+const emojis = [
+  "😀", "😂", "😊", "😍", "🥰", "😘",
+  "😎", "🤔", "😢", "😭", "😡", "🥳",
+  "👍", "👎", "👏", "🙏", "💪", "🤝",
+  "❤️", "💔", "🔥", "✨", "🎉", "✅",
+  "👋", "👌", "🤗", "😴", "🙈", "🚀",
+];
+
+function ensureThreadTypingLabel() {
+  const existing = document.querySelector("#thread-typing-label");
+  if (existing) return existing;
+  const label = document.createElement("div");
+  label.id = "thread-typing-label";
+  label.setAttribute("aria-live", "polite");
+  label.hidden = true;
+  document.querySelector("#composer")?.before(label);
+  return label;
+}
+
+function ensureCallScreenShareButton() {
+  const existing = document.querySelector("#call-screen-share-button");
+  if (existing) return existing;
+  const button = document.createElement("button");
+  button.id = "call-screen-share-button";
+  button.className = "outline call-action-button";
+  button.type = "button";
+  button.title = "Partager l’écran";
+  button.setAttribute("aria-label", "Partager l’écran");
+  button.innerHTML = '<svg class="call-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v12H3Z"></path><path d="M8 21h8"></path><path d="M12 17v4"></path><path d="m9 10 3-3 3 3"></path><path d="M12 7v7"></path></svg>';
+  const actions = document.querySelector(".call-actions");
+  const switchCamera = document.querySelector("#call-switch-camera-button");
+  if (actions) actions.insertBefore(button, switchCamera || document.querySelector("#call-hangup-button"));
+  return button;
+}
+
+function closeEmojiPicker() {
+  elements.emojiPicker.hidden = true;
+  elements.emojiButton.setAttribute("aria-expanded", "false");
+}
+
+function insertEmoji(emoji) {
+  const input = elements.input;
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? start;
+  const nextValue = `${input.value.slice(0, start)}${emoji}${input.value.slice(end)}`;
+  if (nextValue.length > input.maxLength) return;
+  input.value = nextValue;
+  const caret = start + emoji.length;
+  input.setSelectionRange(caret, caret);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.focus({ preventScroll: true });
+  closeEmojiPicker();
+}
+
+function bindEmojiPicker() {
+  const fragment = document.createDocumentFragment();
+  for (const emoji of emojis) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = emoji;
+    button.setAttribute("aria-label", `Insérer ${emoji}`);
+    button.onclick = () => insertEmoji(emoji);
+    fragment.append(button);
+  }
+  elements.emojiPicker.append(fragment);
+  elements.emojiButton.onclick = (event) => {
+    event.stopPropagation();
+    const open = elements.emojiPicker.hidden;
+    elements.emojiPicker.hidden = !open;
+    elements.emojiButton.setAttribute("aria-expanded", String(open));
+  };
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".composer-tools")) closeEmojiPicker();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeEmojiPicker();
+  });
+}
+
+function actionDialog({
+  title, message = "", inputLabel = "", value = "", maxLength = 200000, singleLine = false,
+  secondaryLabel = "", secondaryValue = "", secondaryMaxLength = 280,
+  confirmLabel = "Confirmer", danger = false,
+}) {
+  const dialog = document.querySelector("#action-dialog");
+  const form = document.querySelector("#action-form");
+  const inputRow = document.querySelector("#action-input-label");
+  const textarea = document.querySelector("#action-input");
+  const singleInput = document.querySelector("#action-single-input");
+  const input = singleLine ? singleInput : textarea;
+  const secondaryRow = document.querySelector("#action-secondary-label");
+  const secondaryInput = document.querySelector("#action-secondary-input");
+  document.querySelector("#action-title").textContent = title;
+  document.querySelector("#action-message").textContent = message;
+  document.querySelector("#action-confirm").textContent = confirmLabel;
+  document.querySelector("#action-confirm").classList.toggle("danger-button", danger);
+  inputRow.hidden = !inputLabel;
+  inputRow.querySelector("span").textContent = inputLabel;
+  textarea.hidden = singleLine;
+  singleInput.hidden = !singleLine;
+  input.value = value;
+  input.maxLength = maxLength;
+  secondaryRow.hidden = !secondaryLabel;
+  secondaryRow.querySelector("span").textContent = secondaryLabel;
+  secondaryInput.value = secondaryValue;
+  secondaryInput.maxLength = secondaryMaxLength;
+  dialog.showModal();
+  if (inputLabel) requestAnimationFrame(() => input.select());
+  return new Promise((resolve) => {
+    const finish = (result) => {
+      form.removeEventListener("submit", submit);
+      document.querySelector("#action-cancel").removeEventListener("click", cancel);
+      dialog.removeEventListener("cancel", cancel);
+      if (dialog.open) dialog.close();
+      resolve(result);
+    };
+    const submit = (event) => {
+      event.preventDefault();
+      if (secondaryLabel) {
+        finish({ value: input.value.trim(), secondaryValue: secondaryInput.value.trim() });
+      } else {
+        finish(inputLabel ? input.value.trim() : true);
+      }
+    };
+    const cancel = (event) => {
+      event?.preventDefault();
+      finish(null);
+    };
+    form.addEventListener("submit", submit);
+    document.querySelector("#action-cancel").addEventListener("click", cancel);
+    dialog.addEventListener("cancel", cancel);
+  });
+}
+
+function groupEditDialog({ name, description, avatar }) {
+  const dialog = document.querySelector("#group-edit-dialog");
+  const form = document.querySelector("#group-edit-form");
+  const nameInput = document.querySelector("#group-edit-name");
+  const descriptionInput = document.querySelector("#group-edit-description");
+  const avatarInput = document.querySelector("#group-edit-avatar-input");
+  const avatarPreview = document.querySelector("#group-edit-avatar-preview");
+  const removeButton = document.querySelector("#group-edit-avatar-remove");
+  const errorRegion = document.querySelector("#group-edit-error");
+  let selectedAvatar = avatar || null;
+
+  const updatePreview = () => {
+    avatarPreview.src = selectedAvatar || "/icons/group.svg";
+    removeButton.hidden = !selectedAvatar;
+  };
+
+  nameInput.value = name;
+  descriptionInput.value = description;
+  avatarInput.value = "";
+  errorRegion.textContent = "";
+  updatePreview();
+
+  return new Promise((resolve) => {
+    const finish = (result) => {
+      if (dialog.open) dialog.close();
+      resolve(result);
+    };
+    avatarInput.onchange = async (event) => {
+      const file = event.target.files[0];
+      event.target.value = "";
+      if (!file) return;
+      try {
+        selectedAvatar = await resizeAvatar(file);
+        errorRegion.textContent = "";
+        updatePreview();
+      } catch (error) {
+        errorRegion.textContent = frenchErrorMessage(error);
+      }
+    };
+    removeButton.onclick = () => {
+      selectedAvatar = null;
+      updatePreview();
+    };
+    document.querySelector("#group-edit-close").onclick = () => finish(null);
+    document.querySelector("#group-edit-cancel").onclick = () => finish(null);
+    dialog.oncancel = (event) => {
+      event.preventDefault();
+      finish(null);
+    };
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      const editedName = nameInput.value.trim();
+      if (!editedName) return;
+      finish({
+        name: editedName,
+        description: descriptionInput.value.trim(),
+        avatar: selectedAvatar,
+      });
+    };
+    dialog.showModal();
+    requestAnimationFrame(() => nameInput.select());
+  });
+}
+
+function pushFailureMessage(failures = []) {
+  if (failures.includes("native_permission_denied")) return "permission système refusée";
+  if (failures.includes("database_error")) return "erreur de consultation des abonnements";
+  if (failures.includes("transport_error")) return "service de notification inaccessible";
+  if (failures.includes("subscription_expired")) return "abonnement expiré";
+  if (failures.some((failure) => failure.startsWith("push_service_http_"))) {
+    return "requête refusée par le service de notification";
+  }
+  return "échec technique de livraison";
+}
+
+function clearFileCache() {
+  state.fileCacheGeneration++;
+  for (const observer of state.filePreviewObservers) observer.disconnect();
+  state.filePreviewObservers.clear();
+  for (const url of state.previewURLs) URL.revokeObjectURL(url);
+  state.previewURLs.clear();
+  for (const file of state.files.values()) URL.revokeObjectURL(file.url);
+  state.files.clear();
+  state.fileLoads.clear();
+}
+
+function messageTimerKey(conversationID, messageID) {
+  return `${conversationID}:${messageID}`;
+}
+
+function clearMessageExpiration(message) {
+  const key = messageTimerKey(message.conversation_id, message.id);
+  clearTimeout(state.messageExpiryTimers.get(key));
+  state.messageExpiryTimers.delete(key);
+}
+
+function clearConversationMessageExpirations(conversationID) {
+  const prefix = `${conversationID}:`;
+  for (const [key, timer] of state.messageExpiryTimers) {
+    if (!key.startsWith(prefix)) continue;
+    clearTimeout(timer);
+    state.messageExpiryTimers.delete(key);
+  }
+}
+
+async function expireRenderedMessage(conversationID, messageID) {
+  state.messageClears.get(conversationID)?.delete(messageID);
+  const key = messageTimerKey(conversationID, messageID);
+  clearTimeout(state.messageExpiryTimers.get(key));
+  state.messageExpiryTimers.delete(key);
+  if (state.current?.id === conversationID) {
+    const row = elements.messages.querySelector(`[data-id="${messageID}"]`);
+    row?.remove();
+    if (!elements.messages.querySelector(".message")) {
+      const empty = document.createElement("div");
+      empty.id = "empty-chat";
+      empty.textContent = "Aucun message. Écrivez le premier message chiffré.";
+      elements.messages.append(empty);
+    }
+  }
+  try {
+    state.conversations = await api("/api/conversations");
+    await renderConversations();
+  } catch {}
+}
+
+function scheduleMessageExpiration(message) {
+  clearMessageExpiration(message);
+  if (!message.expires_at) return true;
+  const expiresAt = Date.parse(message.expires_at);
+  if (!Number.isFinite(expiresAt)) return true;
+  const remaining = expiresAt - Date.now();
+  if (remaining <= 0) {
+    expireRenderedMessage(message.conversation_id, message.id).catch(() => {});
+    return false;
+  }
+  const key = messageTimerKey(message.conversation_id, message.id);
+  state.messageExpiryTimers.set(key, setTimeout(() => {
+    expireRenderedMessage(message.conversation_id, message.id).catch(() => {});
+  }, Math.min(remaining, 2147483647)));
+  return true;
+}
+
+async function boot() {
+  try {
+    state.me = await api("/api/me");
+    state.edition = await api("/api/edition");
+  } catch (error) {
+    location.replace("/login.html");
+    return;
+  }
+  elements.shell.hidden = false;
+  updateIdentityLabel();
+  const adminLink = document.querySelector("#admin-link");
+  const canOpenAdmin = state.edition.admin_panel && (state.me.is_admin || state.me.is_manager);
+  adminLink.hidden = !canOpenAdmin;
+  adminLink.textContent = state.me.is_manager && !state.me.is_admin ? "Gestion" : "Administration";
+  await registerServiceWorker();
+  await unlock();
+  bindUI();
+  connectSocket();
+  if ("Notification" in window && Notification.permission === "granted") {
+    try {
+      await enableNotifications();
+    } catch (error) {
+      console.warn("Activation automatique des notifications impossible", error);
+    }
+  }
+  await refreshNotificationStatus();
+  await refreshAll();
+}
+
+async function unlock() {
+  const dialog = document.querySelector("#unlock-dialog");
+  const error = document.querySelector("#unlock-error");
+  const forceVerification = sessionStorage.getItem("force_identity_verification") === "true";
+  const attempt = async (phrase, remember = false) => {
+    state.privateKey = remember
+      ? await rememberIdentity(state.me, phrase)
+      : await unlockIdentity(state.me, phrase);
+    if (remember) sessionStorage.removeItem("crypto_phrase");
+    else sessionStorage.setItem("crypto_phrase", phrase);
+  };
+  if (!forceVerification) {
+    try {
+      state.privateKey = await loadRememberedIdentity(state.me);
+      if (state.privateKey) {
+        sessionStorage.removeItem("crypto_phrase");
+        sessionStorage.removeItem("remember_encryption_key");
+        return;
+      }
+    } catch (exception) {
+      console.warn("Lecture de la clé locale impossible", exception);
+    }
+  }
+  const saved = sessionStorage.getItem("crypto_phrase");
+  if (saved && !forceVerification) {
+    try {
+      await attempt(saved, sessionStorage.getItem("remember_encryption_key") === "true");
+      sessionStorage.removeItem("remember_encryption_key");
+      return;
+    } catch {
+      sessionStorage.removeItem("crypto_phrase");
+      sessionStorage.removeItem("remember_encryption_key");
+    }
+  }
+  document.querySelector("#unlock-dialog h3").textContent = forceVerification
+    ? "Vérification périodique de sécurité"
+    : "Déverrouiller les messages";
+  document.querySelector("#unlock-dialog p").textContent = forceVerification
+    ? "Pour protéger votre identité, saisissez votre phrase secrète. Cette vérification est demandée à la première connexion puis périodiquement."
+    : "Entrez votre phrase secrète de chiffrement. Elle n’est jamais envoyée au serveur.";
+  document.querySelector("#unlock-remember").checked = true;
+  document.querySelector("#unlock-remember-label").hidden = forceVerification;
+  dialog.showModal();
+  await new Promise((resolve) => {
+    document.querySelector("#unlock-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      error.textContent = "";
+      try {
+        await attempt(
+          document.querySelector("#unlock-phrase").value,
+          forceVerification || document.querySelector("#unlock-remember").checked,
+        );
+        if (forceVerification) {
+          await resetLoginVerificationCounter(state.me.id);
+          sessionStorage.removeItem("force_identity_verification");
+        }
+        document.querySelector("#unlock-phrase").value = "";
+        dialog.close();
+        resolve();
+      } catch (exception) {
+        error.textContent = frenchErrorMessage(exception);
+      }
+    });
+  });
+}
+
+function bindUI() {
+  bindEmojiPicker();
+  const profileDialog = document.querySelector("#profile-dialog");
+  const profileForm = document.querySelector("#profile-form");
+  document.querySelector("#profile-button").onclick = async () => {
+    profileAvatar = state.me.avatar || null;
+    updateProfileAvatarPreview();
+    document.querySelector("#profile-username").value = state.me.username;
+    document.querySelector("#profile-display-name").value = state.me.display_name;
+    document.querySelector("#profile-description").value = state.me.description || "";
+    document.querySelector("#profile-instance-url").value = getInstanceURL();
+    document.querySelector("#profile-theme").value = window.ChatTheme?.getPreference() || "auto";
+    document.querySelector("#profile-current-password").value = "";
+    document.querySelector("#profile-new-password").value = "";
+    document.querySelector("#profile-confirm-password").value = "";
+    document.querySelector("#profile-error").textContent = "";
+    profileDialog.showModal();
+    const profileTitle = document.querySelector("#profile-dialog h3");
+    profileTitle?.setAttribute("tabindex", "-1");
+    profileTitle?.focus({ preventScroll: true });
+    await refreshRememberedKeyStatus();
+    await refreshNotificationStatus();
+  };
+  document.querySelector("#profile-close").onclick = () => profileDialog.close();
+  document.querySelector("#profile-avatar-input").addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      profileAvatar = await resizeAvatar(file);
+      updateProfileAvatarPreview();
+    } catch (error) {
+      document.querySelector("#profile-error").textContent = frenchErrorMessage(error);
+    }
+  });
+  document.querySelector("#profile-avatar-remove").onclick = () => {
+    profileAvatar = null;
+    updateProfileAvatarPreview();
+  };
+  document.querySelector("#profile-theme").onchange = (event) => {
+    window.ChatTheme?.setPreference(event.target.value);
+  };
+  document.querySelector("#forget-key-button").onclick = async () => {
+    await forgetRememberedIdentity(state.me.id);
+    await refreshRememberedKeyStatus();
+    toast("La clé mémorisée a été supprimée de cet appareil.", "success");
+  };
+  document.querySelector("#recovery-code-button").onclick = rotateRecoveryCode;
+  profileForm.addEventListener("submit", updateProfile);
+  document.querySelector("#logout-button").onclick = async () => {
+    await api("/api/logout", { method: "POST", body: {} });
+    clearSessionToken();
+    sessionStorage.removeItem("crypto_phrase");
+    location.href = "/login.html";
+  };
+  document.querySelector("#contact-button").onclick = () => document.querySelector("#contact-dialog").showModal();
+  document.querySelector("#group-button").onclick = () => {
+    openGroupDialog().catch((error) => toast(frenchErrorMessage(error, "Impossible de charger les contacts."), "error"));
+  };
+  const groupDialog = document.querySelector("#group-dialog");
+  const groupCloseButton = groupDialog.querySelector("#group-close, .dialog-close");
+  groupCloseButton.type = "button";
+  groupCloseButton.onclick = () => groupDialog.close();
+  document.querySelector("#group-avatar-input").addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      groupAvatar = await resizeAvatar(file);
+      updateGroupAvatarPreview();
+    } catch (error) {
+      toast(frenchErrorMessage(error), "error");
+    }
+  });
+  document.querySelector("#group-avatar-remove").onclick = () => {
+    groupAvatar = null;
+    updateGroupAvatarPreview();
+  };
+  const sidebarButton = document.querySelector("#open-sidebar-logo");
+  const closeSidebarButton = document.querySelector("#close-sidebar-logo");
+  const setSidebarOpen = (open) => {
+    elements.shell.classList.toggle("sidebar-open", open);
+    sidebarButton.setAttribute("aria-expanded", String(open));
+    sidebarButton.setAttribute("aria-label", open
+      ? "Masquer les contacts, groupes et conversations"
+      : "Afficher les contacts, groupes et conversations");
+    sidebarButton.title = open ? "Masquer les contacts et groupes" : "Afficher les contacts et groupes";
+  };
+  const mobileLayout = window.matchMedia("(max-width: 720px)");
+  const showMessagesOnMobile = async ({ matches }) => {
+    if (!matches) return;
+    setSidebarOpen(false);
+    if (!state.current && state.conversations.length) {
+      await selectConversation(state.conversations[0]);
+    }
+  };
+  mobileLayout.addEventListener("change", showMessagesOnMobile);
+  showMessagesOnMobile(mobileLayout);
+  sidebarButton.onclick = () => setSidebarOpen(!elements.shell.classList.contains("sidebar-open"));
+  closeSidebarButton.onclick = () => setSidebarOpen(false);
+  elements.composer.addEventListener("submit", sendMessage);
+  elements.file.addEventListener("change", sendFile);
+  elements.voiceButton.addEventListener("click", toggleVoiceRecording);
+  elements.audioCallButton.addEventListener("click", () => startCallInvite("audio"));
+  elements.videoCallButton.addEventListener("click", () => startCallInvite("video"));
+  elements.callBanner.addEventListener("click", (event) => {
+    if (!state.call || sameID(state.call.conversationID, state.current?.id)) return;
+    if (event.target.closest("button, input, canvas, audio, video")) return;
+    openCallConversation();
+  });
+  elements.callOpenConversationButton.addEventListener("click", openCallConversation);
+  elements.callAcceptButton.addEventListener("click", acceptIncomingCall);
+  elements.callRejectButton.addEventListener("click", () => rejectIncomingCall("rejected"));
+  elements.callMuteButton.addEventListener("click", toggleCallMicrophone);
+  elements.callCameraButton.addEventListener("click", toggleCallCamera);
+  elements.callFullscreenButton.addEventListener("click", enterCallFullscreen);
+  elements.callSwitchCameraButton.addEventListener("click", switchCallCamera);
+  elements.callScreenShareButton.addEventListener("click", toggleScreenShare);
+  elements.callWhiteboardButton.addEventListener("click", toggleWhiteboard);
+  bindWhiteboardControls();
+  elements.callHangupButton.addEventListener("click", () => hangupCall("hangup"));
+  window.addEventListener("pagehide", handleCallPageExit);
+  window.addEventListener("beforeunload", handleCallPageExit);
+  elements.voiceDraftClear.addEventListener("click", clearVoiceDraft);
+  elements.replyClear.addEventListener("click", clearReplyTarget);
+  bindExpirationDialog();
+  elements.input.addEventListener("input", sendTyping);
+  document.querySelector("#contact-search").addEventListener("input", debounce(searchContacts, 300));
+  document.querySelector("#group-form").addEventListener("submit", createGroup);
+  document.querySelector("#notification-button").onclick = async (event) => {
+    const button = event.currentTarget;
+    setBusy(button, true, "Autorisation…");
+    try {
+      await enableNotifications((status) => {
+        button.textContent = status;
+      });
+      toast("Notifications activées.", "success");
+      await refreshNotificationStatus();
+    } catch (error) {
+      toast(frenchErrorMessage(error), "error");
+    } finally {
+      setBusy(button, false);
+    }
+  };
+  document.querySelector("#notification-test-button").onclick = async () => {
+    try {
+      await syncBrowserSubscription();
+      let result = await testNotification();
+      if (result.failures?.some((failure) => failure.includes("Forbidden"))) {
+        const button = document.querySelector("#notification-test-button");
+        const originalLabel = button.textContent;
+        button.disabled = true;
+        try {
+          await renewPushSubscription((status) => {
+            button.textContent = status;
+          });
+          result = await testNotification();
+        } finally {
+          button.disabled = false;
+          button.textContent = originalLabel;
+        }
+      }
+      if (result.sent > 0) {
+        toast("Notification Web Push envoyée.", "success");
+      } else if (result.subscriptions > 0) {
+        const localShown = await showLocalTestNotification();
+        const reason = pushFailureMessage(result.failures);
+        toast(localShown
+          ? `Abonnement enregistré, mais livraison Web Push échouée (${reason}). Un test local a été affiché.`
+          : `Abonnement enregistré, mais livraison Web Push échouée (${reason}).`, "error");
+      } else {
+        toast("Aucun abonnement Push enregistré. Cliquez d’abord sur Activer.", "error");
+      }
+      await refreshNotificationStatus();
+    } catch (error) {
+      toast(frenchErrorMessage(error), "error");
+    }
+  };
+}
+
+function bindExpirationDialog() {
+  const dialog = document.querySelector("#expiration-dialog");
+  const form = document.querySelector("#expiration-form");
+  const cancel = document.querySelector("#expiration-cancel");
+  let timer;
+  let openedByLongPress = false;
+  const updateChoices = () => {
+    for (const button of elements.expirationOptions.querySelectorAll("button[data-expiration]")) {
+      const selected = Number(button.dataset.expiration) === state.messageExpirationSeconds;
+      button.classList.toggle("selected", selected);
+      button.setAttribute("aria-checked", String(selected));
+      button.setAttribute("role", "radio");
+    }
+  };
+  const open = () => {
+    openedByLongPress = true;
+    updateChoices();
+    dialog.showModal();
+  };
+  elements.expirationOptions.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-expiration]");
+    if (!button) return;
+    state.messageExpirationSeconds = Number(button.dataset.expiration || 0);
+    updateChoices();
+    updateSendButtonLabel();
+  });
+  elements.send.addEventListener("pointerdown", (event) => {
+    if (elements.send.disabled || event.button !== 0) return;
+    timer = setTimeout(open, 550);
+  });
+  for (const eventName of ["pointerup", "pointerleave", "pointercancel"]) {
+    elements.send.addEventListener(eventName, () => clearTimeout(timer));
+  }
+  elements.send.addEventListener("click", (event) => {
+    if (!openedByLongPress) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openedByLongPress = false;
+  });
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    updateSendButtonLabel();
+    dialog.close();
+  });
+  dialog.addEventListener("close", () => {
+    openedByLongPress = false;
+  });
+  cancel.addEventListener("click", () => dialog.close());
+  updateSendButtonLabel();
+  updateChoices();
+}
+
+function updateSendButtonLabel() {
+  const labels = new Map([
+    [0, "message permanent"],
+    [300, "expiration 5 minutes"],
+    [3600, "expiration 1 heure"],
+    [86400, "expiration 1 jour"],
+    [604800, "expiration 7 jours"],
+  ]);
+  const detail = labels.get(state.messageExpirationSeconds) || "message permanent";
+  elements.send.textContent = "Envoyer";
+  elements.send.classList.toggle("has-expiration", state.messageExpirationSeconds > 0);
+  elements.send.title = `Appui long : ${detail}`;
+  elements.send.setAttribute("aria-label", `Envoyer, ${detail}. Appui long pour modifier l’expiration.`);
+}
+
+async function refreshRememberedKeyStatus() {
+  const remembered = await hasRememberedIdentity(state.me.id);
+  document.querySelector("#remembered-key-status").textContent = remembered
+    ? "La clé est mémorisée et le déverrouillage sera automatique."
+    : "La clé n’est pas mémorisée sur cet appareil.";
+  document.querySelector("#forget-key-button").hidden = !remembered;
+}
+
+function updateIdentityLabel() {
+  const identity = state.me.display_name
+    ? `${state.me.display_name} · @${state.me.username}`
+    : `@${state.me.username}`;
+  document.querySelector("#identity-label").textContent = identity;
+  for (const button of document.querySelectorAll(".brand-logo-button")) {
+    const image = button.querySelector(".header-avatar");
+    const mark = button.querySelector(".brand-mark");
+    image.hidden = !state.me.avatar;
+    mark.hidden = Boolean(state.me.avatar);
+    if (state.me.avatar) image.src = state.me.avatar;
+    else image.removeAttribute("src");
+  }
+}
+
+function replaceAvatarContent(container, avatar, fallback) {
+  container.replaceChildren();
+  if (avatar) {
+    const image = document.createElement("img");
+    image.src = avatar;
+    image.alt = "";
+    container.append(image);
+  } else {
+    container.textContent = fallback;
+  }
+}
+
+function syncCurrentUserProfileDisplay() {
+  const fallback = (state.me.username || "?").slice(0, 1).toUpperCase();
+  for (const [conversationID, members] of state.members) {
+    state.members.set(conversationID, members.map((member) => (
+      member.user_id === state.me.id
+        ? {
+            ...member,
+            username: state.me.username,
+            display_name: state.me.display_name,
+            description: state.me.description || "",
+            avatar: state.me.avatar || null,
+          }
+        : member
+    )));
+  }
+  elements.messages.querySelectorAll(".message-row.mine .message-avatar").forEach((avatar) => {
+    replaceAvatarContent(avatar, state.me.avatar, fallback);
+  });
+}
+
+function messageWithCurrentUserProfile(message) {
+  if (message.sender_id !== state.me.id) return message;
+  return {
+    ...message,
+    sender_username: state.me.username,
+    sender_avatar: state.me.avatar || null,
+  };
+}
+
+function updateProfileAvatarPreview() {
+  const preview = document.querySelector("#profile-avatar-preview");
+  preview.src = profileAvatar || "/icons/person.svg";
+  document.querySelector("#profile-avatar-remove").hidden = !profileAvatar;
+}
+
+function updateGroupAvatarPreview() {
+  document.querySelector("#group-avatar-preview").src = groupAvatar || "/icons/group.svg";
+  document.querySelector("#group-avatar-remove").hidden = !groupAvatar;
+}
+
+async function resizeAvatar(file) {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Sélectionnez une image PNG, JPEG ou WebP.");
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    throw new Error("L’image source dépasse 8 Mo.");
+  }
+  const sourceURL = URL.createObjectURL(file);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const candidate = new Image();
+      candidate.onload = () => resolve(candidate);
+      candidate.onerror = () => reject(new Error("Impossible de lire cette image."));
+      candidate.src = sourceURL;
+    });
+    const side = Math.min(image.naturalWidth, image.naturalHeight);
+    const sourceX = (image.naturalWidth - side) / 2;
+    const sourceY = (image.naturalHeight - side) / 2;
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 256;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, 256, 256);
+    context.drawImage(image, sourceX, sourceY, side, side, 0, 0, 256, 256);
+    return canvas.toDataURL("image/jpeg", 0.84);
+  } finally {
+    URL.revokeObjectURL(sourceURL);
+  }
+}
+
+async function rotateRecoveryCode(event) {
+  const button = event.currentTarget;
+  const status = document.querySelector("#recovery-code-status");
+  const password = prompt("Mot de passe actuel :");
+  if (password === null) return;
+  if (!password) {
+    status.textContent = "Le mot de passe actuel est requis.";
+    return;
+  }
+  setBusy(button, true, "Génération…");
+  status.textContent = "";
+  try {
+    const result = await api("/api/me/recovery-code", {
+      method: "POST",
+      body: { password },
+    });
+    alert(`Nouveau code de récupération : ${result.recovery_code}`);
+    status.textContent = "Nouveau code généré. L’ancien code n’est plus valide.";
+  } catch (error) {
+    status.textContent = frenchErrorMessage(error);
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function updateProfile(event) {
+  event.preventDefault();
+  const errorRegion = document.querySelector("#profile-error");
+  const saveButton = document.querySelector("#profile-save");
+  const username = document.querySelector("#profile-username").value.trim().toLowerCase();
+  const displayName = document.querySelector("#profile-display-name").value.trim();
+  const description = document.querySelector("#profile-description").value.trim();
+  const currentInstanceURL = getInstanceURL();
+  let nextInstanceURL;
+  const currentPassword = document.querySelector("#profile-current-password").value;
+  const newPassword = document.querySelector("#profile-new-password").value;
+  const confirmation = document.querySelector("#profile-confirm-password").value;
+  errorRegion.textContent = "";
+
+  if (newPassword !== confirmation) {
+    errorRegion.textContent = "Les nouveaux mots de passe diffèrent.";
+    return;
+  }
+  if ((newPassword || username !== state.me.username) && !currentPassword) {
+    errorRegion.textContent = "Saisissez votre mot de passe actuel pour modifier l’identifiant ou le mot de passe.";
+    return;
+  }
+  try {
+    nextInstanceURL = normalizeInstanceURL(document.querySelector("#profile-instance-url").value);
+  } catch (error) {
+    errorRegion.textContent = frenchErrorMessage(error);
+    return;
+  }
+  const profileChanged = username !== state.me.username
+    || displayName !== state.me.display_name
+    || description !== (state.me.description || "")
+    || profileAvatar !== (state.me.avatar || null)
+    || Boolean(newPassword);
+  if (!profileChanged && nextInstanceURL !== currentInstanceURL) {
+    switchInstance(nextInstanceURL);
+    return;
+  }
+
+  setBusy(saveButton, true, "Enregistrement…");
+  try {
+    const updated = await api("/api/me", {
+      method: "PUT",
+      body: {
+        username,
+        display_name: displayName,
+        description,
+        current_password: currentPassword,
+        new_password: newPassword,
+        avatar: profileAvatar,
+      },
+    });
+    state.me = { ...state.me, ...updated };
+    updateIdentityLabel();
+    syncCurrentUserProfileDisplay();
+    document.querySelector("#profile-current-password").value = "";
+    document.querySelector("#profile-new-password").value = "";
+    document.querySelector("#profile-confirm-password").value = "";
+    if (nextInstanceURL !== currentInstanceURL) {
+      switchInstance(nextInstanceURL);
+      return;
+    }
+    toast("Profil mis à jour.", "success");
+  } catch (error) {
+    errorRegion.textContent = error.status === 401
+      ? "Le mot de passe actuel est incorrect."
+      : frenchErrorMessage(error);
+  } finally {
+    setBusy(saveButton, false);
+  }
+}
+
+function switchInstance(instanceURL) {
+  setInstanceURL(instanceURL);
+  clearSessionToken();
+  sessionStorage.removeItem("crypto_phrase");
+  state.socket?.close();
+  toast("Instance modifiée. Reconnexion nécessaire.", "success");
+  setTimeout(() => { location.href = "/login.html"; }, 600);
+}
+
+async function refreshNotificationStatus() {
+  const label = document.querySelector("#notification-status");
+  const button = document.querySelector("#notification-button");
+  try {
+    if ("Notification" in window && Notification.permission === "granted") {
+      await syncBrowserSubscription();
+    }
+    const status = await notificationStatus();
+    if (status.mode === "native" && status.nativeGranted && !status.pushSupported) {
+      label.textContent = "Notifications natives seulement, indisponibles si l’application est arrêtée";
+      button.textContent = "Web Push indisponible";
+      button.disabled = true;
+    } else if (status.permission === "unsupported") {
+      label.textContent = "Notifications non prises en charge par ce navigateur";
+      button.textContent = "Notifications indisponibles";
+      button.disabled = true;
+    } else if (status.permission === "denied") {
+      label.textContent = "Notifications bloquées par le navigateur";
+      button.textContent = "Notifications bloquées";
+      button.disabled = false;
+    } else if (status.browserSubscription && status.serverSubscriptions > 0) {
+      label.textContent = "Notifications activées";
+      button.textContent = "Réactiver les notifications";
+      button.disabled = false;
+    } else if (status.permission === "granted") {
+      label.textContent = "Permission accordée, abonnement incomplet";
+      button.textContent = "Réactiver les notifications";
+      button.disabled = false;
+    } else {
+      label.textContent = "Notifications désactivées";
+      button.textContent = "Activer les notifications";
+      button.disabled = false;
+    }
+  } catch {
+    label.textContent = "État des notifications indisponible";
+  }
+}
+
+function connectSocket() {
+  state.socket = new ChatSocket();
+  document.querySelector("#ws-dot").classList.remove("online");
+  document.querySelector("#ws-label").textContent = "Connexion…";
+  state.socket.addEventListener("status", ({ detail }) => {
+    document.querySelector("#ws-dot").classList.toggle("online", detail);
+    document.querySelector("#ws-label").textContent = detail ? "Connecté" : "Reconnexion…";
+    if (detail) {
+      clearCallSignalLossTimer();
+      resumePendingCallIceRestarts();
+    } else {
+      state.onlineUsers.clear();
+      renderConversations().catch(() => {});
+      scheduleCallInterruptForSignalLoss();
+    }
+    updateCallButtons();
+  });
+  state.socket.addEventListener("event", ({ detail }) => handleSocketEvent(detail));
+  state.socket.connect();
+}
+
+async function refreshAll() {
+  [state.contacts, state.conversations] = await Promise.all([api("/api/contacts"), api("/api/conversations")]);
+  state.members.clear();
+  await renderConversations();
+  if (!state.current && state.conversations.length && window.matchMedia("(max-width: 720px)").matches) {
+    await selectConversation(state.conversations[0]);
+  }
+}
+
+async function refreshConversationList() {
+  state.conversations = await api("/api/conversations");
+  await renderConversations();
+}
+
+async function renderConversations() {
+  elements.conversations.replaceChildren();
+  const pendingContacts = state.contacts.filter((contact) => contact.status === "pending");
+  for (const contact of pendingContacts) {
+    elements.conversations.append(renderContactRequest(contact));
+  }
+  if (!state.conversations.length && !pendingContacts.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted sidebar-empty";
+    empty.textContent = "Aucune conversation";
+    elements.conversations.append(empty);
+    return;
+  }
+  for (const conversation of state.conversations) {
+    if (conversation.type === "group" && conversation.role === "pending") {
+      elements.conversations.append(renderGroupInvitation(conversation));
+      continue;
+    }
+    const row = document.createElement("div");
+    row.className = "conversation-row swipe-row";
+    const actions = document.createElement("div");
+    actions.className = "swipe-actions conversation-swipe-actions";
+    const button = document.createElement("button");
+    button.className = `conversation-item swipe-surface ${state.current?.id === conversation.id ? "active" : ""}`;
+    const avatar = document.createElement("span");
+    avatar.className = "avatar";
+    avatar.textContent = conversation.type === "group" ? "G" : "@";
+    const copy = document.createElement("span");
+    const titleRow = document.createElement("span");
+    titleRow.className = "conversation-title-row";
+    const title = document.createElement("strong");
+    title.textContent = conversation.type === "group" ? "Groupe chiffré" : "Conversation privée";
+    const presence = document.createElement("span");
+    presence.className = "presence-indicator";
+    presence.hidden = true;
+    avatar.append(presence);
+    const unread = document.createElement("span");
+    unread.className = "unread-badge";
+    unread.hidden = !conversation.unread_count;
+    unread.textContent = conversation.unread_count > 99 ? "99+" : String(conversation.unread_count || "");
+    unread.setAttribute("aria-label", `${conversation.unread_count || 0} message${conversation.unread_count > 1 ? "s" : ""} non lu${conversation.unread_count > 1 ? "s" : ""}`);
+    const subtitle = document.createElement("small");
+    subtitle.className = "conversation-description";
+    subtitle.textContent = conversation.type === "group" ? "Groupe" : "Contact";
+    titleRow.append(title, unread);
+    copy.append(titleRow, subtitle);
+    button.append(avatar, copy);
+    button.onclick = () => selectConversation(conversation);
+    const canEdit = conversation.type === "group" && conversation.created_by === state.me.id;
+    if (canEdit) {
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "swipe-edit";
+      edit.append(actionIcon("edit"));
+      edit.title = "Modifier le groupe";
+      edit.setAttribute("aria-label", edit.title);
+      edit.onclick = () => editConversation(conversation, row);
+      actions.append(edit);
+    }
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "swipe-delete";
+    remove.append(actionIcon("delete"));
+    remove.title = conversation.type === "group" && conversation.created_by !== state.me.id
+      ? "Quitter le groupe"
+      : conversation.type === "private"
+        ? "Supprimer le contact"
+        : "Supprimer la discussion";
+    remove.setAttribute("aria-label", remove.title);
+    remove.onclick = () => deleteConversation(conversation, row);
+    actions.append(remove);
+    row.append(actions, button);
+    const swipe = bindSwipeActions(button, row, canEdit ? 112 : 56);
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "conversation-actions-toggle";
+    toggle.textContent = "•••";
+    toggle.title = "Afficher les actions";
+    toggle.setAttribute("aria-label", toggle.title);
+    toggle.onclick = (event) => {
+      event.stopPropagation();
+      swipe.toggle();
+    };
+    row.append(toggle);
+    elements.conversations.append(row);
+    resolveConversationDisplay(conversation).then(async (display) => {
+      const typing = await typingIndicator(conversation);
+      applyConversationPresence(presence, await conversationOnline(conversation));
+      title.textContent = display.title;
+      if (typing) {
+        renderTypingIndicator(subtitle, typing);
+      } else {
+        subtitle.textContent = await conversationListPreview(conversation, display);
+        subtitle.classList.remove("typing");
+        subtitle.removeAttribute("aria-label");
+      }
+      if (display.avatar) {
+        const image = document.createElement("img");
+        image.src = display.avatar;
+        image.alt = "";
+        avatar.replaceChildren(image, presence);
+      } else {
+        avatar.replaceChildren(document.createTextNode(display.title.slice(0, 1).toUpperCase()), presence);
+      }
+    }).catch(() => { title.textContent = "Conversation verrouillée"; });
+  }
+}
+
+function renderGroupInvitation(conversation) {
+  const row = document.createElement("div");
+  row.className = "contact-request-row";
+  const avatar = document.createElement("span");
+  avatar.className = "avatar";
+  avatar.textContent = "G";
+  const copy = document.createElement("span");
+  const title = document.createElement("strong");
+  title.textContent = "Invitation de groupe";
+  const subtitle = document.createElement("small");
+  subtitle.textContent = "En attente de votre acceptation";
+  copy.append(title, subtitle);
+  const actions = document.createElement("span");
+  actions.className = "contact-request-actions";
+  const accept = document.createElement("button");
+  accept.type = "button";
+  accept.textContent = "Accepter";
+  accept.onclick = () => acceptGroupInvitation(conversation, accept);
+  const refuse = document.createElement("button");
+  refuse.type = "button";
+  refuse.className = "outline";
+  refuse.textContent = "Refuser";
+  refuse.onclick = () => refuseGroupInvitation(conversation, refuse);
+  actions.append(accept, refuse);
+  row.append(avatar, copy, actions);
+  resolveConversationDisplay(conversation).then((display) => {
+    title.textContent = display.title;
+    subtitle.textContent = "Invitation de groupe";
+    if (display.avatar) {
+      const image = document.createElement("img");
+      image.src = display.avatar;
+      image.alt = "";
+      avatar.replaceChildren(image);
+    }
+  }).catch(() => {});
+  return row;
+}
+
+async function acceptGroupInvitation(conversation, button) {
+  setBusy(button, true);
+  try {
+    await api(`/api/conversations/${conversation.id}/accept`, { method: "POST" });
+    await refreshAll();
+    const accepted = state.conversations.find((item) => item.id === conversation.id);
+    if (accepted) await selectConversation(accepted);
+    toast("Invitation de groupe acceptée.", "success");
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible d’accepter ce groupe."), "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function refuseGroupInvitation(conversation, button) {
+  setBusy(button, true);
+  try {
+    await api(`/api/conversations/${conversation.id}`, { method: "DELETE" });
+    state.keys.delete(conversation.id);
+    state.members.delete(conversation.id);
+    await refreshAll();
+    toast("Invitation de groupe refusée.", "success");
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible de refuser ce groupe."), "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+function renderContactRequest(contact) {
+  const row = document.createElement("div");
+  row.className = "contact-request-row";
+  const avatar = document.createElement("span");
+  avatar.className = "avatar";
+  if (contact.avatar) {
+    const image = document.createElement("img");
+    image.src = contact.avatar;
+    image.alt = "";
+    avatar.append(image);
+  } else {
+    avatar.textContent = (contact.display_name || contact.username || "?").slice(0, 1).toUpperCase();
+  }
+  const copy = document.createElement("span");
+  const title = document.createElement("strong");
+  title.textContent = contact.display_name || contact.username;
+  const subtitle = document.createElement("small");
+  subtitle.textContent = contact.direction === "incoming" ? "Demande de contact" : "En attente d’acceptation";
+  copy.append(title, subtitle);
+  row.append(avatar, copy);
+  const actions = document.createElement("span");
+  actions.className = "contact-request-actions";
+  if (contact.direction === "incoming") {
+    const accept = document.createElement("button");
+    accept.type = "button";
+    accept.textContent = "Accepter";
+    accept.onclick = () => acceptContact(contact, accept);
+    actions.append(accept);
+  }
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "outline";
+  remove.textContent = contact.direction === "incoming" ? "Refuser" : "Annuler";
+  remove.onclick = () => deleteContactRequest(contact, remove);
+  actions.append(remove);
+  row.append(actions);
+  return row;
+}
+
+async function acceptContact(contact, button) {
+  setBusy(button, true);
+  try {
+    const result = await api(`/api/contacts/${contact.id}/accept`, { method: "POST" });
+    await refreshAll();
+    const conversation = state.conversations.find((item) => item.id === result.conversation_id);
+    if (conversation) {
+      await selectConversation(conversation);
+      await renderConversations();
+    }
+    toast("Contact accepté.", "success");
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible d’accepter ce contact."), "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function deleteContactRequest(contact, button) {
+  setBusy(button, true);
+  try {
+    await api(`/api/contacts/${contact.id}`, { method: "DELETE" });
+    await refreshAll();
+    toast(contact.direction === "incoming" ? "Demande refusée." : "Demande annulée.", "success");
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible de modifier cette demande."), "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function editConversation(conversation, row) {
+  const current = await resolveConversationDisplay(conversation);
+  const currentDescription = current.description === "Groupe" ? "" : current.description;
+  const result = await groupEditDialog({
+    name: current.title,
+    description: currentDescription,
+    avatar: current.customAvatar,
+  });
+  if (!result || (
+    result.name === current.title
+    && result.description === currentDescription
+    && result.avatar === current.customAvatar
+  )) {
+    row.dispatchEvent(new Event("swipe-close"));
+    return;
+  }
+  try {
+    const key = await getConversationKey(conversation);
+    const encryptedTitle = await encryptEnvelope(key, result.name);
+    const encryptedDescription = result.description
+      ? await encryptEnvelope(key, result.description)
+      : null;
+    const encryptedAvatar = result.avatar
+      ? await encryptEnvelope(key, result.avatar)
+      : null;
+    await api(`/api/conversations/${conversation.id}`, {
+      method: "PUT",
+      body: {
+        encrypted_title: encryptedTitle,
+        encrypted_description: encryptedDescription,
+        encrypted_avatar: encryptedAvatar,
+      },
+    });
+    conversation.encrypted_title = encryptedTitle;
+    conversation.encrypted_description = encryptedDescription;
+    conversation.encrypted_avatar = encryptedAvatar;
+    if (state.current?.id === conversation.id) {
+      elements.title.textContent = result.name;
+      elements.description.textContent = result.description || "Groupe";
+    }
+    await renderConversations();
+    toast("Groupe modifié.", "success");
+  } catch (error) {
+    row.dispatchEvent(new Event("swipe-close"));
+    toast(frenchErrorMessage(error, "Impossible de modifier le groupe."), "error");
+  }
+}
+
+function closeCurrentConversation(conversationID) {
+  if (state.current?.id !== conversationID) return;
+  clearCallState(conversationID);
+  state.current = null;
+  clearFileCache();
+  state.messageClears.delete(conversationID);
+  clearConversationMessageExpirations(conversationID);
+  elements.input.value = "";
+  elements.input.disabled = true;
+  elements.send.disabled = true;
+  elements.emojiButton.disabled = true;
+  updateCallUI();
+  closeEmojiPicker();
+  elements.title.textContent = "Sélectionnez une conversation";
+  elements.description.textContent = "";
+  renderTypingIndicator(elements.typing, null);
+  renderTypingIndicator(elements.threadTyping, null);
+  elements.threadTyping.hidden = true;
+  elements.messages.replaceChildren();
+  const empty = document.createElement("div");
+  empty.id = "empty-chat";
+  empty.textContent = "Sélectionnez une conversation ou créez-en une nouvelle.";
+  elements.messages.append(empty);
+}
+
+async function deleteConversation(conversation, button) {
+  const isOwner = conversation.created_by === state.me.id;
+  const question = conversation.type === "private"
+    ? "Supprimer ce contact et la discussion privée pour les deux participants ?"
+    : isOwner
+      ? "Supprimer définitivement ce groupe pour tous les membres ?"
+      : "Quitter ce groupe ?";
+  const confirmed = await actionDialog({
+    title: conversation.type === "private"
+      ? "Supprimer le contact"
+      : conversation.type === "group" && !isOwner
+        ? "Quitter le groupe"
+        : "Supprimer la discussion",
+    message: question,
+    confirmLabel: conversation.type === "group" && !isOwner ? "Quitter" : "Supprimer",
+    danger: true,
+  });
+  if (!confirmed) {
+    button.dispatchEvent(new Event("swipe-close"));
+    return;
+  }
+  button.classList.add("action-pending");
+  try {
+    const result = await api(`/api/conversations/${conversation.id}`, { method: "DELETE" });
+    closeCurrentConversation(conversation.id);
+    state.keys.delete(conversation.id);
+    state.members.delete(conversation.id);
+    state.messageClears.delete(conversation.id);
+    await refreshAll();
+    toast(result.action === "left" ? "Vous avez quitté le groupe." : conversation.type === "private" ? "Contact supprimé." : "Discussion supprimée.", "success");
+  } catch (error) {
+    button.classList.remove("action-pending");
+    button.dispatchEvent(new Event("swipe-close"));
+    toast(frenchErrorMessage(error, "Impossible de supprimer la discussion."), "error");
+  }
+}
+
+async function getMembers(conversationID) {
+  if (!state.members.has(conversationID)) {
+    state.members.set(conversationID, await api(`/api/conversations/${conversationID}/members`));
+  }
+  return state.members.get(conversationID);
+}
+
+async function conversationOnline(conversation) {
+  const members = await getMembers(conversation.id);
+  return members.some((member) => (
+    member.user_id !== state.me.id
+    && member.role !== "pending"
+    && state.onlineUsers.has(String(member.user_id))
+  ));
+}
+
+function applyConversationPresence(dot, online) {
+  dot.hidden = !online;
+  dot.classList.toggle("online", online);
+  dot.title = online ? "En ligne" : "";
+  dot.setAttribute("aria-label", online ? "Contact en ligne" : "Contact hors ligne");
+}
+
+function activeTypingUsers(conversationID) {
+  return [...(state.typing.get(conversationID)?.keys() || [])];
+}
+
+function clearTypingUser(conversationID, userID) {
+  const timerKey = `${conversationID}:${userID}`;
+  clearTimeout(state.typingTimers.get(timerKey));
+  state.typingTimers.delete(timerKey);
+  const users = state.typing.get(conversationID);
+  if (!users) return;
+  users.delete(userID);
+  if (!users.size) state.typing.delete(conversationID);
+}
+
+function typingFallbackLabel(conversationID) {
+  const count = activeTypingUsers(conversationID).length;
+  if (!count) return "";
+  return count === 1 ? "écrit…" : "écrivent…";
+}
+
+async function typingIndicator(conversation) {
+  const userIDs = activeTypingUsers(conversation.id);
+  if (!userIDs.length) return null;
+  const members = await getMembers(conversation.id);
+  const names = userIDs
+    .map((userID) => members.find((member) => member.user_id === userID))
+    .filter(Boolean)
+    .map((member) => member.display_name || member.username);
+  if (!names.length) return { prefix: "", label: typingFallbackLabel(conversation.id) };
+  if (conversation.type === "private") return { prefix: "", label: `${names[0]} écrit…` };
+  if (names.length === 1) return { prefix: names[0], label: `${names[0]} écrit…` };
+  if (names.length === 2) {
+    const prefix = `${names[0]} et ${names[1]}`;
+    return { prefix, label: `${prefix} écrivent…` };
+  }
+  const prefix = `${names[0]} et ${names.length - 1} autres`;
+  return { prefix, label: `${prefix} écrivent…` };
+}
+
+function renderTypingIndicator(container, indicator) {
+  if (!container) return;
+  container.replaceChildren();
+  container.classList.toggle("typing", Boolean(indicator));
+  if (!indicator) {
+    container.removeAttribute("aria-label");
+    return;
+  }
+  container.setAttribute("aria-label", indicator.label);
+  const dots = document.createElement("span");
+  dots.className = "typing-dots";
+  dots.setAttribute("aria-hidden", "true");
+  for (let index = 0; index < 3; index++) {
+    dots.append(document.createElement("span"));
+  }
+  container.append(dots);
+}
+
+async function refreshTypingIndicators(conversationID) {
+  if (state.current?.id === conversationID) {
+    const indicator = state.current ? await typingIndicator(state.current) : null;
+    renderTypingIndicator(elements.typing, indicator);
+    renderTypingIndicator(elements.threadTyping, indicator);
+    elements.threadTyping.hidden = !indicator;
+  }
+  await renderConversations();
+}
+
+async function setTypingUser(conversationID, userID, typing) {
+  if (userID === state.me.id) return;
+  clearTypingUser(conversationID, userID);
+  if (typing) {
+    if (!state.typing.has(conversationID)) state.typing.set(conversationID, new Map());
+    state.typing.get(conversationID).set(userID, Date.now());
+    const timerKey = `${conversationID}:${userID}`;
+    state.typingTimers.set(timerKey, setTimeout(() => {
+      clearTypingUser(conversationID, userID);
+      refreshTypingIndicators(conversationID).catch(() => {});
+    }, 3500));
+  }
+  await refreshTypingIndicators(conversationID);
+}
+
+async function getConversationKey(conversation) {
+  if (state.keys.has(conversation.id)) return state.keys.get(conversation.id);
+  const members = await getMembers(conversation.id);
+  let key;
+  if (conversation.type === "private") {
+    const peer = members.find((member) => member.user_id !== state.me.id);
+    if (!peer) throw new Error("Participant introuvable.");
+    key = await privateConversationKey(state.privateKey, peer.public_key, conversation.id, conversation.federation_key_id || "");
+  } else {
+    const envelope = JSON.parse(conversation.encrypted_conversation_key);
+    const sender = members.find((member) => member.user_id === envelope.sender_id);
+    if (!sender) throw new Error("Créateur du groupe introuvable.");
+    key = await unwrapGroupKey(conversation.encrypted_conversation_key, state.privateKey, sender.public_key);
+  }
+  state.keys.set(conversation.id, key);
+  return key;
+}
+
+async function resolveConversationTitle(conversation) {
+  return (await resolveConversationDisplay(conversation)).title;
+}
+
+async function resolveConversationDisplay(conversation) {
+  const members = await getMembers(conversation.id);
+  if (conversation.type === "private") {
+    const peer = members.find((member) => member.user_id !== state.me.id);
+    return {
+      title: peer?.display_name || peer?.username || "Conversation privée",
+      description: conversation.federation_instance_url
+        ? `${peer?.username || conversation.remote_username}@${new URL(conversation.federation_instance_url).host}`
+        : peer?.description || "",
+      avatar: peer?.avatar || null,
+      customAvatar: peer?.avatar || null,
+    };
+  }
+  const key = await getConversationKey(conversation);
+  const description = conversation.encrypted_description
+    ? await decryptEnvelope(key, conversation.encrypted_description)
+    : "Groupe";
+  const avatar = conversation.encrypted_avatar
+    ? await decryptEnvelope(key, conversation.encrypted_avatar)
+    : null;
+  return {
+    title: await decryptEnvelope(key, conversation.encrypted_title),
+    description,
+    avatar,
+    customAvatar: conversation.encrypted_avatar ? avatar : null,
+  };
+}
+
+async function conversationListPreview(conversation, display) {
+  if (conversation.last_message_has_file) return "Fichier chiffré";
+  if (conversation.last_message_encrypted_content && conversation.last_message_iv) {
+    try {
+      const key = await getConversationKey(conversation);
+      const clear = await decryptText(key, conversation.last_message_encrypted_content, conversation.last_message_iv);
+      return compactPreviewText(clear) || "Message chiffré";
+    } catch {
+      return "Message chiffré";
+    }
+  }
+  return display.description || (conversation.type === "group" ? "Groupe" : "Contact");
+}
+
+function compactPreviewText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+async function selectConversation(conversation) {
+  if (conversation.role === "pending") {
+    toast("Acceptez cette invitation avant d’ouvrir le groupe.", "error");
+    return;
+  }
+  if (!sameID(state.current?.id, conversation.id)) clearVoiceDraft();
+  state.current = conversation;
+  conversation.unread_count = 0;
+  const listed = state.conversations.find((item) => sameID(item.id, conversation.id));
+  if (listed) listed.unread_count = 0;
+  elements.shell.classList.remove("sidebar-open");
+  const sidebarButton = document.querySelector("#open-sidebar-logo");
+  sidebarButton.setAttribute("aria-expanded", "false");
+  sidebarButton.setAttribute("aria-label", "Afficher les contacts, groupes et conversations");
+  sidebarButton.title = "Afficher les contacts et groupes";
+  elements.input.disabled = false;
+  elements.send.disabled = false;
+  elements.emojiButton.disabled = false;
+  elements.voiceButton.disabled = false;
+  updateCallButtons();
+  const selectedID = conversation.id;
+  const display = await resolveConversationDisplay(conversation);
+  if (!sameID(state.current?.id, selectedID)) return;
+  elements.title.textContent = display.title;
+  elements.description.textContent = display.description || (conversation.type === "group" ? "Groupe" : "Contact");
+  const typing = await typingIndicator(conversation);
+  renderTypingIndicator(elements.typing, typing);
+  renderTypingIndicator(elements.threadTyping, typing);
+  elements.threadTyping.hidden = !typing;
+  await renderConversations();
+  await loadMessages();
+  updateCallUI();
+  elements.input.focus({ preventScroll: true });
+}
+
+function canSignalCall(conversation = state.current) {
+  return Boolean(conversation && ["private", "group"].includes(conversation.type) && state.socket?.socket?.readyState === WebSocket.OPEN);
+}
+
+function sameID(left, right) {
+  return left != null && right != null && String(left) === String(right);
+}
+
+function updateCallButtons() {
+  const enabled = canSignalCall() && !state.call;
+  elements.audioCallButton.disabled = !enabled;
+  elements.videoCallButton.disabled = !enabled;
+  elements.audioCallButton.title = state.current?.type === "group" ? "Appel audio de groupe" : "Appel audio";
+  elements.videoCallButton.title = state.current?.type === "group" ? "Appel vidéo de groupe" : "Appel vidéo";
+}
+
+function callLabel(media) {
+  return media === "video" ? "appel vidéo" : "appel audio";
+}
+
+function callHistoryLabel(media) {
+  return media === "video" ? "Appel vidéo" : "Appel audio";
+}
+
+function configureCallVideoElement(video) {
+  video.autoplay = true;
+  video.playsInline = true;
+  video.controls = false;
+  video.disablePictureInPicture = true;
+  video.disableRemotePlayback = true;
+  video.setAttribute("playsinline", "");
+  video.setAttribute("webkit-playsinline", "");
+  video.setAttribute("controlslist", "nofullscreen nodownload noremoteplayback");
+}
+
+function callRejectMessage(reason) {
+  if (reason === "busy") return "Correspondant occupé.";
+  if (reason === "timeout") return "Appel sans réponse.";
+  if (reason === "media_error") return "Microphone ou caméra indisponible chez le correspondant.";
+  return "Appel refusé.";
+}
+
+function currentCallTitle() {
+  return state.call?.callerName || "un contact";
+}
+
+function callConversation(call = state.call) {
+  if (!call) return null;
+  return state.conversations.find((item) => item.id === call.conversationID) || null;
+}
+
+function isGroupCall(call = state.call) {
+  return callConversation(call)?.type === "group";
+}
+
+function callPeers(call = state.call) {
+  if (!call) return new Map();
+  if (!call.peers) call.peers = new Map();
+  return call.peers;
+}
+
+function getCallPeer(userID) {
+  if (!state.call || !userID) return null;
+  const peers = callPeers();
+  if (!peers.has(userID)) {
+    peers.set(userID, {
+      userID,
+      peer: null,
+      pendingCandidates: [],
+      remoteStream: null,
+      audioElement: null,
+      videoElement: null,
+      connected: false,
+      needsIceRestart: false,
+      iceRestarting: false,
+      iceRestartAttempts: 0,
+      iceRestartTimeout: null,
+      whiteboardChannel: null,
+    });
+  }
+  return peers.get(userID);
+}
+
+function activeCallPeerCount() {
+  if (!state.call?.peers) return 0;
+  return [...state.call.peers.values()].filter((peer) => peer.connected || peer.remoteStream).length;
+}
+
+async function memberDisplayName(conversationID, userID, fallback = "un contact") {
+  const members = await getMembers(conversationID).catch(() => []);
+  const member = members.find((item) => item.user_id === userID);
+  return member?.display_name || member?.username || fallback;
+}
+
+function newCallID() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return `call-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function sendCallSignal(type, extra = {}) {
+  const conversationID = extra.conversation_id || state.call?.conversationID || state.current?.id;
+  if (!conversationID) return;
+  const { conversation_id: ignoredConversationID, ...payload } = extra;
+  state.socket.send({
+    type,
+    conversation_id: conversationID,
+    ...payload,
+  });
+}
+
+async function startCallInvite(media) {
+  if (!canSignalCall() || state.call) return;
+  const call = {
+    id: newCallID(),
+    conversationID: state.current.id,
+    media,
+    direction: "outgoing",
+    status: "ringing",
+    facingMode: "user",
+    peers: new Map(),
+    acceptedUserIDs: new Set(),
+  };
+  state.call = call;
+  sendCallSignal("call_invite", { call_id: call.id, media });
+  startOutgoingCallTimeout(call);
+  updateCallUI();
+}
+
+async function acceptIncomingCall() {
+  if (!state.call || state.call.direction !== "incoming") return;
+  clearCallAlerts();
+  state.call.status = "connecting";
+  updateCallUI();
+  try {
+    await openCallConversation();
+    await ensureLocalCallStream();
+    state.call.status = "accepted";
+    sendCallSignal("call_accept", { call_id: state.call.id, media: state.call.media });
+    await connectAcceptedCallPeers();
+    updateCallUI();
+  } catch (error) {
+    sendCallSignal("call_reject", {
+      call_id: state.call.id,
+      media: state.call.media,
+      reason: "media_error",
+      target_user_id: state.call.callerID,
+    });
+    clearCallState();
+    toast(frenchErrorMessage(error, "Microphone ou caméra inaccessible."), "error");
+  }
+}
+
+async function openCallConversation() {
+  const conversationID = state.call?.conversationID;
+  if (!conversationID || sameID(state.current?.id, conversationID)) return;
+  let conversation = state.conversations.find((item) => sameID(item.id, conversationID));
+  if (!conversation) {
+    state.conversations = await api("/api/conversations");
+    await renderConversations();
+    conversation = state.conversations.find((item) => sameID(item.id, conversationID));
+  }
+  if (!conversation) {
+    toast("Conversation d’appel introuvable.", "error");
+    return;
+  }
+  await selectConversation(conversation);
+}
+
+function rejectIncomingCall(reason) {
+  if (!state.call || state.call.direction !== "incoming") return;
+  if (reason === "rejected") {
+    logCallHistory(state.call, `${callHistoryLabel(state.call.media)} refusé.`);
+  }
+  sendCallSignal("call_reject", { call_id: state.call.id, media: state.call.media, reason, target_user_id: state.call.callerID });
+  clearCallState();
+}
+
+function hangupCall(reason) {
+  if (!state.call) return;
+  if (state.call.closing) return;
+  logCallHistory(state.call, callHangupHistoryText(state.call, reason));
+  sendCallSignal("call_hangup", { call_id: state.call.id, media: state.call.media, reason });
+  clearCallState();
+}
+
+function handleCallPageExit() {
+  if (callPageExitHandled || !state.call) return;
+  callPageExitHandled = true;
+  const call = state.call;
+  const isUnansweredIncoming = call.direction === "incoming" && call.status === "ringing";
+  const payload = {
+    type: isUnansweredIncoming ? "call_reject" : "call_hangup",
+    conversation_id: call.conversationID,
+    call_id: call.id,
+    media: call.media,
+    reason: "reload",
+  };
+  if (isUnansweredIncoming && call.callerID) payload.target_user_id = call.callerID;
+  try {
+    if (state.socket?.socket?.readyState === WebSocket.OPEN) {
+      state.socket.socket.send(JSON.stringify(payload));
+    }
+  } catch (error) {
+    console.warn("Signal de fin d’appel avant rechargement impossible", error);
+  }
+  closeCallResources();
+  state.call = null;
+}
+
+function scheduleCallInterruptForSignalLoss() {
+  if (!state.call || state.call.signalLossTimeout) return;
+  const call = state.call;
+  call.signalLossTimeout = setTimeout(() => {
+    if (!state.call || state.call !== call || state.socket?.socket?.readyState === WebSocket.OPEN) return;
+    call.signalLossTimeout = null;
+    interruptCallForSignalLoss();
+  }, CALL_SIGNAL_LOSS_GRACE_MS);
+  toast("Connexion au serveur instable. L’appel reste actif pendant la reconnexion.", "error");
+}
+
+function clearCallSignalLossTimer(call = state.call) {
+  if (!call?.signalLossTimeout) return;
+  clearTimeout(call.signalLossTimeout);
+  call.signalLossTimeout = null;
+}
+
+function interruptCallForSignalLoss() {
+  if (!state.call) return;
+  logCallHistory(state.call, `${callHistoryLabel(state.call.media)} interrompu : connexion perdue.`);
+  clearCallState();
+  toast("Appel interrompu : connexion au serveur perdue.", "error");
+}
+
+function callHangupHistoryText(call, reason) {
+  if (call.status === "ringing" && call.direction === "outgoing") return `${callHistoryLabel(call.media)} annulé.`;
+  if (reason === "connection_failed" || reason === "media_error") return `${callHistoryLabel(call.media)} interrompu.`;
+  return `${callHistoryLabel(call.media)} terminé.`;
+}
+
+function logCallHistory(call, text) {
+  if (!call || call.historyLogged) return;
+  call.historyLogged = true;
+  sendCallHistoryMessage(call.conversationID, text).catch((error) => {
+    console.warn("Journalisation d’appel impossible", error);
+  });
+}
+
+async function sendCallHistoryMessage(conversationID, text) {
+  const conversation = state.conversations.find((item) => item.id === conversationID);
+  if (!conversation || !text) return;
+  const key = await getConversationKey(conversation);
+  const encrypted = await encryptText(key, text);
+  const message = await api(`/api/conversations/${conversationID}/messages`, {
+    method: "POST",
+    body: {
+      encrypted_content: encrypted.data,
+      iv: encrypted.iv,
+      reply_to: null,
+      expires_in_seconds: 86400,
+    },
+  });
+  if (state.current?.id === conversationID) await appendMessage(message, false);
+  else await refreshAll();
+}
+
+async function clearCallState(conversationID = state.call?.conversationID) {
+  if (state.call && conversationID && !sameID(state.call.conversationID, conversationID)) return;
+  const call = state.call;
+  if (call?.closing) return;
+  if (call) call.closing = true;
+  clearCallSignalLossTimer(call);
+  await exitCallFullscreen();
+  closeCallResources(call);
+  if (state.call === call) state.call = null;
+  updateCallUI();
+}
+
+function closeCallResources(call = state.call) {
+  clearCallAlerts(call);
+  if (call?.peers) {
+    for (const peerState of call.peers.values()) {
+      closeCallPeer(peerState);
+    }
+  }
+  call?.localStream?.getTracks().forEach((track) => track.stop());
+  call?.screenStream?.getTracks().forEach((track) => track.stop());
+  elements.remoteCallAudio.pause();
+  elements.remoteCallAudio.srcObject = null;
+  delete elements.remoteCallAudio.dataset.peerId;
+  elements.remoteCallAudio.hidden = true;
+  elements.remoteCallAudioPeers.replaceChildren();
+  elements.remoteCallAudioPeers.hidden = true;
+  elements.remoteCallVideo.pause();
+  elements.localCallVideo.pause();
+  elements.remoteCallVideo.srcObject = null;
+  delete elements.remoteCallVideo.dataset.peerId;
+  for (const video of [...elements.remoteCallVideos.querySelectorAll("video")]) {
+    if (video !== elements.remoteCallVideo) video.remove();
+  }
+  elements.localCallVideo.srcObject = null;
+  elements.callVideoStage.hidden = true;
+}
+
+function closeCallPeer(peerState) {
+  if (!peerState) return;
+  clearPeerIceRestartTimer(peerState);
+  if (peerState.peer) {
+    peerState.peer.onicecandidate = null;
+    peerState.peer.ontrack = null;
+    peerState.peer.ondatachannel = null;
+    peerState.peer.onconnectionstatechange = null;
+    peerState.peer.onsignalingstatechange = null;
+    peerState.peer.close();
+    peerState.peer = null;
+  }
+  if (peerState.whiteboardChannel) {
+    peerState.whiteboardChannel.onopen = null;
+    peerState.whiteboardChannel.onmessage = null;
+    peerState.whiteboardChannel.onclose = null;
+    peerState.whiteboardChannel.close();
+    peerState.whiteboardChannel = null;
+  }
+  clearRemoteMediaForPeer(peerState);
+}
+
+function clearRemoteMediaForPeer(peerState) {
+  if (peerState.audioElement) {
+    peerState.audioElement.pause();
+    peerState.audioElement.srcObject = null;
+    if (peerState.audioElement === elements.remoteCallAudio) {
+      delete elements.remoteCallAudio.dataset.peerId;
+      elements.remoteCallAudio.hidden = true;
+    } else {
+      peerState.audioElement.remove();
+    }
+    peerState.audioElement = null;
+  }
+  if (peerState.videoElement) {
+    peerState.videoElement.pause();
+    peerState.videoElement.srcObject = null;
+    if (peerState.videoElement === elements.remoteCallVideo) {
+      delete elements.remoteCallVideo.dataset.peerId;
+    } else {
+      peerState.videoElement.remove();
+    }
+    peerState.videoElement = null;
+  }
+  peerState.remoteStream = null;
+  elements.remoteCallAudioPeers.hidden = !elements.remoteCallAudioPeers.children.length;
+}
+
+function clearPeerIceRestartTimer(peerState) {
+  if (!peerState?.iceRestartTimeout) return;
+  clearTimeout(peerState.iceRestartTimeout);
+  peerState.iceRestartTimeout = null;
+}
+
+function clearCallAlerts(call = state.call) {
+  if (!call) return;
+  if (call.timeout) {
+    clearTimeout(call.timeout);
+    call.timeout = null;
+  }
+  if (call.ringtone?.interval) clearInterval(call.ringtone.interval);
+  call.ringtone?.audioContext?.close().catch(() => {});
+  call.ringtone = null;
+}
+
+function startOutgoingCallTimeout(call) {
+  call.timeout = setTimeout(() => {
+    if (!state.call || state.call.id !== call.id || state.call.status !== "ringing") return;
+    logCallHistory(call, `${callHistoryLabel(call.media)} manqué.`);
+    sendCallSignal("call_hangup", { call_id: call.id, media: call.media, reason: "no_answer" });
+    toast("Appel sans réponse.");
+    clearCallState(call.conversationID);
+  }, CALL_INVITE_TIMEOUT_MS);
+}
+
+function startIncomingCallAlerts(call) {
+  clearCallAlerts(call);
+  startIncomingRingtone(call);
+  call.timeout = setTimeout(() => {
+    if (!state.call || state.call.id !== call.id || state.call.status !== "ringing") return;
+    sendCallSignal("call_reject", {
+      conversation_id: call.conversationID,
+      call_id: call.id,
+      media: call.media,
+      reason: "timeout",
+      target_user_id: call.callerID,
+    });
+    toast("Appel manqué.");
+    clearCallState(call.conversationID);
+  }, CALL_INVITE_TIMEOUT_MS);
+}
+
+function startIncomingRingtone(call) {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  try {
+    const audioContext = new AudioContextClass();
+    const gain = audioContext.createGain();
+    gain.gain.value = 0.0001;
+    gain.connect(audioContext.destination);
+    const ring = () => {
+      if (!state.call || state.call.id !== call.id || state.call.status !== "ringing") return;
+      audioContext.resume().catch(() => {});
+      const now = audioContext.currentTime;
+      const oscillator = audioContext.createOscillator();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(880, now);
+      oscillator.connect(gain);
+      gain.gain.cancelScheduledValues(now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.12, now + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
+      oscillator.start(now);
+      oscillator.stop(now + 0.55);
+    };
+    ring();
+    call.ringtone = {
+      audioContext,
+      interval: setInterval(ring, 1600),
+    };
+  } catch (error) {
+    console.warn("Sonnerie d’appel indisponible", error);
+  }
+}
+
+function updateCallUI() {
+  updateCallButtons();
+  if (!state.call) {
+    elements.callBanner.hidden = true;
+    elements.callBanner.classList.remove("navigate");
+    elements.callTurnIndicator.hidden = true;
+    elements.callTurnIndicator.className = "call-turn-indicator";
+    elements.callTurnIndicator.textContent = "";
+    elements.callTurnIndicator.removeAttribute("aria-label");
+    elements.callTurnIndicator.removeAttribute("title");
+    elements.callOpenConversationButton.hidden = true;
+    elements.callMuteButton.hidden = true;
+    elements.callCameraButton.hidden = true;
+    elements.callFullscreenButton.hidden = true;
+    elements.callSwitchCameraButton.hidden = true;
+    elements.callScreenShareButton.hidden = true;
+    elements.callWhiteboardButton.hidden = true;
+    elements.callWhiteboardButton.classList.remove("selected");
+    elements.callWhiteboard.hidden = true;
+    elements.callBanner.classList.remove("whiteboard-open");
+    elements.callBanner.classList.remove("whiteboard-fullscreen");
+    elements.callVideoStage.classList.remove("screen-sharing");
+    return;
+  }
+  const currentConversation = sameID(state.call.conversationID, state.current?.id);
+  const incoming = state.call.direction === "incoming" && state.call.status === "ringing";
+  const accepted = state.call.status === "accepted";
+  const connecting = state.call.status === "connecting";
+  const outgoing = state.call.direction === "outgoing" && state.call.status === "ringing";
+  const peerCount = activeCallPeerCount();
+  const groupSuffix = isGroupCall() && peerCount ? ` (${peerCount + 1} participants)` : "";
+  elements.callBanner.hidden = false;
+  elements.callBanner.classList.toggle("navigate", !currentConversation);
+  elements.callBannerLabel.textContent = incoming
+    ? `${callLabel(state.call.media)} entrant de ${currentCallTitle()}`
+    : outgoing
+      ? `${callLabel(state.call.media)} en attente`
+      : connecting
+        ? `${callLabel(state.call.media)} en connexion`
+        : `${callLabel(state.call.media)} en cours${groupSuffix}`;
+  syncCallRouteIndicator();
+  elements.callOpenConversationButton.hidden = currentConversation || incoming;
+  elements.callAcceptButton.hidden = !incoming;
+  elements.callRejectButton.hidden = !incoming;
+  elements.callHangupButton.hidden = incoming ? true : !(outgoing || connecting || accepted);
+  const controlsVisible = connecting || accepted;
+  elements.callMuteButton.hidden = !controlsVisible;
+  elements.callCameraButton.hidden = !controlsVisible || state.call.media !== "video";
+  elements.callFullscreenButton.hidden = !controlsVisible || state.call.media !== "video";
+  elements.callSwitchCameraButton.hidden = !controlsVisible || state.call.media !== "video" || state.call.screenSharing;
+  elements.callScreenShareButton.hidden = !controlsVisible;
+  elements.callWhiteboardButton.hidden = !controlsVisible || state.call.media !== "video" || !currentConversation;
+  elements.callVideoStage.classList.toggle("screen-sharing", Boolean(state.call.screenSharing));
+  updateWhiteboardVisibility();
+  syncCallControlLabels();
+  elements.callVideoStage.hidden = !currentConversation || state.call.media !== "video" || incoming || outgoing;
+  elements.remoteCallAudio.hidden = !currentConversation || state.call.media !== "audio" || incoming || outgoing;
+  elements.remoteCallAudioPeers.hidden = elements.remoteCallAudioPeers.hidden || !currentConversation || state.call.media !== "audio" || incoming || outgoing;
+}
+
+function syncCallControlLabels() {
+  if (!state.call?.localStream) {
+    setCallActionButton(elements.callMuteButton, "Couper le micro", "mic");
+    setCallActionButton(elements.callCameraButton, "Couper la caméra", "video");
+    setCallActionButton(elements.callScreenShareButton, "Partager l’écran", "screen-share");
+    return;
+  }
+  const audioTrack = state.call.localStream.getAudioTracks()[0];
+  const videoTrack = state.call.localStream.getVideoTracks()[0];
+  setCallActionButton(
+    elements.callMuteButton,
+    audioTrack?.enabled === false ? "Réactiver le micro" : "Couper le micro",
+    audioTrack?.enabled === false ? "mic-off" : "mic",
+  );
+  setCallActionButton(
+    elements.callCameraButton,
+    state.call.screenSharing
+      ? videoTrack?.enabled === false ? "Afficher le partage" : "Masquer le partage"
+      : videoTrack?.enabled === false ? "Réactiver la caméra" : "Couper la caméra",
+    state.call.screenSharing
+      ? videoTrack?.enabled === false ? "screen-off" : "screen"
+      : videoTrack?.enabled === false ? "video-off" : "video",
+  );
+  setCallActionButton(
+    elements.callScreenShareButton,
+    state.call.screenSharing ? "Arrêter le partage d’écran" : "Partager l’écran",
+    state.call.screenSharing ? "screen-stop" : "screen-share",
+  );
+}
+
+function setCallActionButton(button, label, icon) {
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.innerHTML = callActionIconMarkup(icon);
+}
+
+function callActionIconMarkup(icon) {
+  const paths = {
+    mic: ["M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z", "M19 10v2a7 7 0 0 1-14 0v-2", "M12 19v3", "M8 22h8"],
+    "mic-off": ["m2 2 20 20", "M9 9v3a3 3 0 0 0 5.12 2.12", "M15 9.34V5a3 3 0 0 0-5.94-.6", "M17 16.95A7 7 0 0 1 5 12v-2", "M19 10v2a6.9 6.9 0 0 1-.7 3", "M12 19v3", "M8 22h8"],
+    video: ["M15 10.5V6.8A2.8 2.8 0 0 0 12.2 4H5.8A2.8 2.8 0 0 0 3 6.8v10.4A2.8 2.8 0 0 0 5.8 20h6.4a2.8 2.8 0 0 0 2.8-2.8v-3.7l4.15 3.05A1.15 1.15 0 0 0 21 15.62V8.38a1.15 1.15 0 0 0-1.85-.93L15 10.5Z"],
+    "video-off": ["m2 2 20 20", "M10.66 4H5.8A2.8 2.8 0 0 0 3 6.8v10.4A2.8 2.8 0 0 0 5.8 20h6.4A2.8 2.8 0 0 0 15 17.2v-2.54", "M15 10.5V6.8c0-.77-.31-1.47-.82-1.98", "m19.15 7.45 1.7-1.25A1.15 1.15 0 0 1 22 9.13v5.74c0 .91-1.03 1.45-1.78.93L17 13.43"],
+    screen: ["M3 5h18v12H3Z", "M8 21h8", "M12 17v4"],
+    "screen-off": ["m2 2 20 20", "M9.5 5H21v12h-4", "M13 17H3V7.5", "M8 21h8", "M12 17v4"],
+    "screen-share": ["M3 5h18v12H3Z", "M8 21h8", "M12 17v4", "m9 10 3-3 3 3", "M12 7v7"],
+    "screen-stop": ["M3 5h18v12H3Z", "M8 21h8", "M12 17v4", "M9 8h6v6H9Z"],
+  }[icon] || [];
+  return `<svg class="call-action-icon" viewBox="0 0 24 24" aria-hidden="true">${paths.map((path) => `<path d="${path}"></path>`).join("")}</svg>`;
+}
+
+function bindWhiteboardControls() {
+  elements.callWhiteboard.querySelectorAll("[data-whiteboard-tool]").forEach((button) => {
+    button.addEventListener("click", () => setWhiteboardTool(button.dataset.whiteboardTool));
+  });
+  elements.whiteboardColor.addEventListener("input", () => {
+    const board = whiteboardState();
+    if (board) board.color = elements.whiteboardColor.value;
+  });
+  elements.whiteboardSize.addEventListener("input", () => {
+    const board = whiteboardState();
+    if (board) board.size = Number(elements.whiteboardSize.value) || 4;
+  });
+  elements.whiteboardUndo.addEventListener("click", undoWhiteboardOperation);
+  elements.whiteboardClear.addEventListener("click", clearWhiteboard);
+  elements.whiteboardSave.addEventListener("click", saveWhiteboardPNG);
+  elements.whiteboardFullscreen.addEventListener("click", toggleWhiteboardFullscreen);
+  elements.whiteboardCanvas.addEventListener("pointerdown", startWhiteboardPointer);
+  elements.whiteboardCanvas.addEventListener("pointermove", moveWhiteboardPointer);
+  elements.whiteboardCanvas.addEventListener("pointerup", finishWhiteboardPointer);
+  elements.whiteboardCanvas.addEventListener("pointercancel", cancelWhiteboardPointer);
+  window.addEventListener("resize", () => {
+    if (!elements.callWhiteboard.hidden) renderWhiteboard();
+  });
+}
+
+function whiteboardState() {
+  if (!state.call) return null;
+  if (!state.call.whiteboard) {
+    state.call.whiteboard = {
+      open: false,
+      tool: "pen",
+      color: elements.whiteboardColor.value || "#111827",
+      size: Number(elements.whiteboardSize.value) || 4,
+      operations: [],
+      draft: null,
+      fullscreen: false,
+    };
+  }
+  return state.call.whiteboard;
+}
+
+function toggleWhiteboard() {
+  const board = whiteboardState();
+  if (!board || state.call.media !== "video") return;
+  board.open = !board.open;
+  if (!board.open) board.fullscreen = false;
+  if (board.open) elements.shell.classList.remove("sidebar-open");
+  updateWhiteboardVisibility();
+}
+
+function updateWhiteboardVisibility() {
+  const board = state.call?.whiteboard || null;
+  const visible = Boolean(board?.open && state.call?.media === "video" && sameID(state.call.conversationID, state.current?.id));
+  elements.callWhiteboard.hidden = !visible;
+  elements.callWhiteboardButton.classList.toggle("selected", visible);
+  elements.callBanner.classList.toggle("whiteboard-open", visible);
+  elements.callBanner.classList.toggle("whiteboard-fullscreen", Boolean(visible && board.fullscreen));
+  elements.whiteboardFullscreen.classList.toggle("selected", Boolean(visible && board.fullscreen));
+  if (visible) {
+    syncWhiteboardToolbar();
+    requestAnimationFrame(renderWhiteboard);
+  }
+}
+
+function syncWhiteboardToolbar() {
+  const board = whiteboardState();
+  if (!board) return;
+  elements.whiteboardColor.value = board.color;
+  elements.whiteboardSize.value = String(board.size);
+  elements.whiteboardFullscreen.classList.toggle("selected", Boolean(board.fullscreen));
+  elements.whiteboardFullscreen.title = board.fullscreen ? "Quitter le plein écran" : "Plein écran";
+  elements.whiteboardFullscreen.setAttribute("aria-label", board.fullscreen ? "Quitter le plein écran" : "Plein écran");
+  elements.callWhiteboard.querySelectorAll("[data-whiteboard-tool]").forEach((button) => {
+    button.classList.toggle("selected", button.dataset.whiteboardTool === board.tool);
+  });
+}
+
+function setWhiteboardTool(tool) {
+  const board = whiteboardState();
+  if (!board) return;
+  board.tool = tool;
+  syncWhiteboardToolbar();
+}
+
+function toggleWhiteboardFullscreen() {
+  const board = whiteboardState();
+  if (!board) return;
+  board.fullscreen = !board.fullscreen;
+  if (board.fullscreen) elements.shell.classList.remove("sidebar-open");
+  updateWhiteboardVisibility();
+}
+
+function whiteboardPoint(event) {
+  const rect = elements.whiteboardCanvas.getBoundingClientRect();
+  return {
+    x: Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(rect.width, 1))),
+    y: Math.min(1, Math.max(0, (event.clientY - rect.top) / Math.max(rect.height, 1))),
+  };
+}
+
+function startWhiteboardPointer(event) {
+  const board = whiteboardState();
+  if (!board || elements.callWhiteboard.hidden || event.button !== 0) return;
+  event.preventDefault();
+  const point = whiteboardPoint(event);
+  if (board.tool === "text") {
+    placeWhiteboardText(point).catch((error) => {
+      console.warn("Ajout de texte au tableau impossible", error);
+    });
+    return;
+  }
+  elements.whiteboardCanvas.setPointerCapture(event.pointerId);
+  const base = {
+    id: newWhiteboardOperationID(),
+    author: state.me.id,
+    tool: board.tool,
+    color: board.color,
+    size: board.tool === "brush" ? board.size * 2 : board.size,
+  };
+  board.draft = ["pen", "brush", "eraser"].includes(board.tool)
+    ? { ...base, kind: "path", points: [point] }
+    : { ...base, kind: board.tool, start: point, end: point };
+  renderWhiteboard();
+}
+
+function moveWhiteboardPointer(event) {
+  const board = whiteboardState();
+  if (!board?.draft) return;
+  event.preventDefault();
+  const point = whiteboardPoint(event);
+  if (board.draft.kind === "path") {
+    board.draft.points.push(point);
+  } else {
+    board.draft.end = point;
+  }
+  renderWhiteboard();
+}
+
+function finishWhiteboardPointer(event) {
+  const board = whiteboardState();
+  if (!board?.draft) return;
+  event.preventDefault();
+  elements.whiteboardCanvas.releasePointerCapture(event.pointerId);
+  const operation = board.draft;
+  board.draft = null;
+  if (operation.kind === "path" && operation.points.length < 2) return;
+  addWhiteboardOperation(operation, true);
+}
+
+function cancelWhiteboardPointer(event) {
+  const board = whiteboardState();
+  if (!board?.draft) return;
+  board.draft = null;
+  if (elements.whiteboardCanvas.hasPointerCapture(event.pointerId)) {
+    elements.whiteboardCanvas.releasePointerCapture(event.pointerId);
+  }
+  renderWhiteboard();
+}
+
+async function placeWhiteboardText(point) {
+  const board = whiteboardState();
+  if (!board) return;
+  const text = await actionDialog({
+    title: "Texte",
+    inputLabel: "Texte",
+    singleLine: true,
+    maxLength: 120,
+    confirmLabel: "Ajouter",
+  });
+  if (!text) return;
+  addWhiteboardOperation({
+    id: newWhiteboardOperationID(),
+    author: state.me.id,
+    kind: "text",
+    tool: "text",
+    color: board.color,
+    size: Math.max(12, board.size * 5),
+    x: point.x,
+    y: point.y,
+    text,
+  }, true);
+}
+
+function newWhiteboardOperationID() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return `wb-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function addWhiteboardOperation(operation, broadcast) {
+  const board = whiteboardState();
+  if (!board || board.operations.some((item) => item.id === operation.id)) return;
+  board.operations.push(operation);
+  renderWhiteboard();
+  if (broadcast) sendWhiteboardPayload({ action: "op", operation });
+}
+
+function undoWhiteboardOperation() {
+  const board = whiteboardState();
+  if (!board?.operations.length) return;
+  const index = findLastIndex(board.operations, (operation) => operation.author === state.me.id);
+  const fallbackIndex = board.operations.length - 1;
+  const [removed] = board.operations.splice(index >= 0 ? index : fallbackIndex, 1);
+  renderWhiteboard();
+  if (removed) sendWhiteboardPayload({ action: "undo", operation_id: removed.id });
+}
+
+function clearWhiteboard() {
+  const board = whiteboardState();
+  if (!board || !board.operations.length) return;
+  board.operations = [];
+  board.draft = null;
+  renderWhiteboard();
+  sendWhiteboardPayload({ action: "clear" });
+}
+
+function findLastIndex(items, predicate) {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (predicate(items[index], index)) return index;
+  }
+  return -1;
+}
+
+function renderWhiteboard() {
+  const board = whiteboardState();
+  if (!board) return;
+  const canvas = elements.whiteboardCanvas;
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(1, rect.width);
+  const height = Math.max(1, rect.height);
+  const dpr = window.devicePixelRatio || 1;
+  const pixelWidth = Math.round(width * dpr);
+  const pixelHeight = Math.round(height * dpr);
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+  }
+  const context = canvas.getContext("2d");
+  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+  for (const operation of board.operations) drawWhiteboardOperation(context, operation, width, height);
+  if (board.draft) drawWhiteboardOperation(context, board.draft, width, height);
+}
+
+function drawWhiteboardOperation(context, operation, width, height) {
+  context.save();
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.lineWidth = Math.max(1, operation.size || 4);
+  context.strokeStyle = operation.tool === "eraser" ? "#ffffff" : operation.color || "#111827";
+  context.fillStyle = operation.color || "#111827";
+  if (operation.kind === "path") {
+    const [first, ...rest] = operation.points || [];
+    if (!first) {
+      context.restore();
+      return;
+    }
+    context.beginPath();
+    context.moveTo(first.x * width, first.y * height);
+    for (const point of rest) context.lineTo(point.x * width, point.y * height);
+    context.stroke();
+  } else if (operation.kind === "line") {
+    context.beginPath();
+    context.moveTo(operation.start.x * width, operation.start.y * height);
+    context.lineTo(operation.end.x * width, operation.end.y * height);
+    context.stroke();
+  } else if (operation.kind === "rect") {
+    const x = operation.start.x * width;
+    const y = operation.start.y * height;
+    context.strokeRect(x, y, operation.end.x * width - x, operation.end.y * height - y);
+  } else if (operation.kind === "ellipse") {
+    const centerX = ((operation.start.x + operation.end.x) / 2) * width;
+    const centerY = ((operation.start.y + operation.end.y) / 2) * height;
+    const radiusX = Math.max(1, Math.abs(operation.end.x - operation.start.x) * width / 2);
+    const radiusY = Math.max(1, Math.abs(operation.end.y - operation.start.y) * height / 2);
+    context.beginPath();
+    context.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
+    context.stroke();
+  } else if (operation.kind === "text") {
+    context.font = `${Math.max(10, operation.size || 20)}px system-ui, sans-serif`;
+    context.textBaseline = "top";
+    context.fillText(operation.text || "", operation.x * width, operation.y * height);
+  }
+  context.restore();
+}
+
+function saveWhiteboardPNG() {
+  renderWhiteboard();
+  elements.whiteboardCanvas.toBlob((blob) => {
+    if (!blob) {
+      toast("Export PNG impossible.", "error");
+      return;
+    }
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `tableau-blanc-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.png`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  }, "image/png");
+}
+
+function setupWhiteboardChannel(peerState, channel) {
+  peerState.whiteboardChannel = channel;
+  channel.onopen = () => sendWhiteboardState(channel);
+  channel.onmessage = (event) => receiveWhiteboardPayload(event.data);
+  channel.onclose = () => {
+    if (peerState.whiteboardChannel === channel) peerState.whiteboardChannel = null;
+  };
+}
+
+function sendWhiteboardState(channel) {
+  const board = whiteboardState();
+  if (!board || channel.readyState !== "open") return;
+  channel.send(JSON.stringify({
+    type: WHITEBOARD_MESSAGE_TYPE,
+    action: "state",
+    operations: board.operations,
+  }));
+}
+
+function sendWhiteboardPayload(payload) {
+  if (!state.call?.peers) return;
+  const message = JSON.stringify({ type: WHITEBOARD_MESSAGE_TYPE, ...payload });
+  for (const peerState of state.call.peers.values()) {
+    const channel = peerState.whiteboardChannel;
+    if (channel?.readyState === "open") channel.send(message);
+  }
+}
+
+function receiveWhiteboardPayload(data) {
+  let payload;
+  try {
+    payload = JSON.parse(data);
+  } catch {
+    return;
+  }
+  if (payload?.type !== WHITEBOARD_MESSAGE_TYPE) return;
+  const board = whiteboardState();
+  if (!board) return;
+  if (payload.action === "state" && Array.isArray(payload.operations)) {
+    const known = new Set(board.operations.map((operation) => operation.id));
+    for (const operation of payload.operations) {
+      if (operation?.id && !known.has(operation.id)) {
+        board.operations.push(operation);
+        known.add(operation.id);
+      }
+    }
+  } else if (payload.action === "op" && payload.operation?.id) {
+    if (!board.operations.some((operation) => operation.id === payload.operation.id)) {
+      board.operations.push(payload.operation);
+    }
+  } else if (payload.action === "undo" && payload.operation_id) {
+    board.operations = board.operations.filter((operation) => operation.id !== payload.operation_id);
+  } else if (payload.action === "clear") {
+    board.operations = [];
+    board.draft = null;
+  }
+  if (!elements.callWhiteboard.hidden) renderWhiteboard();
+}
+
+function toggleCallMicrophone() {
+  const track = state.call?.localStream?.getAudioTracks()[0];
+  if (!track) return;
+  track.enabled = !track.enabled;
+  syncCallControlLabels();
+}
+
+function toggleCallCamera() {
+  const track = state.call?.localStream?.getVideoTracks()[0];
+  if (!track) return;
+  track.enabled = !track.enabled;
+  syncCallControlLabels();
+}
+
+async function enterCallFullscreen() {
+  if (!state.call || state.call.media !== "video") return;
+  const target = elements.callVideoStage;
+  try {
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      await exitCallFullscreen();
+      return;
+    }
+    if (target.requestFullscreen) {
+      await target.requestFullscreen({ navigationUI: "hide" });
+    } else if (target.webkitRequestFullscreen) {
+      target.webkitRequestFullscreen();
+    } else if (elements.remoteCallVideo.webkitEnterFullscreen) {
+      elements.remoteCallVideo.webkitEnterFullscreen();
+    } else {
+      toast("Le plein écran vidéo n’est pas disponible dans ce navigateur.", "error");
+    }
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible d’afficher la vidéo en plein écran."), "error");
+  }
+}
+
+async function exitCallFullscreen() {
+  try {
+    if (document.fullscreenElement && document.exitFullscreen) {
+      await document.exitFullscreen();
+    } else if (document.webkitFullscreenElement && document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    } else if (elements.remoteCallVideo.webkitDisplayingFullscreen && elements.remoteCallVideo.webkitExitFullscreen) {
+      elements.remoteCallVideo.webkitExitFullscreen();
+    }
+  } catch (error) {
+    console.warn("Sortie du plein écran vidéo impossible", error);
+  }
+}
+
+async function switchCallCamera() {
+  if (!state.call || state.call.media !== "video" || state.call.screenSharing || !state.call.peers?.size) return;
+  const nextFacingMode = state.call.facingMode === "user" ? "environment" : "user";
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: nextFacingMode } });
+    const [nextTrack] = stream.getVideoTracks();
+    if (!nextTrack) throw new Error("Caméra indisponible.");
+    const previousVideoEnabled = state.call.localStream.getVideoTracks()[0]?.enabled;
+    if (previousVideoEnabled === false) nextTrack.enabled = false;
+    await replaceLocalCallVideoTrack(nextTrack);
+    state.call.facingMode = nextFacingMode;
+    syncCallControlLabels();
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible de changer de caméra."), "error");
+  }
+}
+
+async function toggleScreenShare() {
+  if (!state.call) return;
+  if (state.call.media !== "video") {
+    toast("Le partage d’écran est disponible dans un appel vidéo.", "error");
+    return;
+  }
+  if (state.call.screenSharing) await stopScreenShare();
+  else await startScreenShare();
+}
+
+async function startScreenShare() {
+  if (!state.call || state.call.media !== "video") return;
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    toast(screenShareUnavailableMessage(), "error");
+    return;
+  }
+  try {
+    const displayStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { cursor: "always" },
+      audio: false,
+    });
+    const [screenTrack] = displayStream.getVideoTracks();
+    if (!screenTrack) throw new Error("Aucune piste d’écran disponible.");
+    if (!state.call || state.call.media !== "video") {
+      displayStream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    const call = state.call;
+    screenTrack.addEventListener("ended", () => {
+      if (state.call === call && call.screenSharing) {
+        stopScreenShare().catch((error) => {
+          console.warn("Arrêt du partage d’écran impossible", error);
+        });
+      }
+    }, { once: true });
+    call.screenStream = displayStream;
+    call.screenSharing = true;
+    await replaceLocalCallVideoTrack(screenTrack);
+    updateCallUI();
+  } catch (error) {
+    state.call?.screenStream?.getTracks().forEach((track) => track.stop());
+    if (state.call) {
+      state.call.screenStream = null;
+      state.call.screenSharing = false;
+    }
+    toast(frenchErrorMessage(error, "Impossible de partager l’écran."), "error");
+    updateCallUI();
+  }
+}
+
+function screenShareUnavailableMessage() {
+  if (!window.isSecureContext) return "Le partage d’écran nécessite HTTPS ou localhost.";
+  if (!navigator.mediaDevices) return "Les médias du navigateur sont indisponibles dans ce contexte.";
+  return "Le partage d’écran n’est pas disponible dans ce navigateur ou cette vue.";
+}
+
+async function stopScreenShare() {
+  if (!state.call || state.call.media !== "video") return;
+  const call = state.call;
+  const wasScreenSharing = Boolean(call.screenSharing);
+  call.screenSharing = false;
+  call.screenStream?.getTracks().forEach((track) => track.stop());
+  call.screenStream = null;
+  if (!wasScreenSharing) {
+    updateCallUI();
+    return;
+  }
+  try {
+    const cameraStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: call.facingMode || "user" },
+    });
+    const [cameraTrack] = cameraStream.getVideoTracks();
+    if (!cameraTrack) throw new Error("Caméra indisponible.");
+    await replaceLocalCallVideoTrack(cameraTrack);
+  } catch (error) {
+    await replaceLocalCallVideoTrack(null);
+    toast(frenchErrorMessage(error, "Partage arrêté, caméra indisponible."), "error");
+  } finally {
+    updateCallUI();
+  }
+}
+
+async function replaceLocalCallVideoTrack(nextTrack) {
+  const call = state.call;
+  if (!call?.localStream) {
+    nextTrack?.stop();
+    return;
+  }
+  const senders = [...callPeers(call).values()]
+    .map((peerState) => peerState.peer?.getSenders().find((item) => item.track?.kind === "video"))
+    .filter(Boolean);
+  await Promise.all(senders.map((sender) => sender.replaceTrack(nextTrack || null)));
+  if (state.call !== call) {
+    nextTrack?.stop();
+    return;
+  }
+  for (const track of call.localStream.getVideoTracks()) {
+    call.localStream.removeTrack(track);
+    if (track !== nextTrack) track.stop();
+  }
+  if (nextTrack) call.localStream.addTrack(nextTrack);
+  elements.localCallVideo.srcObject = call.localStream;
+  elements.localCallVideo.play().catch(() => {});
+  syncCallControlLabels();
+}
+
+async function ensureLocalCallStream() {
+  if (state.call.localStream) return state.call.localStream;
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error("Le microphone ou la caméra n’est pas disponible dans cet environnement.");
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: true,
+    video: state.call.media === "video" ? { facingMode: state.call.facingMode || "user" } : false,
+  });
+  state.call.localStream = stream;
+  if (state.call.media === "video") {
+    elements.localCallVideo.srcObject = stream;
+    elements.localCallVideo.play().catch(() => {});
+  }
+  return stream;
+}
+
+async function ensureCallPeer(userID) {
+  if (!state.call) throw new Error("Aucun appel actif.");
+  const peerState = getCallPeer(userID);
+  if (!peerState) throw new Error("Participant d’appel introuvable.");
+  if (peerState.peer) return peerState.peer;
+  if (typeof RTCPeerConnection === "undefined") throw new Error("WebRTC n’est pas disponible dans ce navigateur.");
+  const peer = new RTCPeerConnection(await callRTCConfiguration());
+  peerState.peer = peer;
+  peerState.pendingCandidates ||= [];
+  peer.onicecandidate = ({ candidate }) => {
+    if (!candidate || !state.call) return;
+    sendCallSignal("ice_candidate", {
+      call_id: state.call.id,
+      media: state.call.media,
+      target_user_id: userID,
+      candidate: {
+        candidate: candidate.candidate,
+        sdpMid: candidate.sdpMid,
+        sdpMLineIndex: candidate.sdpMLineIndex,
+        usernameFragment: candidate.usernameFragment,
+      },
+    });
+  };
+  peer.ontrack = ({ streams }) => {
+    const [stream] = streams;
+    if (!stream) return;
+    attachRemoteCallStream(peerState, stream);
+  };
+  peer.ondatachannel = ({ channel }) => {
+    if (channel?.label === WHITEBOARD_MESSAGE_TYPE) setupWhiteboardChannel(peerState, channel);
+  };
+  if (isCallNegotiationInitiator(userID)) {
+    setupWhiteboardChannel(peerState, peer.createDataChannel(WHITEBOARD_MESSAGE_TYPE));
+  }
+  peer.onconnectionstatechange = () => {
+    if (!state.call) return;
+    if (peer.connectionState === "connected") {
+      peerState.connected = true;
+      resetPeerIceRestartState(peerState);
+      state.call.status = "accepted";
+      refreshCallRouteIndicator(peerState).catch(() => {});
+      updateCallUI();
+    } else if (peer.connectionState === "failed") {
+      handleCallPeerConnectionFailure(peerState, userID);
+    }
+  };
+  peer.onsignalingstatechange = () => {
+    if (!state.call || peer.signalingState !== "stable" || !peerState.needsIceRestart) return;
+    if (!isCallNegotiationInitiator(userID) || state.socket?.socket?.readyState !== WebSocket.OPEN) return;
+    restartPeerIce(peerState, userID).catch((error) => {
+      console.warn("Reprise ICE après négociation impossible", error);
+      finishCallPeerConnectionFailure(userID);
+    });
+  };
+  const stream = await ensureLocalCallStream();
+  for (const track of stream.getTracks()) peer.addTrack(track, stream);
+  return peer;
+}
+
+function attachRemoteCallStream(peerState, stream) {
+  peerState.remoteStream = stream;
+  if (state.call?.media === "video") {
+    let video = peerState.videoElement;
+    if (!video) {
+      if (!elements.remoteCallVideo.srcObject && !elements.remoteCallVideo.dataset.peerId) {
+        video = elements.remoteCallVideo;
+      } else {
+        video = document.createElement("video");
+        elements.remoteCallVideos.append(video);
+      }
+      configureCallVideoElement(video);
+      video.dataset.peerId = String(peerState.userID);
+      peerState.videoElement = video;
+    }
+    video.hidden = false;
+    video.srcObject = stream;
+    elements.callVideoStage.hidden = false;
+    video.play().catch(() => {});
+  } else {
+    let audio = peerState.audioElement;
+    if (!audio) {
+      if (!elements.remoteCallAudio.srcObject && !elements.remoteCallAudio.dataset.peerId) {
+        audio = elements.remoteCallAudio;
+      } else {
+        audio = document.createElement("audio");
+        audio.autoplay = true;
+        audio.playsInline = true;
+        audio.controls = true;
+        elements.remoteCallAudioPeers.append(audio);
+      }
+      audio.dataset.peerId = String(peerState.userID);
+      peerState.audioElement = audio;
+    }
+    audio.srcObject = stream;
+    audio.hidden = false;
+    elements.remoteCallAudioPeers.hidden = !elements.remoteCallAudioPeers.children.length;
+    audio.play().catch(() => {});
+  }
+  updateCallUI();
+}
+
+async function callRTCConfiguration() {
+  if (!state.callConfig) {
+    state.callConfig = api("/api/calls/config")
+      .then((config) => {
+        const iceServers = Array.isArray(config.ice_servers) && config.ice_servers.length
+          ? config.ice_servers
+          : [{ urls: "stun:stun.l.google.com:19302" }];
+        const publicFallbackURLs = Array.isArray(config.public_fallback_urls) && config.public_fallback_urls.length
+          ? config.public_fallback_urls
+          : ["stun:stun.l.google.com:19302"];
+        return {
+          rtcConfig: { iceServers },
+          publicFallbackURLs,
+          privateTurnURLs: iceServers.flatMap((server) => urlsOfIceServer(server))
+            .filter((url) => /^turns?:/i.test(url) && !publicFallbackURLs.includes(url)),
+          privateTurnConfigured: Boolean(config.private_turn_configured),
+        };
+      })
+      .catch((error) => {
+        console.warn("Configuration WebRTC indisponible, STUN par défaut utilisé", error);
+        return {
+          rtcConfig: { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] },
+          publicFallbackURLs: ["stun:stun.l.google.com:19302"],
+          privateTurnURLs: [],
+          privateTurnConfigured: false,
+        };
+      });
+  }
+  const config = await state.callConfig;
+  return config.rtcConfig;
+}
+
+function urlsOfIceServer(server) {
+  if (!server?.urls) return [];
+  return Array.isArray(server.urls) ? server.urls : [server.urls];
+}
+
+async function callNetworkConfig() {
+  if (!state.callConfig) await callRTCConfiguration();
+  return state.callConfig;
+}
+
+function syncCallRouteIndicator() {
+  if (!state.call) return;
+  const peerStates = [...callPeers().values()];
+  const route = peerStates.find((peerState) => peerState.routeKind)?.routeKind || state.call.routeKind;
+  if (!route) {
+    callNetworkConfig().then((config) => {
+      if (!state.call || state.call.routeKind) return;
+      state.call.routeKind = config.privateTurnConfigured ? "coturn" : "public";
+      syncCallRouteIndicator();
+    }).catch(() => {});
+    elements.callTurnIndicator.hidden = true;
+    return;
+  }
+  elements.callTurnIndicator.hidden = false;
+  elements.callTurnIndicator.className = `call-turn-indicator ${route === "coturn" ? "coturn" : "public"}`;
+  const label = route === "coturn" ? "Connexion via Coturn privé" : "Connexion via STUN public";
+  elements.callTurnIndicator.textContent = "";
+  elements.callTurnIndicator.setAttribute("aria-label", label);
+  elements.callTurnIndicator.title = label;
+}
+
+async function refreshCallRouteIndicator(peerState) {
+  const localCandidate = await selectedLocalCandidate(peerState.peer);
+  if (!localCandidate || !state.call) return;
+  const config = await callNetworkConfig();
+  const sourceURL = localCandidate.url || "";
+  if (localCandidate.candidateType === "relay" && config.privateTurnURLs.some((url) => sourceURL.startsWith(url))) {
+    peerState.routeKind = "coturn";
+  } else if (localCandidate.candidateType === "relay" && sourceURL) {
+    peerState.routeKind = "public";
+  } else if (config.publicFallbackURLs.some((url) => sourceURL.startsWith(url)) || localCandidate.candidateType === "srflx") {
+    peerState.routeKind = "public";
+  } else if (config.privateTurnConfigured) {
+    peerState.routeKind = "coturn";
+  } else {
+    peerState.routeKind = "public";
+  }
+  state.call.routeKind = peerState.routeKind;
+  syncCallRouteIndicator();
+}
+
+async function selectedLocalCandidate(peer) {
+  if (!peer?.getStats) return null;
+  const stats = await peer.getStats();
+  let selectedPair = null;
+  for (const item of stats.values()) {
+    if (item.type === "transport" && item.selectedCandidatePairId) {
+      selectedPair = stats.get(item.selectedCandidatePairId);
+      break;
+    }
+    if (item.type === "candidate-pair" && item.selected && item.state === "succeeded") {
+      selectedPair = item;
+    }
+  }
+  if (!selectedPair?.localCandidateId) return null;
+  return stats.get(selectedPair.localCandidateId) || null;
+}
+
+function isCallNegotiationInitiator(userID) {
+  return Boolean(state.me?.id && userID && state.me.id < userID);
+}
+
+function callPeerIsConnected(peerState) {
+  return peerState?.peer?.connectionState === "connected";
+}
+
+function startPeerIceRestartTimeout(peerState, userID) {
+  clearPeerIceRestartTimer(peerState);
+  const call = state.call;
+  peerState.iceRestartTimeout = setTimeout(() => {
+    peerState.iceRestartTimeout = null;
+    if (!state.call || state.call !== call || callPeerIsConnected(peerState)) return;
+    finishCallPeerConnectionFailure(userID);
+  }, CALL_ICE_RESTART_TIMEOUT_MS);
+}
+
+function resetPeerIceRestartState(peerState) {
+  if (!peerState) return;
+  peerState.needsIceRestart = false;
+  peerState.iceRestarting = false;
+  peerState.iceRestartAttempts = 0;
+  clearPeerIceRestartTimer(peerState);
+}
+
+function handleCallPeerConnectionFailure(peerState, userID) {
+  if (!state.call || !peerState?.peer || peerState.iceRestarting) return;
+  if (peerState.needsIceRestart && peerState.iceRestartTimeout) return;
+  peerState.needsIceRestart = true;
+  if (isCallNegotiationInitiator(userID)) {
+    restartPeerIce(peerState, userID).catch((error) => {
+      console.warn("Reprise ICE impossible", error);
+      finishCallPeerConnectionFailure(userID);
+    });
+    return;
+  }
+  startPeerIceRestartTimeout(peerState, userID);
+  toast("Connexion média instable. Tentative de reprise de l’appel.", "error");
+}
+
+async function restartPeerIce(peerState, userID) {
+  if (!state.call || !peerState?.peer || callPeerIsConnected(peerState)) return;
+  if (state.socket?.socket?.readyState !== WebSocket.OPEN) {
+    startPeerIceRestartTimeout(peerState, userID);
+    return;
+  }
+  if (peerState.iceRestartAttempts >= CALL_ICE_RESTART_MAX_ATTEMPTS) {
+    finishCallPeerConnectionFailure(userID);
+    return;
+  }
+  if (peerState.peer.signalingState !== "stable") {
+    startPeerIceRestartTimeout(peerState, userID);
+    return;
+  }
+  peerState.needsIceRestart = false;
+  peerState.iceRestarting = true;
+  peerState.iceRestartAttempts += 1;
+  peerState.peer.restartIce?.();
+  const offer = await peerState.peer.createOffer({ iceRestart: true });
+  await peerState.peer.setLocalDescription(offer);
+  sendCallSignal("call_offer", {
+    call_id: state.call.id,
+    media: state.call.media,
+    target_user_id: userID,
+    sdp: { type: peerState.peer.localDescription.type, sdp: peerState.peer.localDescription.sdp },
+  });
+  startPeerIceRestartTimeout(peerState, userID);
+  toast("Connexion média instable. Reprise de l’appel en cours.", "error");
+}
+
+function resumePendingCallIceRestarts() {
+  if (!state.call?.peers) return;
+  for (const peerState of state.call.peers.values()) {
+    if (!peerState.needsIceRestart || !isCallNegotiationInitiator(peerState.userID)) continue;
+    restartPeerIce(peerState, peerState.userID).catch((error) => {
+      console.warn("Reprise ICE différée impossible", error);
+      finishCallPeerConnectionFailure(peerState.userID);
+    });
+  }
+}
+
+function finishCallPeerConnectionFailure(userID) {
+  if (!state.call) return;
+  const peerState = state.call.peers?.get(userID);
+  if (callPeerIsConnected(peerState)) return;
+  if (isGroupCall()) {
+    removeCallPeer(userID);
+    toast("Un participant a perdu la connexion d’appel.", "error");
+  } else {
+    toast("Connexion d’appel interrompue.", "error");
+    hangupCall("connection_failed");
+  }
+}
+
+async function addPendingIceCandidates(userID) {
+  const peerState = getCallPeer(userID);
+  if (!peerState?.peer || !peerState.pendingCandidates?.length) return;
+  const candidates = peerState.pendingCandidates.splice(0);
+  for (const candidate of candidates) {
+    await peerState.peer.addIceCandidate(new RTCIceCandidate(candidate));
+  }
+}
+
+async function beginOutgoingPeerOffer(userID) {
+  clearCallAlerts();
+  state.call.status = "connecting";
+  updateCallUI();
+  const peer = await ensureCallPeer(userID);
+  const offer = await peer.createOffer();
+  await peer.setLocalDescription(offer);
+  sendCallSignal("call_offer", {
+    call_id: state.call.id,
+    media: state.call.media,
+    target_user_id: userID,
+    sdp: { type: peer.localDescription.type, sdp: peer.localDescription.sdp },
+  });
+}
+
+async function maybeBeginOutgoingPeerOffer(userID) {
+  if (!state.call || !userID || userID === state.me.id) return;
+  if (state.call.peers?.get(userID)?.peer) return;
+  if (state.me.id > userID) return;
+  await beginOutgoingPeerOffer(userID);
+}
+
+async function connectAcceptedCallPeers() {
+  if (!state.call?.acceptedUserIDs) return;
+  for (const userID of state.call.acceptedUserIDs) {
+    await maybeBeginOutgoingPeerOffer(userID);
+  }
+}
+
+async function acceptRemoteOffer(userID, sdp) {
+  clearCallAlerts();
+  state.call.status = "connecting";
+  updateCallUI();
+  const peer = await ensureCallPeer(userID);
+  const peerState = getCallPeer(userID);
+  const recoveringIce = Boolean(peer.remoteDescription || peerState?.needsIceRestart || peerState?.iceRestarting || peerState?.iceRestartTimeout);
+  if (recoveringIce) clearPeerIceRestartTimer(peerState);
+  await peer.setRemoteDescription(new RTCSessionDescription(sdp));
+  await addPendingIceCandidates(userID);
+  const answer = await peer.createAnswer();
+  await peer.setLocalDescription(answer);
+  sendCallSignal("call_answer", {
+    call_id: state.call.id,
+    media: state.call.media,
+    target_user_id: userID,
+    sdp: { type: peer.localDescription.type, sdp: peer.localDescription.sdp },
+  });
+  if (recoveringIce && peerState) {
+    peerState.needsIceRestart = false;
+    peerState.iceRestarting = true;
+    startPeerIceRestartTimeout(peerState, userID);
+  }
+}
+
+async function acceptRemoteAnswer(userID, sdp) {
+  const peerState = getCallPeer(userID);
+  if (!peerState?.peer) return;
+  await peerState.peer.setRemoteDescription(new RTCSessionDescription(sdp));
+  await addPendingIceCandidates(userID);
+  peerState.needsIceRestart = false;
+}
+
+async function handleRemoteIceCandidate(userID, candidate) {
+  if (!candidate) return;
+  const peerState = getCallPeer(userID);
+  if (!peerState?.peer || !peerState.peer.remoteDescription) {
+    peerState.pendingCandidates ||= [];
+    peerState.pendingCandidates.push(candidate);
+    return;
+  }
+  await peerState.peer.addIceCandidate(new RTCIceCandidate(candidate));
+}
+
+function removeCallPeer(userID) {
+  const peerState = state.call?.peers?.get(userID);
+  if (!peerState) return;
+  closeCallPeer(peerState);
+  state.call.peers.delete(userID);
+  updateCallUI();
+}
+
+async function handleCallSignal(event) {
+  if (event.user_id === state.me.id) return;
+  if (event.target_user_id && event.target_user_id !== state.me.id) return;
+  const conversation = state.conversations.find((item) => sameID(item.id, event.conversation_id));
+  if (!conversation || !["private", "group"].includes(conversation.type)) return;
+  if (event.type === "call_invite") {
+    if (state.call) {
+      state.socket.send({
+        type: "call_reject",
+        conversation_id: event.conversation_id,
+        call_id: event.call_id,
+        media: event.media || "audio",
+        reason: "busy",
+        target_user_id: event.user_id,
+      });
+      return;
+    }
+    const callerName = await memberDisplayName(event.conversation_id, event.user_id, "un contact");
+    const conversationTitle = await resolveConversationTitle(conversation).catch(() => callerName);
+    state.call = {
+      id: event.call_id,
+      conversationID: event.conversation_id,
+      media: event.media || "audio",
+      direction: "incoming",
+      status: "ringing",
+      facingMode: "user",
+      callerID: event.user_id,
+      callerName: conversation.type === "group" ? `${callerName} (${conversationTitle})` : callerName,
+      peers: new Map(),
+      acceptedUserIDs: new Set([event.user_id]),
+    };
+    startIncomingCallAlerts(state.call);
+    showIncomingCallNotification(`${callLabel(state.call.media)} entrant`, `${callerName} vous appelle.`).catch(() => {});
+    if (!sameID(state.current?.id, event.conversation_id)) {
+      toast(`${callLabel(state.call.media)} entrant de ${callerName}. Ouvrez la conversation pour répondre.`);
+    }
+    updateCallUI();
+    return;
+  }
+  if (!state.call || state.call.id !== event.call_id || !sameID(state.call.conversationID, event.conversation_id)) return;
+  if (event.type === "call_accept") {
+    state.call.acceptedUserIDs ||= new Set();
+    state.call.acceptedUserIDs.add(event.user_id);
+    if (!["ringing", "connecting", "accepted"].includes(state.call.status)) return;
+    if (state.call.direction === "incoming" && state.call.status === "ringing") return;
+    if (state.call.peers?.get(event.user_id)?.peer) return;
+    try {
+      clearCallAlerts();
+      state.call.status = "connecting";
+      updateCallUI();
+      await maybeBeginOutgoingPeerOffer(event.user_id);
+    } catch (error) {
+      toast(frenchErrorMessage(error, "Impossible de démarrer l’appel."), "error");
+      if (isGroupCall()) {
+        sendCallSignal("call_hangup", {
+          call_id: state.call.id,
+          media: state.call.media,
+          reason: "media_error",
+          target_user_id: event.user_id,
+        });
+        removeCallPeer(event.user_id);
+      } else {
+        hangupCall("media_error");
+      }
+    }
+  } else if (event.type === "call_reject") {
+    if (state.call.direction === "outgoing" && !isGroupCall() && ["busy", "timeout", "media_error"].includes(event.reason)) {
+      const text = event.reason === "busy"
+        ? `${callHistoryLabel(state.call.media)} impossible : correspondant occupé.`
+        : event.reason === "media_error"
+          ? `${callHistoryLabel(state.call.media)} impossible : média indisponible.`
+          : `${callHistoryLabel(state.call.media)} manqué.`;
+      logCallHistory(state.call, text);
+    }
+    if (isGroupCall()) {
+      const name = await memberDisplayName(event.conversation_id, event.user_id);
+      toast(`${name} : ${callRejectMessage(event.reason)}`);
+    } else {
+      toast(callRejectMessage(event.reason));
+      clearCallState();
+    }
+  } else if (event.type === "call_hangup") {
+    if (isGroupCall() && event.user_id !== state.call.callerID) {
+      removeCallPeer(event.user_id);
+      toast("Un participant a quitté l’appel.");
+      if (!activeCallPeerCount() && state.call.direction === "outgoing" && state.call.status !== "ringing") clearCallState();
+    } else {
+      const wasMissed = state.call.direction === "incoming" && state.call.status === "ringing";
+      toast(wasMissed ? "Appel manqué." : "Appel terminé.");
+      clearCallState();
+    }
+  } else if (event.type === "call_offer") {
+    if (!["accepted", "connecting"].includes(state.call.status)) return;
+    try {
+      await acceptRemoteOffer(event.user_id, event.sdp);
+    } catch (error) {
+      toast(frenchErrorMessage(error, "Impossible d’accepter l’appel."), "error");
+      hangupCall("media_error");
+    }
+  } else if (event.type === "call_answer") {
+    await acceptRemoteAnswer(event.user_id, event.sdp);
+  } else if (event.type === "ice_candidate") {
+    if (!["accepted", "connecting"].includes(state.call.status)) return;
+    await handleRemoteIceCandidate(event.user_id, event.candidate);
+  }
+}
+
+async function loadMessages() {
+  clearFileCache();
+  clearConversationMessageExpirations(state.current.id);
+  const messages = await api(`/api/conversations/${state.current.id}/messages?limit=50`);
+  if (!messages.length) {
+    state.messageClears.set(state.current.id, new Map());
+    const empty = document.createElement("div");
+    empty.id = "empty-chat";
+    empty.textContent = "Aucun message. Écrivez le premier message chiffré.";
+    elements.messages.replaceChildren(empty);
+    return;
+  }
+  const key = await getConversationKey(state.current);
+  const decrypted = await Promise.all(messages.map(async (message) => ({
+    message,
+    clear: await decryptMessageContent(message, key),
+  })));
+  const clearByID = messageClearCache(state.current.id);
+  for (const { message, clear } of decrypted) {
+    clearByID.set(message.id, clear);
+  }
+  const fragment = document.createDocumentFragment();
+  const previews = [];
+  for (const { message, clear } of decrypted.reverse()) {
+    if (!scheduleMessageExpiration(message)) continue;
+    const displayMessage = withReplyPreview(messageWithCurrentUserProfile(message), clearByID);
+    renderMessage(
+      fragment,
+      displayMessage,
+      clear,
+      displayMessage.sender_id === state.me.id,
+      (fileMessage, preview) => previews.push([fileMessage, preview]),
+      downloadFile,
+      editMessage,
+      deleteMessage,
+      setReplyTarget,
+      reactToMessage,
+      togglePinnedMessage,
+      (replyPreview, container) => scheduleReplyFilePreview(replyPreview, container, key),
+    );
+    if (message.sender_id !== state.me.id) {
+      api(`/api/messages/${message.id}/read`, { method: "POST", body: {} }).catch(() => {});
+    }
+  }
+  elements.messages.replaceChildren(fragment);
+  for (const [message, preview] of previews) scheduleFilePreview(message, preview, key);
+}
+
+async function decryptMessageContent(message, key) {
+  try {
+    return message.file
+      ? {
+          name: await decryptEnvelope(key, message.file.encrypted_name),
+          mime: await decryptEnvelope(key, message.file.encrypted_mime),
+          fileID: message.file.id,
+          size: message.file.size,
+        }
+      : await decryptText(key, message.encrypted_content, message.iv);
+  } catch {
+    return message.file
+      ? { name: "Fichier impossible à déchiffrer", mime: "application/octet-stream", fileID: message.file.id, size: message.file.size }
+      : "Contenu impossible à déchiffrer";
+  }
+}
+
+function replyLabel(message, clear) {
+  const author = message.sender_id === state.me.id ? "Vous" : message.sender_username;
+  const text = message.file ? clear.name : String(clear || "");
+  return `${author} : ${text}`.slice(0, 120);
+}
+
+function withReplyPreview(message, clearByID) {
+  if (!message.reply_to || !clearByID.has(message.reply_to)) return message;
+  const parent = clearByID.get(message.reply_to);
+  const replyPreview = typeof parent === "string"
+    ? { type: "text", text: parent.slice(0, 120) }
+    : {
+        type: "file",
+        name: parent.name,
+        mime: parent.mime,
+        fileID: parent.fileID,
+        size: parent.size,
+      };
+  return {
+    ...message,
+    reply_preview: replyPreview,
+  };
+}
+
+function messageClearCache(conversationID) {
+  if (!state.messageClears.has(conversationID)) {
+    state.messageClears.set(conversationID, new Map());
+  }
+  return state.messageClears.get(conversationID);
+}
+
+function setReplyTarget(message, clear) {
+  state.replyTo = { id: message.id, label: replyLabel(message, clear) };
+  elements.replyTarget.querySelector("span").textContent = `Réponse à ${state.replyTo.label}`;
+  elements.replyTarget.hidden = false;
+  elements.input.focus({ preventScroll: true });
+}
+
+function clearReplyTarget() {
+  state.replyTo = null;
+  elements.replyTarget.hidden = true;
+  elements.replyTarget.querySelector("span").textContent = "";
+}
+
+async function reactToMessage(message, presetEmoji = "") {
+  const emoji = presetEmoji || await actionDialog({
+    title: "Réagir",
+    inputLabel: "Emoji",
+    value: "👍",
+    maxLength: 16,
+    singleLine: true,
+    confirmLabel: "Réagir",
+  });
+  if (!emoji) return;
+  try {
+    await api(`/api/messages/${message.id}/reactions`, {
+      method: "POST",
+      body: { emoji },
+    });
+    await loadMessages();
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible d’ajouter la réaction."), "error");
+  }
+}
+
+async function togglePinnedMessage(message) {
+  try {
+    await api(`/api/messages/${message.id}/pin`, {
+      method: "POST",
+      body: { pinned: !message.is_pinned },
+    });
+    await loadMessages();
+    toast(message.is_pinned ? "Message désépinglé." : "Message épinglé.", "success");
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible de modifier l’épinglage."), "error");
+  }
+}
+
+async function appendMessage(message, scroll = true) {
+  if (elements.messages.querySelector(`[data-id="${message.id}"]`)) return;
+  if (!scheduleMessageExpiration(message)) return;
+  document.querySelector("#empty-chat")?.remove();
+  const key = await getConversationKey(state.current);
+  const clear = await decryptMessageContent(message, key);
+  const clearByID = messageClearCache(state.current.id);
+  clearByID.set(message.id, clear);
+  const fragment = document.createDocumentFragment();
+  const displayMessage = withReplyPreview(messageWithCurrentUserProfile(message), clearByID);
+  let filePreview;
+  renderMessage(
+    fragment,
+    displayMessage,
+    clear,
+    displayMessage.sender_id === state.me.id,
+    (fileMessage, preview) => { filePreview = [fileMessage, preview]; },
+    downloadFile,
+    editMessage,
+    deleteMessage,
+    setReplyTarget,
+    reactToMessage,
+    togglePinnedMessage,
+    (replyPreview, container) => scheduleReplyFilePreview(replyPreview, container, key),
+  );
+  elements.messages.prepend(fragment);
+  if (filePreview) scheduleFilePreview(filePreview[0], filePreview[1], key);
+  while (elements.messages.querySelectorAll(".message").length > 200) {
+    const renderedMessages = elements.messages.querySelectorAll(".message");
+    renderedMessages[renderedMessages.length - 1]?.closest(".message-row")?.remove();
+  }
+  if (message.sender_id !== state.me.id) {
+    api(`/api/messages/${message.id}/read`, { method: "POST", body: {} }).catch(() => {});
+  }
+  if (scroll) scrollToBottom();
+}
+
+async function sendMessage(event) {
+  event.preventDefault();
+  const text = elements.input.value.trim();
+  if (!state.current) return;
+  if (state.pendingVoiceFile) {
+    const file = state.pendingVoiceFile;
+    clearVoiceDraft();
+    setBusy(elements.send, true, "…");
+    try {
+      const sent = await sendEncryptedFile(file, "Message vocal chiffré envoyé.");
+      if (!sent) setVoiceDraft(file);
+    } finally {
+      setBusy(elements.send, false);
+    }
+    return;
+  }
+  if (!text) return;
+  elements.input.value = "";
+  setBusy(elements.send, true, "…");
+  try {
+    const key = await getConversationKey(state.current);
+    const encrypted = await encryptText(key, text);
+    const message = await api(`/api/conversations/${state.current.id}/messages`, {
+      method: "POST",
+      body: {
+        encrypted_content: encrypted.data,
+        iv: encrypted.iv,
+        reply_to: state.replyTo?.id || null,
+        expires_in_seconds: state.messageExpirationSeconds,
+      },
+    });
+    clearReplyTarget();
+    await appendMessage(message);
+    await refreshConversationList();
+    state.socket.send({ type: "typing", conversation_id: state.current.id, typing: false });
+  } catch (error) {
+    elements.input.value = text;
+    toast(frenchErrorMessage(error), "error");
+  } finally {
+    setBusy(elements.send, false);
+  }
+}
+
+async function sendFile(event) {
+  const file = event.target.files[0];
+  event.target.value = "";
+  if (!file || !state.current) return;
+  await sendEncryptedFile(file, "Fichier chiffré envoyé.");
+}
+
+async function sendEncryptedFile(file, successMessage) {
+  if (state.current.federation_key_id) {
+    toast("Les fichiers fédérés ne sont pas encore pris en charge.", "error");
+    return false;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    toast("Le fichier dépasse la limite de 10 Mo.", "error");
+    return false;
+  }
+  toast("Chiffrement et envoi du fichier…");
+  try {
+    const key = await getConversationKey(state.current);
+    const [encrypted, encryptedName, encryptedMIME] = await Promise.all([
+      encryptBytes(key, await file.arrayBuffer()),
+      encryptEnvelope(key, file.name),
+      encryptEnvelope(key, file.type || "application/octet-stream"),
+    ]);
+    const message = await api("/api/files", {
+      method: "POST",
+      body: {
+        conversation_id: state.current.id,
+        encrypted_name: encryptedName,
+        encrypted_mime: encryptedMIME,
+        encrypted_data: encrypted.data,
+        iv: encrypted.iv,
+        expires_in_seconds: state.messageExpirationSeconds,
+      },
+    });
+    await appendMessage(message);
+    await refreshConversationList();
+    toast(successMessage, "success");
+    return true;
+  } catch (error) {
+    toast(frenchErrorMessage(error), "error");
+    return false;
+  }
+}
+
+function setVoiceDraft(file) {
+  clearVoiceDraft();
+  state.pendingVoiceFile = file;
+  state.pendingVoiceURL = URL.createObjectURL(file);
+  elements.voiceDraftAudio.src = state.pendingVoiceURL;
+  elements.voiceDraftAudio.load();
+  elements.voiceDraft.hidden = false;
+  elements.input.placeholder = "Message vocal en attente…";
+}
+
+function clearVoiceDraft() {
+  if (state.pendingVoiceURL) URL.revokeObjectURL(state.pendingVoiceURL);
+  state.pendingVoiceFile = null;
+  state.pendingVoiceURL = null;
+  elements.voiceDraftAudio.removeAttribute("src");
+  elements.voiceDraftAudio.load();
+  elements.voiceDraft.hidden = true;
+  elements.input.placeholder = "Message chiffré…";
+}
+
+function supportedAudioRecordingType() {
+  if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") return "";
+  return [
+    "audio/mp4",
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+  ].find((mime) => MediaRecorder.isTypeSupported(mime)) || "";
+}
+
+function audioExtensionForMIME(mime) {
+  if (/ogg/i.test(mime)) return "ogg";
+  if (/mp4|aac/i.test(mime)) return "m4a";
+  return "webm";
+}
+
+async function toggleVoiceRecording() {
+  if (state.recorder?.state === "recording") {
+    state.recorder.stop();
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+    toast("L’enregistrement vocal n’est pas disponible dans cet environnement.", "error");
+    return;
+  }
+  try {
+    clearVoiceDraft();
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = supportedAudioRecordingType();
+    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    state.recorder = recorder;
+    state.recordingChunks = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data.size) state.recordingChunks.push(event.data);
+    };
+    recorder.onstop = async () => {
+      stream.getTracks().forEach((track) => track.stop());
+      clearTimeout(state.recordingStopTimer);
+      state.recordingStopTimer = null;
+      elements.voiceButton.textContent = "🎙";
+      const recordedMime = recorder.mimeType || mime || "audio/webm";
+      const blob = new Blob(state.recordingChunks, { type: recordedMime });
+      state.recorder = null;
+      state.recordingChunks = [];
+      if (!blob.size) return;
+      const extension = audioExtensionForMIME(recordedMime);
+      const file = new File([blob], `message-vocal-${Date.now()}.${extension}`, { type: blob.type || recordedMime });
+      setVoiceDraft(file);
+      toast("Message vocal prêt à envoyer.");
+    };
+    recorder.start();
+    state.recordingStopTimer = setTimeout(() => {
+      if (state.recorder?.state === "recording") state.recorder.stop();
+    }, 120000);
+    elements.voiceButton.textContent = "■";
+    toast("Enregistrement vocal en cours.");
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Microphone inaccessible."), "error");
+  }
+}
+
+async function downloadFile(message, name, button) {
+  const confirmed = await actionDialog({
+    title: "Télécharger le fichier",
+    message: `Télécharger « ${name} » ?`,
+    confirmLabel: "Télécharger",
+  });
+  if (!confirmed) return;
+  if (button) {
+    button.disabled = true;
+    button.textContent = "…";
+  }
+  try {
+    const key = await getConversationKey(state.current);
+    const file = await loadDecryptedFile(message, key);
+    const link = document.createElement("a");
+    link.href = file.url;
+    link.download = file.name;
+    link.click();
+  } catch (error) {
+    toast(`Téléchargement impossible : ${frenchErrorMessage(error)}`, "error");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "↓";
+    }
+  }
+}
+
+async function editMessage(message, clear, row) {
+  if (state.current?.federation_key_id) {
+    row.dispatchEvent(new Event("swipe-close"));
+    toast("La modification des messages fédérés n’est pas encore prise en charge.", "error");
+    return;
+  }
+  const text = await actionDialog({
+    title: "Modifier le message",
+    inputLabel: "Message",
+    value: clear,
+    confirmLabel: "Enregistrer",
+  });
+  if (!text || text === clear) {
+    row.dispatchEvent(new Event("swipe-close"));
+    return;
+  }
+  row.classList.add("action-pending");
+  try {
+    const key = await getConversationKey(state.current);
+    const encrypted = await encryptText(key, text);
+    await api(`/api/messages/${message.id}`, {
+      method: "PUT",
+      body: { encrypted_content: encrypted.data, iv: encrypted.iv },
+    });
+    await loadMessages();
+    toast("Message modifié.", "success");
+  } catch (error) {
+    row.classList.remove("action-pending");
+    row.dispatchEvent(new Event("swipe-close"));
+    toast(frenchErrorMessage(error, "Impossible de modifier le message."), "error");
+  }
+}
+
+async function deleteMessage(message, row) {
+  if (state.current?.federation_key_id) {
+    row.dispatchEvent(new Event("swipe-close"));
+    toast("La suppression des messages fédérés n’est pas encore prise en charge.", "error");
+    return;
+  }
+  const confirmed = await actionDialog({
+    title: "Supprimer le message",
+    message: "Supprimer définitivement ce message ?",
+    confirmLabel: "Supprimer",
+    danger: true,
+  });
+  if (!confirmed) {
+    row.dispatchEvent(new Event("swipe-close"));
+    return;
+  }
+  row.classList.add("message-deleting");
+  try {
+    await api(`/api/messages/${message.id}`, { method: "DELETE" });
+    if (message.file) {
+      const cached = state.files.get(message.file.id);
+      if (cached) URL.revokeObjectURL(cached.url);
+      state.files.delete(message.file.id);
+      state.fileLoads.delete(message.file.id);
+    }
+    clearMessageExpiration(message);
+    state.messageClears.get(message.conversation_id)?.delete(message.id);
+    row.remove();
+    if (!elements.messages.querySelector(".message")) {
+      const empty = document.createElement("div");
+      empty.id = "empty-chat";
+      empty.textContent = "Aucun message. Écrivez le premier message chiffré.";
+      elements.messages.append(empty);
+    }
+    toast("Message supprimé.", "success");
+    await refreshAll();
+  } catch (error) {
+    row.classList.remove("message-deleting");
+    row.dispatchEvent(new Event("swipe-close"));
+    toast(frenchErrorMessage(error, "Impossible de supprimer le message."), "error");
+  }
+}
+
+async function loadDecryptedFile(message, key) {
+  const cached = state.files.get(message.file.id);
+  if (cached) return cached;
+  const pending = state.fileLoads.get(message.file.id);
+  if (pending) return pending;
+  const generation = state.fileCacheGeneration;
+  const load = (async () => {
+    const payload = await api(`/api/files/${message.file.id}`);
+    const [name, mime, data] = await Promise.all([
+      decryptEnvelope(key, payload.encrypted_name),
+      decryptEnvelope(key, payload.encrypted_mime),
+      decryptBytes(key, payload.encrypted_data, payload.iv),
+    ]);
+    const safeMIME = normalizedFileMIME(mime, name);
+    const blob = new Blob([data], { type: safeMIME });
+    const file = { name, mime: safeMIME, data, url: URL.createObjectURL(blob) };
+    if (generation !== state.fileCacheGeneration) {
+      URL.revokeObjectURL(file.url);
+      throw new Error("L’aperçu n’est plus disponible.");
+    }
+    state.files.set(message.file.id, file);
+    return file;
+  })();
+  state.fileLoads.set(message.file.id, load);
+  try {
+    return await load;
+  } finally {
+    if (state.fileLoads.get(message.file.id) === load) state.fileLoads.delete(message.file.id);
+  }
+}
+
+function normalizedFileMIME(mime, name) {
+  const normalized = (mime || "").trim().toLowerCase();
+  const essence = mimeEssence(normalized);
+  if (essence && essence !== "application/octet-stream" && /^[\w.+-]+\/[\w.+-]+$/i.test(essence)) return normalized;
+  const extension = name.split(".").pop()?.toLowerCase();
+  return {
+    avif: "image/avif",
+    bmp: "image/bmp",
+    gif: "image/gif",
+    jpeg: "image/jpeg",
+    jpg: "image/jpeg",
+    png: "image/png",
+    svg: "image/svg+xml",
+    webp: "image/webp",
+    m4v: "video/mp4",
+    mov: "video/quicktime",
+    mp4: "video/mp4",
+    webm: "video/webm",
+    aac: "audio/aac",
+    flac: "audio/flac",
+    m4a: "audio/mp4",
+    mp3: "audio/mpeg",
+    oga: "audio/ogg",
+    ogg: "audio/ogg",
+    wav: "audio/wav",
+    pdf: "application/pdf",
+    csv: "text/csv",
+    json: "application/json",
+    log: "text/plain",
+    md: "text/markdown",
+    txt: "text/plain",
+    xml: "application/xml",
+  }[extension] || "application/octet-stream";
+}
+
+function mimeEssence(mime) {
+  return (mime || "").split(";")[0].trim().toLowerCase();
+}
+
+function scheduleFilePreview(message, container, key) {
+  if (!("IntersectionObserver" in window)) {
+    renderFilePreview(message, container, key);
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    if (!entries.some((entry) => entry.isIntersecting)) return;
+    observer.disconnect();
+    state.filePreviewObservers.delete(observer);
+    renderFilePreview(message, container, key);
+  }, { root: elements.messages, rootMargin: "240px 0px" });
+  state.filePreviewObservers.add(observer);
+  observer.observe(container);
+}
+
+function scheduleReplyFilePreview(replyPreview, container, key) {
+  if (!replyPreview.fileID) {
+    renderUnavailableReplyPreview(container);
+    return;
+  }
+  const message = { file: { id: replyPreview.fileID, size: replyPreview.size || 0 } };
+  if (!("IntersectionObserver" in window)) {
+    renderReplyFilePreview(message, container, key);
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    if (!entries.some((entry) => entry.isIntersecting)) return;
+    observer.disconnect();
+    state.filePreviewObservers.delete(observer);
+    renderReplyFilePreview(message, container, key);
+  }, { root: elements.messages, rootMargin: "240px 0px" });
+  state.filePreviewObservers.add(observer);
+  observer.observe(container);
+}
+
+async function pdfJS() {
+  if (!pdfJSModule) {
+    pdfJSModule = import("/vendor/pdfjs/pdf.min.mjs").then((module) => {
+      module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.min.mjs";
+      return module;
+    });
+  }
+  return pdfJSModule;
+}
+
+async function renderPDFPreview(file, container) {
+  const pdfjs = await pdfJS();
+  const pdfDocument = await pdfjs.getDocument({ data: file.data.slice() }).promise;
+  try {
+    const page = await pdfDocument.getPage(1);
+    const baseViewport = page.getViewport({ scale: 1 });
+    const cssWidth = Math.min(Math.max(container.clientWidth, 240), 460);
+    const scale = cssWidth / baseViewport.width;
+    const viewport = page.getViewport({ scale });
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    const canvas = document.createElement("canvas");
+    canvas.className = "pdf-page-preview";
+    canvas.width = Math.ceil(viewport.width * pixelRatio);
+    canvas.height = Math.ceil(viewport.height * pixelRatio);
+    canvas.style.width = `${Math.round(viewport.width)}px`;
+    canvas.style.height = `${Math.round(viewport.height)}px`;
+    const context = canvas.getContext("2d", { alpha: false });
+    await page.render({
+      canvasContext: context,
+      viewport,
+      transform: pixelRatio === 1 ? null : [pixelRatio, 0, 0, pixelRatio, 0, 0],
+      background: "#ffffff",
+    }).promise;
+    container.append(canvas);
+  } finally {
+    await pdfDocument.destroy();
+  }
+}
+
+function recordedVoiceNeedsStableContainer(file) {
+  const mime = mimeEssence(file.mime);
+  return /^message-vocal-\d+\.(?:webm|ogg|oga)$/i.test(file.name) && /^audio\/(?:webm|ogg)$/i.test(mime);
+}
+
+async function stableAudioSourceURL(file) {
+  if (!recordedVoiceNeedsStableContainer(file)) return file.url;
+  const url = await decodedWAVURL(file.data);
+  return url || file.url;
+}
+
+async function decodedWAVURL(data) {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+  const context = new AudioContextClass();
+  try {
+    const buffer = await context.decodeAudioData(data.slice(0));
+    const wav = audioBufferToWAV(buffer);
+    const url = URL.createObjectURL(new Blob([wav], { type: "audio/wav" }));
+    state.previewURLs.add(url);
+    return url;
+  } catch (error) {
+    console.warn("Préparation WAV du message vocal impossible", error);
+    return null;
+  } finally {
+    if (typeof context.close === "function") {
+      context.close().catch(() => {});
+    }
+  }
+}
+
+function audioBufferToWAV(buffer) {
+  const channels = Math.min(buffer.numberOfChannels, 2);
+  const sampleRate = buffer.sampleRate;
+  const samples = buffer.length;
+  const bytesPerSample = 2;
+  const blockAlign = channels * bytesPerSample;
+  const dataSize = samples * blockAlign;
+  const output = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(output);
+  let offset = 0;
+
+  const writeString = (value) => {
+    for (let i = 0; i < value.length; i++) view.setUint8(offset++, value.charCodeAt(i));
+  };
+  const writeUint32 = (value) => {
+    view.setUint32(offset, value, true);
+    offset += 4;
+  };
+  const writeUint16 = (value) => {
+    view.setUint16(offset, value, true);
+    offset += 2;
+  };
+
+  writeString("RIFF");
+  writeUint32(36 + dataSize);
+  writeString("WAVE");
+  writeString("fmt ");
+  writeUint32(16);
+  writeUint16(1);
+  writeUint16(channels);
+  writeUint32(sampleRate);
+  writeUint32(sampleRate * blockAlign);
+  writeUint16(blockAlign);
+  writeUint16(16);
+  writeString("data");
+  writeUint32(dataSize);
+
+  const channelData = Array.from({ length: channels }, (_, index) => buffer.getChannelData(index));
+  for (let i = 0; i < samples; i++) {
+    for (let channel = 0; channel < channels; channel++) {
+      const sample = Math.max(-1, Math.min(1, channelData[channel][i]));
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      offset += bytesPerSample;
+    }
+  }
+  return output;
+}
+
+async function renderAudioPreview(file, container) {
+  const audio = document.createElement("audio");
+  audio.src = await stableAudioSourceURL(file);
+  audio.controls = true;
+  audio.preload = "auto";
+  audio.setAttribute("aria-label", `Lire ${file.name}`);
+  container.replaceChildren(audio);
+}
+
+async function renderFilePreview(message, container, key) {
+  try {
+    const file = await loadDecryptedFile(message, key);
+    if (!container.isConnected) return;
+    const mime = mimeEssence(file.mime);
+    container.replaceChildren();
+    if (/^image\/(avif|bmp|gif|jpeg|png|webp)$/i.test(mime)) {
+      const image = document.createElement("img");
+      image.src = file.url;
+      image.alt = file.name;
+      image.loading = "lazy";
+      container.append(image);
+      return;
+    }
+    if (mime === "image/svg+xml") {
+      const image = document.createElement("img");
+      const svgURL = sanitizedSVGURL(file.data);
+      image.src = svgURL;
+      image.alt = file.name;
+      container.append(image);
+      return;
+    }
+    if (mime.startsWith("video/")) {
+      const video = document.createElement("video");
+      video.src = file.url;
+      video.controls = true;
+      video.preload = "metadata";
+      container.append(video);
+      return;
+    }
+    if (mime.startsWith("audio/")) {
+      await renderAudioPreview(file, container);
+      return;
+    }
+    if (mime === "application/pdf") {
+      await renderPDFPreview(file, container);
+      return;
+    }
+    if (mime.startsWith("text/") || /(?:json|xml|javascript)$/i.test(mime)) {
+      const text = new TextDecoder().decode(file.data.subarray(0, 12000));
+      const pre = document.createElement("pre");
+      pre.className = "document-page-preview text-document-preview";
+      pre.textContent = text;
+      container.append(pre);
+      if (file.data.length > 12000) {
+        const note = document.createElement("small");
+        note.textContent = "Aperçu limité à la première page.";
+        container.append(note);
+      }
+      return;
+    }
+    const unavailable = document.createElement("div");
+    unavailable.className = "file-preview-unavailable";
+    const icon = document.createElement("span");
+    icon.textContent = "📄";
+    const label = document.createElement("span");
+    label.textContent = "Aperçu non disponible pour ce format";
+    unavailable.append(icon, label);
+    container.append(unavailable);
+  } catch (error) {
+    if (!container.isConnected) return;
+    console.error("Chargement de l’aperçu impossible", error);
+    container.textContent = frenchErrorMessage(error, "Impossible de charger l’aperçu.");
+    container.classList.add("file-preview-error");
+  }
+}
+
+async function renderReplyFilePreview(message, container, key) {
+  try {
+    const file = await loadDecryptedFile(message, key);
+    if (!container.isConnected) return;
+    const mime = mimeEssence(file.mime);
+    container.replaceChildren();
+    if (/^image\/(avif|bmp|gif|jpeg|png|webp)$/i.test(mime)) {
+      const image = document.createElement("img");
+      image.src = file.url;
+      image.alt = file.name;
+      image.loading = "lazy";
+      container.append(image);
+      return;
+    }
+    if (mime === "image/svg+xml") {
+      const image = document.createElement("img");
+      image.src = sanitizedSVGURL(file.data);
+      image.alt = file.name;
+      container.append(image);
+      return;
+    }
+    if (mime.startsWith("video/")) {
+      const video = document.createElement("video");
+      video.src = file.url;
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = "metadata";
+      container.append(video);
+      return;
+    }
+    if (mime === "application/pdf") {
+      await renderPDFPreview(file, container);
+      return;
+    }
+    if (mime.startsWith("text/") || /(?:json|xml|javascript)$/i.test(mime)) {
+      const text = new TextDecoder().decode(file.data.subarray(0, 800));
+      const pre = document.createElement("pre");
+      pre.textContent = text;
+      container.append(pre);
+      return;
+    }
+    renderUnavailableReplyPreview(container, mime.startsWith("audio/") ? "Audio" : "Doc");
+  } catch (error) {
+    if (!container.isConnected) return;
+    console.error("Chargement de l’aperçu de réponse impossible", error);
+    renderUnavailableReplyPreview(container);
+  }
+}
+
+function renderUnavailableReplyPreview(container, label = "Doc") {
+  container.replaceChildren();
+  container.textContent = label;
+}
+
+function sanitizedSVGURL(data) {
+  const source = new TextDecoder().decode(data);
+  const document = new DOMParser().parseFromString(source, "image/svg+xml");
+  if (document.querySelector("parsererror") || document.documentElement.localName !== "svg") {
+    throw new Error("Le fichier SVG est invalide.");
+  }
+  document.querySelectorAll("script, foreignObject, iframe, object, embed").forEach((element) => element.remove());
+  document.querySelectorAll("style").forEach((element) => {
+    element.textContent = sanitizeSVGStyles(element.textContent);
+  });
+  document.querySelectorAll("*").forEach((element) => {
+    for (const attribute of [...element.attributes]) {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim();
+      if (
+        name.startsWith("on")
+        || ((name === "href" || name.endsWith(":href")) && value && !safeSVGReference(value))
+      ) {
+        element.removeAttribute(attribute.name);
+      } else if (name === "style") {
+        element.setAttribute(attribute.name, sanitizeSVGStyles(value));
+      } else if (/url\s*\(\s*(['"]?)(?!#)/i.test(value)) {
+        element.setAttribute(attribute.name, "none");
+      }
+    }
+  });
+  const clean = new XMLSerializer().serializeToString(document.documentElement);
+  const url = URL.createObjectURL(new Blob([clean], { type: "image/svg+xml" }));
+  state.previewURLs.add(url);
+  return url;
+}
+
+function safeSVGReference(value) {
+  return value.startsWith("#") || /^data:image\/(?:avif|gif|jpeg|png|webp);base64,/i.test(value);
+}
+
+function sanitizeSVGStyles(value) {
+  return value
+    .replace(/@import[^;]+;?/gi, "")
+    .replace(/expression\s*\([^)]*\)/gi, "")
+    .replace(/url\s*\(\s*(['"]?)(?!#)[^)]*\1\s*\)/gi, "none")
+    .replace(/javascript\s*:/gi, "");
+}
+
+async function searchContacts(event) {
+  const query = event.target.value.trim();
+  const results = document.querySelector("#contact-results");
+  results.replaceChildren();
+  if (query.length < 2) return;
+  try {
+    const endpoint = state.edition.federation && query.includes("@") ? "/api/federation/search" : "/api/users/search";
+    const users = await api(`${endpoint}?q=${encodeURIComponent(query)}`);
+    for (const user of users) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "picker-row";
+      const description = user.description
+        ? `<small class="contact-description">${escapeText(user.description)}</small>`
+        : "";
+      const identity = user.federated
+        ? `@${escapeText(user.username)} · ${escapeText(new URL(user.instance_url).host)}`
+        : `@${escapeText(user.username)}`;
+      row.innerHTML = `<span><strong>${escapeText(user.display_name)}</strong>${description}<small>${identity}</small></span><span>Ajouter</span>`;
+      row.onclick = async () => {
+        try {
+          let conversation;
+          if (user.federated) {
+            conversation = await api("/api/conversations/federated/private", {
+              method: "POST",
+              body: { instance_id: user.instance_id, username: user.username },
+            });
+          } else {
+            let contact = state.contacts.find((item) => item.contact_user_id === user.id);
+            if (!contact) {
+              await api("/api/contacts", { method: "POST", body: { user_id: user.id } });
+              await refreshAll();
+              contact = state.contacts.find((item) => item.contact_user_id === user.id);
+            }
+            if (contact?.status !== "accepted" && contact?.direction === "incoming") {
+              await api(`/api/contacts/${contact.id}/accept`, { method: "POST" });
+              await refreshAll();
+              contact = state.contacts.find((item) => item.contact_user_id === user.id);
+            }
+            if (contact?.status !== "accepted") {
+              document.querySelector("#contact-dialog").close();
+              await refreshAll();
+              toast("Demande envoyée. La discussion sera disponible après acceptation.", "success");
+              return;
+            }
+            conversation = await api("/api/conversations/private", { method: "POST", body: { user_id: user.id } });
+          }
+          document.querySelector("#contact-dialog").close();
+          await refreshAll();
+          const selected = state.conversations.find((item) => item.id === conversation.id);
+          if (selected) await selectConversation(selected);
+        } catch (error) {
+          toast(frenchErrorMessage(error), "error");
+        }
+      };
+      results.append(row);
+    }
+  } catch (error) {
+    toast(frenchErrorMessage(error), "error");
+  }
+}
+
+async function openGroupDialog() {
+  groupAvatar = null;
+  updateGroupAvatarPreview();
+  const [contacts, conversations] = await Promise.all([
+    api("/api/contacts"),
+    api("/api/conversations"),
+  ]);
+  state.contacts = contacts;
+  state.conversations = conversations;
+  const candidates = new Map(contacts
+    .filter((contact) => contact.status === "accepted")
+    .map((contact) => [contact.contact_user_id, contact]));
+  const acceptedContacts = [...candidates.values()].sort((left, right) => left.username.localeCompare(right.username, "fr"));
+  const list = document.querySelector("#group-members");
+  list.replaceChildren();
+  if (!acceptedContacts.length) {
+    const empty = document.createElement("p");
+    empty.className = "picker-empty";
+    empty.textContent = "Aucun contact. Ajoutez d’abord un contact.";
+    list.append(empty);
+  }
+  for (const contact of acceptedContacts) {
+    const label = document.createElement("label");
+    label.className = "picker-row check";
+    const identity = document.createElement("span");
+    const displayName = document.createElement("strong");
+    displayName.textContent = contact.display_name;
+    const description = document.createElement("small");
+    description.className = "contact-description";
+    description.textContent = contact.description || "";
+    description.hidden = !contact.description;
+    const username = document.createElement("small");
+    username.textContent = `@${contact.username}`;
+    identity.append(displayName, description, username);
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = String(contact.contact_user_id);
+    checkbox.setAttribute("aria-label", `Ajouter ${contact.display_name} au groupe`);
+    label.append(identity, checkbox);
+    list.append(label);
+  }
+  document.querySelector("#group-dialog").showModal();
+}
+
+async function createGroup(event) {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  const name = document.querySelector("#group-name").value.trim();
+  const description = document.querySelector("#group-description").value.trim();
+  const selectedIDs = [...document.querySelectorAll("#group-members input:checked")].map((input) => Number(input.value));
+  if (!name || !selectedIDs.length) {
+    toast("Sélectionnez au moins un membre.", "error");
+    return;
+  }
+  setBusy(button, true);
+  try {
+    const groupKey = await generateGroupKey();
+    const members = [
+      { id: state.me.id, public_key: state.me.public_key },
+      ...state.contacts
+        .filter((contact) => contact.status === "accepted" && selectedIDs.includes(contact.contact_user_id))
+        .map((contact) => ({ id: contact.contact_user_id, public_key: contact.public_key })),
+    ];
+    const encryptedKeys = {};
+    await Promise.all(members.map(async (member) => {
+      try {
+        const publicKey = JSON.parse(member.public_key);
+        if (publicKey.kty !== "EC" || !publicKey.crv || !publicKey.x || !publicKey.y) throw new Error();
+        encryptedKeys[String(member.id)] = await wrapGroupKey(
+          groupKey,
+          state.privateKey,
+          member.public_key,
+          state.me.id,
+        );
+      } catch {
+        const contact = state.contacts.find((item) => item.contact_user_id === member.id);
+        const identity = member.id === state.me.id ? "votre compte" : contact?.display_name || contact?.username || "ce membre";
+        throw new Error(`La clé de chiffrement de ${identity} est invalide. Ce compte doit être recréé.`);
+      }
+    }));
+    const encryptedTitle = await encryptEnvelope(groupKey, name);
+    const encryptedDescription = description ? await encryptEnvelope(groupKey, description) : null;
+    const encryptedAvatar = groupAvatar ? await encryptEnvelope(groupKey, groupAvatar) : null;
+    const result = await api("/api/conversations/group", {
+      method: "POST",
+      body: {
+        encrypted_title: encryptedTitle,
+        encrypted_description: encryptedDescription,
+        encrypted_avatar: encryptedAvatar,
+        member_ids: selectedIDs,
+        encrypted_keys: encryptedKeys,
+      },
+    });
+    document.querySelector("#group-dialog").close();
+    event.currentTarget.reset();
+    groupAvatar = null;
+    updateGroupAvatarPreview();
+    await refreshAll();
+    const conversation = state.conversations.find((item) => item.id === result.id);
+    if (conversation) {
+      state.keys.set(conversation.id, groupKey);
+      await selectConversation(conversation);
+    }
+  } catch (error) {
+    console.error("Création du groupe impossible", error);
+    toast(frenchErrorMessage(error), "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function handleSocketEvent(event) {
+  if (event.type === "account_banned" || event.type === "sessions_revoked" || event.type === "role_changed") {
+    sessionStorage.removeItem("crypto_phrase");
+    location.href = "/login.html";
+  } else if (event.type === "new_message") {
+    await showIncomingMessageNotification().catch(() => {});
+    clearTypingUser(event.message.conversation_id, event.message.sender_id);
+    if (state.current?.id === event.message.conversation_id) {
+      await appendMessage(event.message);
+      await refreshConversationList();
+    } else {
+      toast("Nouveau message sécurisé.");
+      await refreshAll();
+    }
+    await refreshTypingIndicators(event.message.conversation_id);
+  } else if (event.type === "message_deleted") {
+    await expireRenderedMessage(event.conversation_id, event.message_id);
+  } else if (event.type === "contact_updated") {
+    await refreshAll();
+  } else if (event.type === "presence_state") {
+    state.onlineUsers = new Set((event.online_user_ids || []).map(String));
+    await renderConversations();
+  } else if (event.type === "user_online" || event.type === "user_offline") {
+    if (event.type === "user_online") state.onlineUsers.add(String(event.user_id));
+    else state.onlineUsers.delete(String(event.user_id));
+    await renderConversations();
+  } else if (event.type === "conversation_updated") {
+    const currentID = state.current?.id;
+    state.members.delete(event.conversation_id);
+    if ((event.deleted || event.removed) && currentID === event.conversation_id) {
+      closeCurrentConversation(event.conversation_id);
+      state.keys.delete(event.conversation_id);
+    }
+    state.conversations = await api("/api/conversations");
+    await renderConversations();
+    if ((event.deleted_message_id || event.updated_message_id || event.reaction_message_id || event.pinned_message_id || event.profile_updated) && currentID === event.conversation_id) {
+      await loadMessages();
+    }
+  } else if (event.type === "typing") {
+    await setTypingUser(event.conversation_id, event.user_id, event.typing);
+  } else if (event.type?.startsWith("call_") || event.type === "ice_candidate") {
+    await handleCallSignal(event);
+  } else if ((event.type === "message_delivered" || event.type === "message_read") && state.current?.id === event.conversation_id) {
+    const time = elements.messages.querySelector(`[data-id="${event.message_id}"] time`);
+    if (time) {
+      time.textContent = `${time.textContent.replace(/\s✓✓?$/, "")} ✓✓`;
+      time.classList.toggle("read", event.type === "message_read");
+    }
+  }
+}
+
+function sendTyping() {
+  if (!state.current) return;
+  const conversationID = state.current.id;
+  const typing = Boolean(elements.input.value.trim());
+  state.socket.send({ type: "typing", conversation_id: conversationID, typing });
+  clearTimeout(sendTyping.timer);
+  if (!typing) return;
+  sendTyping.timer = setTimeout(() => {
+    state.socket.send({ type: "typing", conversation_id: conversationID, typing: false });
+  }, 1800);
+}
+
+function scrollToBottom() {
+  elements.messages.scrollTop = 0;
+}
+
+function debounce(fn, wait) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), wait);
+  };
+}
+
+function escapeText(value) {
+  const node = document.createElement("span");
+  node.textContent = value;
+  return node.innerHTML;
+}
+
+boot().catch((error) => {
+  console.error(error);
+  toast(frenchErrorMessage(error, "Erreur de démarrage."), "error");
+});

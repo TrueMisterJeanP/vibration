@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0f766e">
+  <script src="/js/theme.js"></script>
+  <title>Vibration · Connexion chat sécurisé</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="auth-page">
+  <main class="auth-card">
+    <div class="brand large"><span>◈</span><div><strong>Vibration</strong><small>Messagerie chiffrée de bout en bout</small></div></div>
+    <div class="auth-tabs" role="tablist">
+      <button id="login-tab" class="active" type="button">Connexion</button>
+      <button id="register-tab" type="button">Inscription</button>
+    </div>
+    <form id="login-form">
+      <label id="login-instance-url-label" hidden>Instance serveur<input name="instance_url" type="url" placeholder="https://chat.example.com" autocomplete="url"></label>
+      <label>Nom d’utilisateur<input name="username" required minlength="3" maxlength="32" autocomplete="username"></label>
+      <label>Mot de passe<input name="password" type="password" required minlength="8" autocomplete="current-password"></label>
+      <label class="checkbox-label"><input name="remember_me" type="checkbox"> Rester connecté</label>
+      <small>La phrase secrète est demandée à la première connexion, puis périodiquement, ou si la clé locale a été effacée.</small>
+      <button type="submit">Se connecter</button>
+      <button id="recovery-open" class="outline" type="button">Mot de passe oublié ?</button>
+    </form>
+    <form id="instance-form" hidden>
+      <label>Instance serveur<input name="instance_url" type="url" required placeholder="https://chat.example.com" autocomplete="url"></label>
+      <small>L’instance enregistrée est inaccessible. Saisissez l’URL correcte pour continuer.</small>
+      <button type="submit">Utiliser cette instance</button>
+    </form>
+    <form id="recovery-form" hidden>
+      <label>Nom d’utilisateur<input name="username" required pattern="[a-z0-9_]{3,32}" autocomplete="username"></label>
+      <label>Code de récupération<input name="recovery_code" required autocomplete="off" spellcheck="false"></label>
+      <label>Nouveau mot de passe<input name="new_password" type="password" required minlength="8" maxlength="256" autocomplete="new-password"></label>
+      <label>Confirmer le nouveau mot de passe<input name="confirm_password" type="password" required minlength="8" maxlength="256" autocomplete="new-password"></label>
+      <small>Ce code réinitialise le mot de passe de connexion. Il ne remplace pas la phrase secrète de chiffrement.</small>
+      <button type="submit">Réinitialiser le mot de passe</button>
+      <button id="recovery-cancel" class="outline" type="button">Retour à la connexion</button>
+    </form>
+    <form id="register-form" hidden>
+      <label>Instance serveur<input name="instance_url" type="url" required placeholder="https://chat.example.com" autocomplete="url"></label>
+      <label>Nom d’utilisateur<input name="username" required pattern="[a-z0-9_]{3,32}" autocomplete="username"></label>
+      <label>Nom affiché<input name="display_name" required maxlength="80" autocomplete="name"></label>
+      <label id="invitation-code-label" hidden>Code d’activation<input name="invitation_code" maxlength="128" autocomplete="off"></label>
+      <label>Mot de passe de connexion<input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+      <label>Phrase secrète de chiffrement<input name="phrase" type="password" required minlength="10" autocomplete="off"></label>
+      <label>Confirmer la phrase<input name="phrase_confirm" type="password" required minlength="10" autocomplete="off"></label>
+      <small>La clé sera mémorisée automatiquement sur cet appareil. Conservez néanmoins cette phrase : elle sera demandée périodiquement et ne peut pas être récupérée par le serveur.</small>
+      <button type="submit">Créer le compte et les clés</button>
+    </form>
+    <p id="auth-error" class="error" role="alert"></p>
+  </main>
+  <dialog id="recovery-code-dialog">
+    <form method="dialog">
+      <h3>Code de récupération</h3>
+      <p>Conservez ce code. Il permet de définir un nouveau mot de passe si vous l’oubliez.</p>
+      <output id="recovery-code-output" class="recovery-code-output"></output>
+      <small>Il ne permet pas de récupérer la phrase secrète de chiffrement.</small>
+      <button type="submit">J’ai noté le code</button>
+    </form>
+  </dialog>
+  <script type="module" src="/js/login.js"></script>
+</body>
+</html>

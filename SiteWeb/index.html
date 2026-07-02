@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#071b24">
+  <title>Vibration · Messagerie GPL self-hosted pour organisations</title>
+  <meta name="description" content="Vibration est une messagerie web chiffrée côté navigateur, publiée en édition Community GPL et proposée en édition Enterprise self-hosted avec serveur Go, Coturn privé et support.">
+  <link rel="icon" href="assets/icon-512.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="Vibration">
+      <img src="assets/icon-512.png" alt="">
+      <span>Vibration</span>
+    </a>
+    <nav aria-label="Navigation principale">
+      <a href="#community">Community</a>
+      <a href="#entreprise">Entreprise</a>
+      <a href="#captures">Captures</a>
+      <a href="#souverainete">Souveraineté</a>
+    </nav>
+    <a class="header-action" href="https://vibration.appbox.fr/" target="_blank">Ouvrir l'app</a>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Community publique · Enterprise self-hosted GPL</p>
+        <h1 class="hero-title">Vibration <span>béta</span></h1>
+        <p class="hero-lede">Une messagerie chiffrée que l'entreprise peut installer sur son infrastructure, avec son serveur Go, son Coturn privé, sa base de données et ses règles d'exploitation.</p>
+        <div class="hero-actions">
+          <a class="primary-action" href="https://vibration-shop.appbox.fr" target="_blank">Découvrir Enterprise</a>
+          <a class="secondary-action" href="#community">Voir Community</a>
+        </div>
+      </div>
+
+      <figure class="hero-product" aria-label="Capture de l'interface Vibration">
+        <div class="desktop-screen">
+          <div class="screen-sidebar">
+            <div class="screen-brand">
+              <span class="screen-logo">V</span>
+              <span><strong>Vibration</strong><small>Enterprise · serveur interne</small></span>
+            </div>
+            <div class="connection-preview"><span></span>Connecté</div>
+            <div class="admin-link-preview">Console entreprise</div>
+            <div class="screen-actions"><span>+ Contact</span><span>+ Groupe</span></div>
+            <div class="thread active"><span>D</span><p><strong>Direction</strong><small>Réunion chiffrée à 14h</small></p><b>•••</b></div>
+            <div class="thread"><span>S</span><p><strong>Support</strong><small>Fichier chiffré</small></p><b>•••</b></div>
+            <div class="thread"><span>C</span><p><strong>Comptabilité</strong><small>Appel vidéo terminé</small></p><b>•••</b></div>
+          </div>
+          <div class="screen-chat">
+            <div class="chat-top">
+              <span><strong>Direction</strong><small>Instance interne · Coturn privé</small></span>
+              <span class="call-icons"><i>⌕</i><i>▻</i></span>
+            </div>
+            <div class="call-history-preview">Appel vidéo terminé. <time>09:42</time></div>
+            <div class="bubble their"><small>Direction</small><p>Le serveur reste dans notre infrastructure.</p><time>09:43</time></div>
+            <div class="bubble mine wide-message"><small>Vous</small><p>Coturn privé configuré, notifications et sauvegardes validées.</p><time>09:44 ✓✓</time></div>
+            <div class="bubble mine"><small>Vous</small><p>La console d'administration est prête.</p><time>09:45 ✓</time></div>
+            <div class="file-bubble">
+              <strong>procedure-interne.pdf</strong>
+              <small>Fichier chiffré · stockage serveur</small>
+              <span>Document interne</span>
+            </div>
+            <div class="composer-preview"><i>📎</i><i>😊</i><i>🎙</i><span>Message chiffré...</span><strong>Envoyer</strong></div>
+          </div>
+        </div>
+      </figure>
+    </section>
+
+    <section class="proof-strip" aria-label="Points forts">
+      <div><strong>GPL</strong><span>code auditable et redistribuable</span></div>
+      <div><strong>Go</strong><span>serveur léger à administrer</span></div>
+      <div><strong>TURN</strong><span>Coturn privé pour les appels</span></div>
+      <div><strong>E2EE</strong><span>contenus chiffrés côté navigateur</span></div>
+    </section>
+
+    <section id="community" class="section">
+      <div class="section-heading">
+        <p class="eyebrow">Edition Community</p>
+        <h2>Une base publique, utile et vérifiable.</h2>
+        <p>La version Community reste sous GPL sur GitHub. Elle permet de tester, auditer et utiliser le socle de messagerie chiffrée sans dépendre d'un service centralisé.</p>
+      </div>
+      <div class="feature-grid">
+        <article>
+          <span class="feature-icon teal"></span>
+          <h3>Socle commun</h3>
+          <p>Conversations privées, groupes, fichiers, appels, tableau blanc et interface PWA partagent le même code de base.</p>
+        </article>
+        <article>
+          <span class="feature-icon blue"></span>
+          <h3>Licence GPL</h3>
+          <p>Le code publié peut être étudié, modifié et redistribué dans les conditions de la GPL-3.0-or-later.</p>
+        </article>
+        <article>
+          <span class="feature-icon amber"></span>
+          <h3>Chemin Enterprise</h3>
+          <p>Les corrections communes sont appliquées au socle, puis la version Community est régénérée depuis le projet maintenu.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="captures" class="screens-section">
+      <div class="section-heading compact">
+        <p class="eyebrow">Copies d'écran</p>
+        <h2>Les usages clés visibles en un coup d'oeil.</h2>
+      </div>
+
+      <div class="screens-grid">
+        <figure class="capture wide">
+          <div class="capture-title">
+            <span>Conversation sécurisée</span>
+            <small>Community</small>
+          </div>
+          <div class="desktop-screen embedded">
+            <div class="screen-sidebar">
+            <div class="screen-brand">
+              <span class="screen-logo">V</span>
+              <span><strong>Vibration</strong><small>Compte demo · @demo</small></span>
+            </div>
+              <div class="connection-preview"><span></span>Connecté</div>
+              <div class="screen-actions"><span>+ Contact</span><span>+ Groupe</span></div>
+              <div class="thread active"><span>M</span><p><strong>Contact 1</strong><small>Message envoyé</small></p><b>•••</b></div>
+              <div class="thread"><span>K</span><p><strong>Contact 2</strong><small>Contact</small></p><b>•••</b></div>
+            </div>
+            <div class="screen-chat">
+              <div class="chat-top"><span><strong>Contact 1</strong><small></small></span><span class="call-icons"><i>⌕</i><i>▻</i></span></div>
+              <div class="call-history-preview">Appel audio terminé. <time>09:38</time></div>
+              <div class="bubble their"><small>Contact 1</small><p>Je t'ai envoyé le justificatif.</p><time>09:39</time></div>
+              <div class="file-bubble image-preview">
+                <strong>justificatif.png</strong>
+                <small>Image chiffrée · aperçu local</small>
+                <span></span>
+              </div>
+              <div class="bubble mine"><small>Vibration</small><p>Bien reçu. Je l'archive.</p><time>09:40 ✓✓</time></div>
+              <div class="composer-preview"><i>📎</i><i>😊</i><i>🎙</i><span>Message chiffré...</span><strong>Envoyer</strong></div>
+            </div>
+          </div>
+          <figcaption>Messages, fichiers et indicateurs de lecture restent intégrés dans le même fil.</figcaption>
+        </figure>
+
+        <figure class="capture phone-capture">
+          <div class="capture-title">
+            <span>Profil mobile</span>
+            <small>PWA</small>
+          </div>
+          <div class="phone-screen">
+            <div class="phone-notch"></div>
+            <div class="mobile-header"><span class="screen-logo">V</span><strong>Mon profil</strong></div>
+            <div class="avatar-large"></div>
+            <label>Nom affiché<span>Camille Durand</span></label>
+            <label>Instance serveur<span>https://chat.example.com</span></label>
+            <div class="mobile-panel">
+              <strong>Clé locale</strong>
+              <small>Mémorisée sur cet appareil</small>
+              <button>Oublier la clé</button>
+            </div>
+            <div class="mobile-panel accent">
+              <strong>Notifications</strong>
+              <small>Actives</small>
+            </div>
+          </div>
+          <figcaption>L'application s'installe comme une app mobile et conserve ses réglages par appareil.</figcaption>
+        </figure>
+
+        <figure class="capture enterprise-capture">
+          <div class="capture-title">
+            <span>Console d'administration</span>
+            <small>Entreprise</small>
+          </div>
+          <div class="admin-screen">
+            <div class="admin-top">
+              <span><strong>Administration</strong><small>@admin-demo</small></span>
+              <span>Retour au chat · Déconnexion</span>
+            </div>
+            <div class="metrics">
+              <p><strong>6</strong><small>Membres</small></p>
+              <p><strong>1</strong><small>Administrateurs</small></p>
+              <p><strong>0</strong><small>Gestionnaires</small></p>
+              <p><strong>3</strong><small>Conversations</small></p>
+              <p><strong>25</strong><small>Messages</small></p>
+            </div>
+            <div class="admin-tabs-preview">
+              <span class="selected">Membres</span>
+              <span>Messages</span>
+              <span>Journal</span>
+              <span>Configuration</span>
+              <span>Fédération</span>
+              <span>Base de données</span>
+            </div>
+            <div class="admin-search-preview">Rechercher un membre <span>username ou nom affiché</span><b>Actualiser</b></div>
+            <div class="admin-row-preview">
+              <p><strong>Utilisateur 1 · @user1</strong><small>ID 1 · compte demo</small></p>
+              <span class="badge gold">Admin</span>
+              <span class="badge cyan">Révoquer sessions</span>
+            </div>
+            <div class="admin-row-preview">
+              <p><strong>Utilisateur 2 · @user2</strong><small>ID 2 · compte demo</small></p>
+              <span class="badge gold">Rendre admin</span>
+              <span class="badge red">Bannir</span>
+            </div>
+            <div class="admin-row-preview warning">
+              <p><strong>Message #25</strong><small>Métadonnées visibles, contenu chiffré</small></p>
+              <span class="badge red">Supprimer</span>
+            </div>
+          </div>
+          <figcaption>Les équipes gardent le contrôle opérationnel sans lire le contenu des conversations.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="entreprise" class="enterprise-section">
+      <div class="enterprise-copy">
+        <p class="eyebrow">Edition Enterprise</p>
+        <h2>Une offre self-hosted pour reprendre le contrôle.</h2>
+        <p>L'entreprise reçoit une version complète sous GPL, installée sur son infrastructure, avec accompagnement serveur, Coturn, base de données, sauvegardes et support.</p>
+        <a class="text-link" href="https://vibration-shop.appbox.fr" target="_blank">Voir l'offre Enterprise</a>
+      </div>
+      <div class="enterprise-list">
+        <div><strong>Serveur Go maîtrisé</strong><span>Déploiement sur serveur dédié, VPS, réseau interne ou infrastructure client.</span></div>
+        <div><strong>Coturn privé</strong><span>Appels audio et vidéo plus fiables hors réseau local, sans dépendre d'un relais tiers.</span></div>
+        <div><strong>Console d'administration</strong><span>Rôles, révocation de sessions, bannissement, journal, configuration WebRTC et base de données.</span></div>
+        <div><strong>Support opérationnel</strong><span>Installation, maintenance, mises à jour, sauvegardes, restauration et durcissement HTTPS.</span></div>
+      </div>
+    </section>
+
+    <section id="souverainete" class="security-band">
+      <div>
+        <p class="eyebrow">Souveraineté technique</p>
+        <h2>L'organisation garde la main sur l'infrastructure.</h2>
+      </div>
+      <ul>
+        <li>Serveur Go, données et fichiers administrés par l'entreprise ou son prestataire.</li>
+        <li>Coturn privé pour contrôler le relais des appels WebRTC.</li>
+        <li>Messages, noms de fichiers et types MIME chiffrés avant envoi au serveur.</li>
+        <li>Support Enterprise vendu comme service, sans retirer les droits accordés par la GPL.</li>
+      </ul>
+    </section>
+
+    <section id="deploiement" class="deploy-section">
+      <div class="section-heading compact">
+        <p class="eyebrow">Déploiement</p>
+        <h2>Un serveur Go, une interface web, un Coturn privé.</h2>
+        <p>Community permet d'évaluer le socle. Enterprise ajoute l'accompagnement nécessaire pour un déploiement maîtrisé en production.</p>
+      </div>
+      <div class="command-panel">
+        <code>go run -tags community ./cmd/server</code>
+        <span>Community GPL publique · Enterprise installée et maintenue sur l'infrastructure client</span>
+      </div>
+      <div class="cta-row">
+        <a class="primary-action" href="https://github.com/TrueMisterJeanP/vibration" target="_blank">Voir Community</a>
+        <a class="secondary-action" href="https://vibration-shop.appbox.fr" target="_blank">Offre Enterprise</a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Vibration</span>
+    <span>Messagerie GPL self-hosted pour communications maîtrisées.</span>
+  </footer>
+</body>
+</html>
