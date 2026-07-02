@@ -38,8 +38,6 @@ self.addEventListener("push", (event) => {
   event.waitUntil((async () => {
     let payload = { title: "Nouveau message sécurisé", body: "Ouvrez l’application pour le lire.", url: "/" };
     try { payload = { ...payload, ...event.data.json() }; } catch {}
-    const windows = await clients.matchAll({ type: "window", includeUncontrolled: true });
-    if (windows.some((client) => client.visibilityState === "visible")) return;
     await self.registration.showNotification(payload.title, {
       body: payload.body,
       icon: "/icons/icon-192.png",

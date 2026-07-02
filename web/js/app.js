@@ -38,7 +38,7 @@ const CALL_SIGNAL_LOSS_GRACE_MS = 15000;
 const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
 const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "group-letter-avatar-v119";
+const APP_BUILD = "group-edit-members-v120";
 
 window.VIBRATION_BUILD = APP_BUILD;
 console.info(`Vibration build ${APP_BUILD}`);
@@ -265,7 +265,7 @@ function actionDialog({
   });
 }
 
-function groupEditDialog({ name, description, avatar }) {
+function groupEditDialog({ name, description, avatar, contacts, members }) {
   const dialog = document.querySelector("#group-edit-dialog");
   const form = document.querySelector("#group-edit-form");
   const nameInput = document.querySelector("#group-edit-name");
@@ -286,6 +286,12 @@ function groupEditDialog({ name, description, avatar }) {
   avatarInput.value = "";
   errorRegion.textContent = "";
   updatePreview();
+  renderGroupMemberPicker(document.querySelector("#group-edit-members"), contacts, {
+    selectedIDs: new Set(members.filter((member) => member.user_id !== state.me.id).map((member) => member.user_id)),
+    existingMembers: members,
+    disabledIDs: new Set([state.me.id]),
+    emptyText: "Aucun contact disponible.",
+  });
 
   return new Promise((resolve) => {
     const finish = (result) => {
@@ -322,6 +328,7 @@ function groupEditDialog({ name, description, avatar }) {
         name: editedName,
         description: descriptionInput.value.trim(),
         avatar: selectedAvatar,
+        memberIDs: [...document.querySelectorAll("#group-edit-members input:checked")].map((input) => Number(input.value)),
       });
     };
     dialog.showModal();
@@ -1283,21 +1290,38 @@ async function deleteContactRequest(contact, button) {
 async function editConversation(conversation, row) {
   const current = await resolveConversationDisplay(conversation);
   const currentDescription = current.description === "Groupe" ? "" : current.description;
+  const [key, contacts, members] = await Promise.all([
+    getConversationKey(conversation),
+    api("/api/contacts"),
+    getMembers(conversation.id),
+  ]);
+  state.contacts = contacts;
+  const currentMemberIDs = new Set(members.filter((member) => member.user_id !== state.me.id).map((member) => member.user_id));
   const result = await groupEditDialog({
     name: current.title,
     description: currentDescription,
     avatar: current.customAvatar,
+    contacts,
+    members,
   });
+  const selectedMemberIDs = new Set(result?.memberIDs || []);
+  const addedMemberIDs = result
+    ? [...selectedMemberIDs].filter((userID) => !currentMemberIDs.has(userID))
+    : [];
+  const removedMemberIDs = result
+    ? [...currentMemberIDs].filter((userID) => !selectedMemberIDs.has(userID))
+    : [];
   if (!result || (
     result.name === current.title
     && result.description === currentDescription
     && result.avatar === current.customAvatar
+    && addedMemberIDs.length === 0
+    && removedMemberIDs.length === 0
   )) {
     row.dispatchEvent(new Event("swipe-close"));
     return;
   }
   try {
-    const key = await getConversationKey(conversation);
     const encryptedTitle = await encryptEnvelope(key, result.name);
     const encryptedDescription = result.description
       ? await encryptEnvelope(key, result.description)
@@ -1313,13 +1337,34 @@ async function editConversation(conversation, row) {
         encrypted_avatar: encryptedAvatar,
       },
     });
+    for (const userID of addedMemberIDs) {
+      const contact = state.contacts.find((item) => item.contact_user_id === userID);
+      if (!contact) throw new Error("Contact introuvable.");
+      let encryptedConversationKey;
+      try {
+        const publicKey = JSON.parse(contact.public_key);
+        if (publicKey.kty !== "EC" || !publicKey.crv || !publicKey.x || !publicKey.y) throw new Error();
+        encryptedConversationKey = await wrapGroupKey(key, state.privateKey, contact.public_key, state.me.id);
+      } catch {
+        throw new Error(`La clé de chiffrement de ${contact.display_name || contact.username || "ce contact"} est invalide. Ce compte doit être recréé.`);
+      }
+      await api(`/api/conversations/${conversation.id}/members`, {
+        method: "POST",
+        body: { user_id: userID, encrypted_conversation_key: encryptedConversationKey },
+      });
+    }
+    for (const userID of removedMemberIDs) {
+      await api(`/api/conversations/${conversation.id}/members/${userID}`, { method: "DELETE" });
+    }
     conversation.encrypted_title = encryptedTitle;
     conversation.encrypted_description = encryptedDescription;
     conversation.encrypted_avatar = encryptedAvatar;
+    state.members.delete(conversation.id);
     if (state.current?.id === conversation.id) {
       elements.title.textContent = result.name;
       elements.description.textContent = result.description || "Groupe";
     }
+    await refreshAll();
     await renderConversations();
     toast("Groupe modifié.", "success");
   } catch (error) {
@@ -4091,6 +4136,71 @@ async function searchContacts(event) {
   }
 }
 
+function renderGroupMemberPicker(list, contacts, options = {}) {
+  const {
+    selectedIDs = new Set(),
+    existingMembers = [],
+    disabledIDs = new Set(),
+    emptyText = "Aucun contact. Ajoutez d’abord un contact.",
+  } = options;
+  const acceptedContacts = new Map(contacts
+    .filter((contact) => contact.status === "accepted")
+    .map((contact) => [contact.contact_user_id, {
+      userID: contact.contact_user_id,
+      username: contact.username,
+      displayName: contact.display_name || contact.username,
+      description: contact.description || "",
+      accepted: true,
+    }]));
+  for (const member of existingMembers) {
+    if (member.user_id === state.me.id) continue;
+    if (!acceptedContacts.has(member.user_id)) {
+      acceptedContacts.set(member.user_id, {
+        userID: member.user_id,
+        username: member.username,
+        displayName: member.display_name || member.username,
+        description: member.role === "pending" ? "Invitation en attente" : member.description || "",
+        accepted: false,
+      });
+    } else if (member.role === "pending") {
+      const contact = acceptedContacts.get(member.user_id);
+      contact.description = contact.description || "Invitation en attente";
+    }
+  }
+  const candidates = [...acceptedContacts.values()]
+    .sort((left, right) => left.username.localeCompare(right.username, "fr"));
+  list.replaceChildren();
+  if (!candidates.length) {
+    const empty = document.createElement("p");
+    empty.className = "picker-empty";
+    empty.textContent = emptyText;
+    list.append(empty);
+    return;
+  }
+  for (const contact of candidates) {
+    const label = document.createElement("label");
+    label.className = "picker-row check";
+    const identity = document.createElement("span");
+    const displayName = document.createElement("strong");
+    displayName.textContent = contact.displayName;
+    const description = document.createElement("small");
+    description.className = "contact-description";
+    description.textContent = contact.description;
+    description.hidden = !contact.description;
+    const username = document.createElement("small");
+    username.textContent = `@${contact.username}`;
+    identity.append(displayName, description, username);
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = String(contact.userID);
+    checkbox.checked = selectedIDs.has(contact.userID);
+    checkbox.disabled = disabledIDs.has(contact.userID);
+    checkbox.setAttribute("aria-label", `${checkbox.checked ? "Retirer" : "Ajouter"} ${contact.displayName} du groupe`);
+    label.append(identity, checkbox);
+    list.append(label);
+  }
+}
+
 async function openGroupDialog() {
   groupAvatar = null;
   updateGroupAvatarPreview();
@@ -4100,38 +4210,7 @@ async function openGroupDialog() {
   ]);
   state.contacts = contacts;
   state.conversations = conversations;
-  const candidates = new Map(contacts
-    .filter((contact) => contact.status === "accepted")
-    .map((contact) => [contact.contact_user_id, contact]));
-  const acceptedContacts = [...candidates.values()].sort((left, right) => left.username.localeCompare(right.username, "fr"));
-  const list = document.querySelector("#group-members");
-  list.replaceChildren();
-  if (!acceptedContacts.length) {
-    const empty = document.createElement("p");
-    empty.className = "picker-empty";
-    empty.textContent = "Aucun contact. Ajoutez d’abord un contact.";
-    list.append(empty);
-  }
-  for (const contact of acceptedContacts) {
-    const label = document.createElement("label");
-    label.className = "picker-row check";
-    const identity = document.createElement("span");
-    const displayName = document.createElement("strong");
-    displayName.textContent = contact.display_name;
-    const description = document.createElement("small");
-    description.className = "contact-description";
-    description.textContent = contact.description || "";
-    description.hidden = !contact.description;
-    const username = document.createElement("small");
-    username.textContent = `@${contact.username}`;
-    identity.append(displayName, description, username);
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.value = String(contact.contact_user_id);
-    checkbox.setAttribute("aria-label", `Ajouter ${contact.display_name} au groupe`);
-    label.append(identity, checkbox);
-    list.append(label);
-  }
+  renderGroupMemberPicker(document.querySelector("#group-members"), contacts);
   document.querySelector("#group-dialog").showModal();
 }
 

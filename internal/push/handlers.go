@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -126,7 +127,11 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) NotifyUser(userID int64) {
-	h.notify(userID)
+	result := h.notify(userID)
+	if result.Subscriptions == 0 || len(result.Failures) > 0 {
+		log.Printf("push delivery user_id=%d subscriptions=%d attempted=%d sent=%d removed=%d failures=%v",
+			userID, result.Subscriptions, result.Attempted, result.Sent, result.Removed, result.Failures)
+	}
 }
 
 func (h *Handler) notify(userID int64) DeliveryResult {
@@ -163,7 +168,7 @@ func (h *Handler) notify(userID int64) DeliveryResult {
 			result.Failures = append(result.Failures, "transport_error")
 			continue
 		}
-		_, _ = io.Copy(io.Discard, response.Body)
+		responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
 		response.Body.Close()
 		if response.StatusCode == http.StatusGone || response.StatusCode == http.StatusNotFound {
 			_, _ = h.DB.Exec(`DELETE FROM push_subscriptions WHERE id=?`, item.id)
@@ -174,6 +179,7 @@ func (h *Handler) notify(userID int64) DeliveryResult {
 		if response.StatusCode >= 200 && response.StatusCode < 300 {
 			result.Sent++
 		} else {
+			log.Printf("push service rejected subscription_id=%d status=%d body=%q", item.id, response.StatusCode, strings.TrimSpace(string(responseBody)))
 			result.Failures = append(result.Failures, "push_service_http_"+http.StatusText(response.StatusCode))
 		}
 	}
