@@ -68,8 +68,9 @@ func (h *Handler) PublicKey(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Handler) Subscribe(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Endpoint string `json:"endpoint"`
-		Keys     struct {
+		Endpoint       string `json:"endpoint"`
+		ExpirationTime *int64 `json:"expirationTime"`
+		Keys           struct {
 			P256dh string `json:"p256dh"`
 			Auth   string `json:"auth"`
 		} `json:"keys"`
@@ -119,11 +120,21 @@ func (h *Handler) Test(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 	var count int
-	if err := h.DB.QueryRow(`SELECT COUNT(*) FROM push_subscriptions WHERE user_id=?`, auth.UserID(r)).Scan(&count); err != nil {
+	userID := auth.UserID(r)
+	if err := h.DB.QueryRow(`SELECT COUNT(*) FROM push_subscriptions WHERE user_id=?`, userID).Scan(&count); err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "subscription lookup failed")
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"subscriptions": count})
+	current := false
+	if endpoint := strings.TrimSpace(r.URL.Query().Get("endpoint")); endpoint != "" {
+		var currentCount int
+		if err := h.DB.QueryRow(`SELECT COUNT(*) FROM push_subscriptions WHERE user_id=? AND endpoint=?`, userID, endpoint).Scan(&currentCount); err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "subscription lookup failed")
+			return
+		}
+		current = currentCount > 0
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"subscriptions": count, "current_subscription": current})
 }
 
 func (h *Handler) NotifyUser(userID int64) {

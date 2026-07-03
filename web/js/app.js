@@ -38,7 +38,7 @@ const CALL_SIGNAL_LOSS_GRACE_MS = 15000;
 const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
 const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "group-edit-members-v120";
+const APP_BUILD = "android-visible-push-v138";
 
 window.VIBRATION_BUILD = APP_BUILD;
 console.info(`Vibration build ${APP_BUILD}`);
@@ -78,6 +78,7 @@ let profileAvatar = null;
 let groupAvatar = null;
 let pdfJSModule;
 let callPageExitHandled = false;
+let callVideoResumeTimer = null;
 
 const elements = {
   shell: document.querySelector("#app-shell"),
@@ -98,6 +99,7 @@ const elements = {
   remoteCallVideos: document.querySelector("#remote-call-videos"),
   remoteCallVideo: document.querySelector("#remote-call-video"),
   localCallVideo: document.querySelector("#local-call-video"),
+  callAndroidExitFullscreenButton: document.querySelector("#call-android-exit-fullscreen-button"),
   callOpenConversationButton: document.querySelector("#call-open-conversation-button"),
   callAcceptButton: document.querySelector("#call-accept-button"),
   callRejectButton: document.querySelector("#call-reject-button"),
@@ -274,30 +276,79 @@ function groupEditDialog({ name, description, avatar, contacts, members }) {
   const avatarPreview = document.querySelector("#group-edit-avatar-preview");
   const removeButton = document.querySelector("#group-edit-avatar-remove");
   const errorRegion = document.querySelector("#group-edit-error");
+  const memberList = document.querySelector("#group-edit-members");
+  const userSearch = document.querySelector("#group-edit-user-search");
+  const userResults = document.querySelector("#group-edit-user-results");
   let selectedAvatar = avatar || null;
+  const selectedIDs = new Set(members.filter((member) => member.user_id !== state.me.id).map((member) => member.user_id));
+  const extraUsers = new Map();
 
   const updatePreview = () => {
     avatarPreview.src = selectedAvatar || "/icons/group.svg";
     removeButton.hidden = !selectedAvatar;
   };
+  const renderMembers = () => renderGroupMemberPicker(memberList, contacts, {
+    selectedIDs,
+    existingMembers: members,
+    extraUsers: [...extraUsers.values()],
+    disabledIDs: new Set([state.me.id]),
+    emptyText: "Aucun contact disponible.",
+    onChange: (userID, checked) => {
+      if (checked) selectedIDs.add(userID);
+      else selectedIDs.delete(userID);
+    },
+  });
+  const searchUsers = debounce(async () => {
+    const query = userSearch.value.trim();
+    userResults.replaceChildren();
+    if (query.length < 2) return;
+    try {
+      const users = await api(`/api/users/search?q=${encodeURIComponent(query)}`);
+      const currentIDs = new Set([...members.map((member) => member.user_id), ...selectedIDs, ...extraUsers.keys()]);
+      for (const user of users.filter((item) => item.id !== state.me.id && !currentIDs.has(item.id))) {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "picker-row";
+        const description = user.description
+          ? `<small class="contact-description">${escapeText(user.description)}</small>`
+          : "";
+        row.innerHTML = `<span><strong>${escapeText(user.display_name || user.username)}</strong>${description}<small>@${escapeText(user.username)}</small></span><span>Inviter</span>`;
+        row.onclick = () => {
+          extraUsers.set(user.id, user);
+          selectedIDs.add(user.id);
+          userSearch.value = "";
+          userResults.replaceChildren();
+          renderMembers();
+        };
+        userResults.append(row);
+      }
+      if (!userResults.children.length) {
+        const empty = document.createElement("p");
+        empty.className = "picker-empty";
+        empty.textContent = "Aucun nouveau membre trouvé.";
+        userResults.append(empty);
+      }
+    } catch (error) {
+      toast(frenchErrorMessage(error, "Recherche utilisateur impossible."), "error");
+    }
+  }, 300);
 
   nameInput.value = name;
   descriptionInput.value = description;
   avatarInput.value = "";
+  userSearch.value = "";
+  userResults.replaceChildren();
   errorRegion.textContent = "";
   updatePreview();
-  renderGroupMemberPicker(document.querySelector("#group-edit-members"), contacts, {
-    selectedIDs: new Set(members.filter((member) => member.user_id !== state.me.id).map((member) => member.user_id)),
-    existingMembers: members,
-    disabledIDs: new Set([state.me.id]),
-    emptyText: "Aucun contact disponible.",
-  });
+  renderMembers();
 
   return new Promise((resolve) => {
     const finish = (result) => {
+      userSearch.removeEventListener("input", searchUsers);
       if (dialog.open) dialog.close();
       resolve(result);
     };
+    userSearch.addEventListener("input", searchUsers);
     avatarInput.onchange = async (event) => {
       const file = event.target.files[0];
       event.target.value = "";
@@ -328,7 +379,8 @@ function groupEditDialog({ name, description, avatar, contacts, members }) {
         name: editedName,
         description: descriptionInput.value.trim(),
         avatar: selectedAvatar,
-        memberIDs: [...document.querySelectorAll("#group-edit-members input:checked")].map((input) => Number(input.value)),
+        memberIDs: [...selectedIDs],
+        invitedUsers: [...extraUsers.values()],
       });
     };
     dialog.showModal();
@@ -337,6 +389,11 @@ function groupEditDialog({ name, description, avatar, contacts, members }) {
 }
 
 function pushFailureMessage(failures = []) {
+  if (failures.includes("current_device_not_subscribed")) return "cet appareil n’est pas abonné";
+  if (failures.includes("insecure_context")) return "ouvrez l’application en HTTPS";
+  if (failures.includes("unsupported_protocol")) return "protocole non compatible";
+  if (failures.includes("push_manager_missing") || failures.includes("service_worker_missing")) return "Web Push indisponible dans ce navigateur";
+  if (failures.includes("native_only_no_remote_push")) return "notifications natives locales seulement";
   if (failures.includes("native_permission_denied")) return "permission système refusée";
   if (failures.includes("database_error")) return "erreur de consultation des abonnements";
   if (failures.includes("transport_error")) return "service de notification inaccessible";
@@ -589,7 +646,6 @@ function bindUI() {
     updateGroupAvatarPreview();
   };
   const sidebarButton = document.querySelector("#open-sidebar-logo");
-  const closeSidebarButton = document.querySelector("#close-sidebar-logo");
   const setSidebarOpen = (open) => {
     elements.shell.classList.toggle("sidebar-open", open);
     sidebarButton.setAttribute("aria-expanded", String(open));
@@ -599,17 +655,13 @@ function bindUI() {
     sidebarButton.title = open ? "Masquer les contacts et groupes" : "Afficher les contacts et groupes";
   };
   const mobileLayout = window.matchMedia("(max-width: 720px)");
-  const showMessagesOnMobile = async ({ matches }) => {
+  const showContactsOnMobile = ({ matches }) => {
     if (!matches) return;
-    setSidebarOpen(false);
-    if (!state.current && state.conversations.length) {
-      await selectConversation(state.conversations[0]);
-    }
+    setSidebarOpen(true);
   };
-  mobileLayout.addEventListener("change", showMessagesOnMobile);
-  showMessagesOnMobile(mobileLayout);
+  mobileLayout.addEventListener("change", showContactsOnMobile);
+  showContactsOnMobile(mobileLayout);
   sidebarButton.onclick = () => setSidebarOpen(!elements.shell.classList.contains("sidebar-open"));
-  closeSidebarButton.onclick = () => setSidebarOpen(false);
   elements.composer.addEventListener("submit", sendMessage);
   elements.file.addEventListener("change", sendFile);
   elements.voiceButton.addEventListener("click", toggleVoiceRecording);
@@ -626,6 +678,7 @@ function bindUI() {
   elements.callMuteButton.addEventListener("click", toggleCallMicrophone);
   elements.callCameraButton.addEventListener("click", toggleCallCamera);
   elements.callFullscreenButton.addEventListener("click", enterCallFullscreen);
+  elements.callAndroidExitFullscreenButton.addEventListener("click", exitCallFullscreen);
   elements.callSwitchCameraButton.addEventListener("click", switchCallCamera);
   elements.callScreenShareButton.addEventListener("click", toggleScreenShare);
   elements.callWhiteboardButton.addEventListener("click", toggleWhiteboard);
@@ -633,6 +686,12 @@ function bindUI() {
   elements.callHangupButton.addEventListener("click", () => hangupCall("hangup"));
   window.addEventListener("pagehide", handleCallPageExit);
   window.addEventListener("beforeunload", handleCallPageExit);
+  window.addEventListener("focus", refreshConversationListOnForeground);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshConversationListOnForeground();
+  });
+  document.addEventListener("fullscreenchange", handleCallFullscreenChange);
+  document.addEventListener("webkitfullscreenchange", handleCallFullscreenChange);
   elements.voiceDraftClear.addEventListener("click", clearVoiceDraft);
   elements.replyClear.addEventListener("click", clearReplyTarget);
   bindExpirationDialog();
@@ -681,7 +740,8 @@ function bindUI() {
           ? `Abonnement enregistré, mais livraison Web Push échouée (${reason}). Un test local a été affiché.`
           : `Abonnement enregistré, mais livraison Web Push échouée (${reason}).`, "error");
       } else {
-        toast("Aucun abonnement Push enregistré. Cliquez d’abord sur Activer.", "error");
+        const reason = pushFailureMessage(result.failures);
+        toast(`Aucun abonnement Push enregistré pour cet appareil (${reason}). Cliquez d’abord sur Activer.`, "error");
       }
       await refreshNotificationStatus();
     } catch (error) {
@@ -976,7 +1036,11 @@ async function refreshNotificationStatus() {
       await syncBrowserSubscription();
     }
     const status = await notificationStatus();
-    if (status.mode === "native" && status.nativeGranted && !status.pushSupported) {
+    if (status.supportIssue === "insecure_context") {
+      label.textContent = "Notifications Push Android indisponibles hors HTTPS";
+      button.textContent = "HTTPS requis";
+      button.disabled = true;
+    } else if (status.mode === "native" && status.nativeGranted && !status.pushSupported) {
       label.textContent = "Notifications natives seulement, indisponibles si l’application est arrêtée";
       button.textContent = "Web Push indisponible";
       button.disabled = true;
@@ -988,8 +1052,12 @@ async function refreshNotificationStatus() {
       label.textContent = "Notifications bloquées par le navigateur";
       button.textContent = "Notifications bloquées";
       button.disabled = false;
-    } else if (status.browserSubscription && status.serverSubscriptions > 0) {
+    } else if (status.browserSubscription && status.currentDeviceServerSubscription) {
       label.textContent = "Notifications activées";
+      button.textContent = "Réactiver les notifications";
+      button.disabled = false;
+    } else if (status.browserSubscription && status.serverSubscriptions > 0) {
+      label.textContent = "Abonnement de cet appareil non enregistré sur le serveur";
       button.textContent = "Réactiver les notifications";
       button.disabled = false;
     } else if (status.permission === "granted") {
@@ -1031,14 +1099,36 @@ async function refreshAll() {
   [state.contacts, state.conversations] = await Promise.all([api("/api/contacts"), api("/api/conversations")]);
   state.members.clear();
   await renderConversations();
-  if (!state.current && state.conversations.length && window.matchMedia("(max-width: 720px)").matches) {
-    await selectConversation(state.conversations[0]);
-  }
 }
 
 async function refreshConversationList() {
   state.conversations = await api("/api/conversations");
   await renderConversations();
+}
+
+function refreshConversationListOnForeground() {
+  if (!state.me) return;
+  refreshConversationList().catch((error) => {
+    console.warn("Actualisation des conversations au retour impossible", error);
+  });
+}
+
+function conversationCallState(conversation) {
+  if (!state.call || !sameID(state.call.conversationID, conversation.id)) return null;
+  const incoming = state.call.direction === "incoming" && state.call.status === "ringing";
+  const outgoing = state.call.direction === "outgoing" && state.call.status === "ringing";
+  return {
+    incoming,
+    outgoing,
+    media: state.call.media,
+  };
+}
+
+function refreshConversationCallIndicators() {
+  if (!state.me) return;
+  renderConversations().catch((error) => {
+    console.warn("Actualisation de l’indicateur d’appel impossible", error);
+  });
 }
 
 async function renderConversations() {
@@ -1059,12 +1149,19 @@ async function renderConversations() {
       elements.conversations.append(renderGroupInvitation(conversation));
       continue;
     }
+    const callState = conversationCallState(conversation);
     const row = document.createElement("div");
     row.className = "conversation-row swipe-row";
     const actions = document.createElement("div");
     actions.className = "swipe-actions conversation-swipe-actions";
     const button = document.createElement("button");
-    button.className = `conversation-item swipe-surface ${state.current?.id === conversation.id ? "active" : ""}`;
+    button.className = [
+      "conversation-item",
+      "swipe-surface",
+      state.current?.id === conversation.id ? "active" : "",
+      callState ? "call-highlight" : "",
+      callState?.incoming ? "call-incoming" : "",
+    ].filter(Boolean).join(" ");
     const avatar = document.createElement("span");
     avatar.className = "avatar";
     avatar.textContent = conversation.type === "group" ? "G" : "@";
@@ -1082,10 +1179,18 @@ async function renderConversations() {
     unread.hidden = !conversation.unread_count;
     unread.textContent = conversation.unread_count > 99 ? "99+" : String(conversation.unread_count || "");
     unread.setAttribute("aria-label", `${conversation.unread_count || 0} message${conversation.unread_count > 1 ? "s" : ""} non lu${conversation.unread_count > 1 ? "s" : ""}`);
+    const callBadge = document.createElement("span");
+    callBadge.className = "call-conversation-badge";
+    callBadge.hidden = !callState;
+    callBadge.textContent = callState?.incoming
+      ? "Appel entrant"
+      : callState?.outgoing
+        ? "Appel lancé"
+        : "Appel en cours";
     const subtitle = document.createElement("small");
     subtitle.className = "conversation-description";
     subtitle.textContent = conversation.type === "group" ? "Groupe" : "Contact";
-    titleRow.append(title, unread);
+    titleRow.append(title, callBadge, unread);
     copy.append(titleRow, subtitle);
     button.append(avatar, copy);
     button.onclick = () => selectConversation(conversation);
@@ -1132,8 +1237,19 @@ async function renderConversations() {
       title.textContent = display.title;
       if (typing) {
         renderTypingIndicator(subtitle, typing);
+      } else if (callState?.incoming) {
+        subtitle.textContent = `${callLabel(callState.media)} entrant. Touchez ici pour répondre.`;
+        subtitle.classList.add("call-description");
+        subtitle.classList.remove("typing");
+        subtitle.removeAttribute("aria-label");
+      } else if (callState) {
+        subtitle.textContent = `${callLabel(callState.media)} ${callState.outgoing ? "en attente" : "en cours"}.`;
+        subtitle.classList.add("call-description");
+        subtitle.classList.remove("typing");
+        subtitle.removeAttribute("aria-label");
       } else {
         subtitle.textContent = await conversationListPreview(conversation, display);
+        subtitle.classList.remove("call-description");
         subtitle.classList.remove("typing");
         subtitle.removeAttribute("aria-label");
       }
@@ -1338,15 +1454,18 @@ async function editConversation(conversation, row) {
       },
     });
     for (const userID of addedMemberIDs) {
+      const invitedUser = result.invitedUsers?.find((item) => item.id === userID);
       const contact = state.contacts.find((item) => item.contact_user_id === userID);
-      if (!contact) throw new Error("Contact introuvable.");
+      const memberPublicKey = contact?.public_key || invitedUser?.public_key;
+      const memberLabel = contact?.display_name || contact?.username || invitedUser?.display_name || invitedUser?.username || "ce membre";
+      if (!memberPublicKey) throw new Error("Utilisateur introuvable.");
       let encryptedConversationKey;
       try {
-        const publicKey = JSON.parse(contact.public_key);
+        const publicKey = JSON.parse(memberPublicKey);
         if (publicKey.kty !== "EC" || !publicKey.crv || !publicKey.x || !publicKey.y) throw new Error();
-        encryptedConversationKey = await wrapGroupKey(key, state.privateKey, contact.public_key, state.me.id);
+        encryptedConversationKey = await wrapGroupKey(key, state.privateKey, memberPublicKey, state.me.id);
       } catch {
-        throw new Error(`La clé de chiffrement de ${contact.display_name || contact.username || "ce contact"} est invalide. Ce compte doit être recréé.`);
+        throw new Error(`La clé de chiffrement de ${memberLabel} est invalide. Ce compte doit être recréé.`);
       }
       await api(`/api/conversations/${conversation.id}/members`, {
         method: "POST",
@@ -1676,6 +1795,44 @@ function configureCallVideoElement(video) {
   video.setAttribute("playsinline", "");
   video.setAttribute("webkit-playsinline", "");
   video.setAttribute("controlslist", "nofullscreen nodownload noremoteplayback");
+  bindCallVideoPlaybackGuards(video);
+}
+
+function bindCallVideoPlaybackGuards(video) {
+  if (!video || video.dataset.callPlaybackGuard === "true") return;
+  video.dataset.callPlaybackGuard = "true";
+  video.addEventListener("webkitendfullscreen", () => scheduleCallVideoPlaybackResume());
+  video.addEventListener("pause", () => {
+    if (callVideoShouldKeepPlaying(video)) scheduleCallVideoPlaybackResume(80);
+  });
+}
+
+function callVideoShouldKeepPlaying(video) {
+  if (!state.call || state.call.closing || state.call.media !== "video" || document.hidden) return false;
+  if (!video?.srcObject || video.hidden) return false;
+  const tracks = typeof video.srcObject.getVideoTracks === "function" ? video.srcObject.getVideoTracks() : [];
+  return tracks.some((track) => track.readyState === "live");
+}
+
+function callVideoElements() {
+  return [elements.localCallVideo, ...elements.remoteCallVideos.querySelectorAll("video")];
+}
+
+function resumeCallVideoPlayback() {
+  if (!state.call || state.call.closing || state.call.media !== "video") return;
+  for (const video of callVideoElements()) {
+    if (!callVideoShouldKeepPlaying(video)) continue;
+    configureCallVideoElement(video);
+    video.play().catch(() => {});
+  }
+}
+
+function scheduleCallVideoPlaybackResume(delay = 120) {
+  window.clearTimeout(callVideoResumeTimer);
+  callVideoResumeTimer = window.setTimeout(() => {
+    resumeCallVideoPlayback();
+    window.setTimeout(resumeCallVideoPlayback, 350);
+  }, delay);
 }
 
 function callRejectMessage(reason) {
@@ -1769,6 +1926,7 @@ async function startCallInvite(media) {
   sendCallSignal("call_invite", { call_id: call.id, media });
   startOutgoingCallTimeout(call);
   updateCallUI();
+  refreshConversationCallIndicators();
 }
 
 async function acceptIncomingCall() {
@@ -1776,6 +1934,7 @@ async function acceptIncomingCall() {
   clearCallAlerts();
   state.call.status = "connecting";
   updateCallUI();
+  refreshConversationCallIndicators();
   try {
     await openCallConversation();
     await ensureLocalCallStream();
@@ -1783,6 +1942,7 @@ async function acceptIncomingCall() {
     sendCallSignal("call_accept", { call_id: state.call.id, media: state.call.media });
     await connectAcceptedCallPeers();
     updateCallUI();
+    refreshConversationCallIndicators();
   } catch (error) {
     sendCallSignal("call_reject", {
       call_id: state.call.id,
@@ -1918,9 +2078,12 @@ async function clearCallState(conversationID = state.call?.conversationID) {
   closeCallResources(call);
   if (state.call === call) state.call = null;
   updateCallUI();
+  refreshConversationCallIndicators();
 }
 
 function closeCallResources(call = state.call) {
+  window.clearTimeout(callVideoResumeTimer);
+  callVideoResumeTimer = null;
   clearCallAlerts(call);
   if (call?.peers) {
     for (const peerState of call.peers.values()) {
@@ -1954,6 +2117,7 @@ function closeCallPeer(peerState) {
     peerState.peer.ontrack = null;
     peerState.peer.ondatachannel = null;
     peerState.peer.onconnectionstatechange = null;
+    peerState.peer.oniceconnectionstatechange = null;
     peerState.peer.onsignalingstatechange = null;
     peerState.peer.close();
     peerState.peer = null;
@@ -2082,6 +2246,9 @@ function updateCallUI() {
     elements.callTurnIndicator.removeAttribute("aria-label");
     elements.callTurnIndicator.removeAttribute("title");
     elements.callOpenConversationButton.hidden = true;
+    elements.callAcceptButton.hidden = true;
+    elements.callRejectButton.hidden = true;
+    elements.callHangupButton.hidden = true;
     elements.callMuteButton.hidden = true;
     elements.callCameraButton.hidden = true;
     elements.callFullscreenButton.hidden = true;
@@ -2093,6 +2260,7 @@ function updateCallUI() {
     elements.callBanner.classList.remove("whiteboard-open");
     elements.callBanner.classList.remove("whiteboard-fullscreen");
     elements.callVideoStage.classList.remove("screen-sharing");
+    elements.callVideoStage.classList.remove("android-fullscreen");
     return;
   }
   const currentConversation = sameID(state.call.conversationID, state.current?.id);
@@ -2102,8 +2270,8 @@ function updateCallUI() {
   const outgoing = state.call.direction === "outgoing" && state.call.status === "ringing";
   const peerCount = activeCallPeerCount();
   const groupSuffix = isGroupCall() && peerCount ? ` (${peerCount + 1} participants)` : "";
-  elements.callBanner.hidden = false;
-  elements.callBanner.classList.toggle("navigate", !currentConversation);
+  elements.callBanner.hidden = !currentConversation;
+  elements.callBanner.classList.toggle("navigate", false);
   elements.callBannerLabel.textContent = incoming
     ? `${callLabel(state.call.media)} entrant de ${currentCallTitle()}`
     : outgoing
@@ -2112,11 +2280,11 @@ function updateCallUI() {
         ? `${callLabel(state.call.media)} en connexion`
         : `${callLabel(state.call.media)} en cours${groupSuffix}`;
   syncCallRouteIndicator();
-  elements.callOpenConversationButton.hidden = currentConversation || incoming;
-  elements.callAcceptButton.hidden = !incoming;
-  elements.callRejectButton.hidden = !incoming;
-  elements.callHangupButton.hidden = incoming ? true : !(outgoing || connecting || accepted);
-  const controlsVisible = connecting || accepted;
+  elements.callOpenConversationButton.hidden = true;
+  elements.callAcceptButton.hidden = !(currentConversation && incoming);
+  elements.callRejectButton.hidden = !(currentConversation && incoming);
+  elements.callHangupButton.hidden = !currentConversation || incoming || !(outgoing || connecting || accepted);
+  const controlsVisible = currentConversation && (connecting || accepted);
   elements.callMuteButton.hidden = !controlsVisible;
   elements.callCameraButton.hidden = !controlsVisible || state.call.media !== "video";
   elements.callFullscreenButton.hidden = !controlsVisible || state.call.media !== "video";
@@ -2556,6 +2724,21 @@ function toggleCallCamera() {
   syncCallControlLabels();
 }
 
+function isAndroidDevice() {
+  return /Android/i.test(navigator.userAgent || "");
+}
+
+function syncAndroidFullscreenExitButton() {
+  const stageFullscreen = document.fullscreenElement === elements.callVideoStage
+    || document.webkitFullscreenElement === elements.callVideoStage;
+  elements.callVideoStage.classList.toggle("android-fullscreen", Boolean(isAndroidDevice() && stageFullscreen));
+}
+
+function handleCallFullscreenChange() {
+  syncAndroidFullscreenExitButton();
+  scheduleCallVideoPlaybackResume();
+}
+
 async function enterCallFullscreen() {
   if (!state.call || state.call.media !== "video") return;
   const target = elements.callVideoStage;
@@ -2565,8 +2748,10 @@ async function enterCallFullscreen() {
       return;
     }
     if (target.requestFullscreen) {
+      if (isAndroidDevice()) elements.callVideoStage.classList.add("android-fullscreen");
       await target.requestFullscreen({ navigationUI: "hide" });
     } else if (target.webkitRequestFullscreen) {
+      if (isAndroidDevice()) elements.callVideoStage.classList.add("android-fullscreen");
       target.webkitRequestFullscreen();
     } else if (elements.remoteCallVideo.webkitEnterFullscreen) {
       elements.remoteCallVideo.webkitEnterFullscreen();
@@ -2574,6 +2759,8 @@ async function enterCallFullscreen() {
       toast("Le plein écran vidéo n’est pas disponible dans ce navigateur.", "error");
     }
   } catch (error) {
+    syncAndroidFullscreenExitButton();
+    scheduleCallVideoPlaybackResume();
     toast(frenchErrorMessage(error, "Impossible d’afficher la vidéo en plein écran."), "error");
   }
 }
@@ -2589,6 +2776,9 @@ async function exitCallFullscreen() {
     }
   } catch (error) {
     console.warn("Sortie du plein écran vidéo impossible", error);
+  } finally {
+    syncAndroidFullscreenExitButton();
+    scheduleCallVideoPlaybackResume();
   }
 }
 
@@ -2711,8 +2901,9 @@ async function replaceLocalCallVideoTrack(nextTrack) {
     if (track !== nextTrack) track.stop();
   }
   if (nextTrack) call.localStream.addTrack(nextTrack);
+  configureCallVideoElement(elements.localCallVideo);
   elements.localCallVideo.srcObject = call.localStream;
-  elements.localCallVideo.play().catch(() => {});
+  resumeCallVideoPlayback();
   syncCallControlLabels();
 }
 
@@ -2725,8 +2916,9 @@ async function ensureLocalCallStream() {
   });
   state.call.localStream = stream;
   if (state.call.media === "video") {
+    configureCallVideoElement(elements.localCallVideo);
     elements.localCallVideo.srcObject = stream;
-    elements.localCallVideo.play().catch(() => {});
+    resumeCallVideoPlayback();
   }
   return stream;
 }
@@ -2773,7 +2965,17 @@ async function ensureCallPeer(userID) {
       state.call.status = "accepted";
       refreshCallRouteIndicator(peerState).catch(() => {});
       updateCallUI();
-    } else if (peer.connectionState === "failed") {
+    } else if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
+      handleCallPeerConnectionFailure(peerState, userID);
+    }
+  };
+  peer.oniceconnectionstatechange = () => {
+    if (!state.call) return;
+    if (peer.iceConnectionState === "connected" || peer.iceConnectionState === "completed") {
+      resetPeerIceRestartState(peerState);
+      return;
+    }
+    if (peer.iceConnectionState === "failed" || peer.iceConnectionState === "disconnected") {
       handleCallPeerConnectionFailure(peerState, userID);
     }
   };
@@ -2808,7 +3010,7 @@ function attachRemoteCallStream(peerState, stream) {
     video.hidden = false;
     video.srcObject = stream;
     elements.callVideoStage.hidden = false;
-    video.play().catch(() => {});
+    resumeCallVideoPlayback();
   } else {
     let audio = peerState.audioElement;
     if (!audio) {
@@ -2938,6 +3140,13 @@ function isCallNegotiationInitiator(userID) {
 
 function callPeerIsConnected(peerState) {
   return peerState?.peer?.connectionState === "connected";
+}
+
+function handleCallParticipantOffline(userID) {
+  const numericUserID = Number(userID);
+  const peerState = state.call?.peers?.get(numericUserID);
+  if (!peerState?.peer || state.call?.closing) return;
+  handleCallPeerConnectionFailure(peerState, numericUserID);
 }
 
 function startPeerIceRestartTimeout(peerState, userID) {
@@ -3115,6 +3324,7 @@ function removeCallPeer(userID) {
   closeCallPeer(peerState);
   state.call.peers.delete(userID);
   updateCallUI();
+  refreshConversationCallIndicators();
 }
 
 async function handleCallSignal(event) {
@@ -3154,6 +3364,7 @@ async function handleCallSignal(event) {
       toast(`${callLabel(state.call.media)} entrant de ${callerName}. Ouvrez la conversation pour répondre.`);
     }
     updateCallUI();
+    refreshConversationCallIndicators();
     return;
   }
   if (!state.call || state.call.id !== event.call_id || !sameID(state.call.conversationID, event.conversation_id)) return;
@@ -3167,6 +3378,7 @@ async function handleCallSignal(event) {
       clearCallAlerts();
       state.call.status = "connecting";
       updateCallUI();
+      refreshConversationCallIndicators();
       await maybeBeginOutgoingPeerOffer(event.user_id);
     } catch (error) {
       toast(frenchErrorMessage(error, "Impossible de démarrer l’appel."), "error");
@@ -3295,6 +3507,19 @@ function replyLabel(message, clear) {
   return `${author} : ${text}`.slice(0, 120);
 }
 
+function isCallHistoryText(clear) {
+  return typeof clear === "string" && /^Appel (audio|vidéo) (annulé|refusé|terminé|manqué|interrompu|impossible)(?:[ :.].*)?\.$/.test(clear);
+}
+
+async function isIncomingCallHistoryMessage(message) {
+  if (!message || message.file || !message.encrypted_content || !message.iv) return false;
+  const conversation = state.conversations.find((item) => sameID(item.id, message.conversation_id));
+  if (!conversation) return false;
+  const key = await getConversationKey(conversation);
+  const clear = await decryptMessageContent(message, key);
+  return isCallHistoryText(clear);
+}
+
 function withReplyPreview(message, clearByID) {
   if (!message.reply_to || !clearByID.has(message.reply_to)) return message;
   const parent = clearByID.get(message.reply_to);
@@ -3398,7 +3623,7 @@ async function appendMessage(message, scroll = true) {
     const renderedMessages = elements.messages.querySelectorAll(".message");
     renderedMessages[renderedMessages.length - 1]?.closest(".message-row")?.remove();
   }
-  if (message.sender_id !== state.me.id) {
+  if (message.sender_id !== state.me.id && !document.hidden) {
     api(`/api/messages/${message.id}/read`, { method: "POST", body: {} }).catch(() => {});
   }
   if (scroll) scrollToBottom();
@@ -4140,8 +4365,10 @@ function renderGroupMemberPicker(list, contacts, options = {}) {
   const {
     selectedIDs = new Set(),
     existingMembers = [],
+    extraUsers = [],
     disabledIDs = new Set(),
     emptyText = "Aucun contact. Ajoutez d’abord un contact.",
+    onChange = null,
   } = options;
   const acceptedContacts = new Map(contacts
     .filter((contact) => contact.status === "accepted")
@@ -4166,6 +4393,16 @@ function renderGroupMemberPicker(list, contacts, options = {}) {
       const contact = acceptedContacts.get(member.user_id);
       contact.description = contact.description || "Invitation en attente";
     }
+  }
+  for (const user of extraUsers) {
+    if (user.id === state.me.id || acceptedContacts.has(user.id)) continue;
+    acceptedContacts.set(user.id, {
+      userID: user.id,
+      username: user.username,
+      displayName: user.display_name || user.username,
+      description: user.description || "Invitation sans contact privé",
+      accepted: false,
+    });
   }
   const candidates = [...acceptedContacts.values()]
     .sort((left, right) => left.username.localeCompare(right.username, "fr"));
@@ -4195,6 +4432,7 @@ function renderGroupMemberPicker(list, contacts, options = {}) {
     checkbox.value = String(contact.userID);
     checkbox.checked = selectedIDs.has(contact.userID);
     checkbox.disabled = disabledIDs.has(contact.userID);
+    checkbox.addEventListener("change", () => onChange?.(contact.userID, checkbox.checked));
     checkbox.setAttribute("aria-label", `${checkbox.checked ? "Retirer" : "Ajouter"} ${contact.displayName} du groupe`);
     label.append(identity, checkbox);
     list.append(label);
@@ -4286,13 +4524,14 @@ async function handleSocketEvent(event) {
     sessionStorage.removeItem("crypto_phrase");
     location.href = "/login.html";
   } else if (event.type === "new_message") {
-    await showIncomingMessageNotification().catch(() => {});
+    const isCallHistory = await isIncomingCallHistoryMessage(event.message).catch(() => false);
+    if (!isCallHistory) await showIncomingMessageNotification().catch(() => {});
     clearTypingUser(event.message.conversation_id, event.message.sender_id);
     if (state.current?.id === event.message.conversation_id) {
       await appendMessage(event.message);
       await refreshConversationList();
     } else {
-      toast("Nouveau message sécurisé.");
+      if (!isCallHistory) toast("Nouveau message sécurisé.");
       await refreshAll();
     }
     await refreshTypingIndicators(event.message.conversation_id);
@@ -4305,7 +4544,10 @@ async function handleSocketEvent(event) {
     await renderConversations();
   } else if (event.type === "user_online" || event.type === "user_offline") {
     if (event.type === "user_online") state.onlineUsers.add(String(event.user_id));
-    else state.onlineUsers.delete(String(event.user_id));
+    else {
+      state.onlineUsers.delete(String(event.user_id));
+      handleCallParticipantOffline(event.user_id);
+    }
     await renderConversations();
   } else if (event.type === "conversation_updated") {
     const currentID = state.current?.id;

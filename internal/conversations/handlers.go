@@ -59,17 +59,17 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	rows, err := h.DB.Query(`SELECT c.id,c.type,c.encrypted_title,c.encrypted_description,c.encrypted_avatar,c.federation_key_id,fi.base_url,ru.remote_username,
 		c.created_by,c.created_at,cm.encrypted_conversation_key,cm.role,
-		(SELECT MAX(created_at) FROM messages WHERE conversation_id=c.id AND (expires_at IS NULL OR expires_at>?)),
-		(SELECT encrypted_content FROM messages WHERE conversation_id=c.id AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
-		(SELECT iv FROM messages WHERE conversation_id=c.id AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
-		COALESCE((SELECT f.id IS NOT NULL FROM messages lm LEFT JOIN files f ON f.message_id=lm.id WHERE lm.conversation_id=c.id AND (lm.expires_at IS NULL OR lm.expires_at>?) ORDER BY lm.id DESC LIMIT 1),0),
+		(SELECT MAX(created_at) FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?)),
+		(SELECT encrypted_content FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
+		(SELECT iv FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
+		COALESCE((SELECT f.id IS NOT NULL FROM messages lm LEFT JOIN files f ON f.message_id=lm.id WHERE lm.conversation_id=c.id AND lm.created_at>=cm.created_at AND (lm.expires_at IS NULL OR lm.expires_at>?) ORDER BY lm.id DESC LIMIT 1),0),
 		(SELECT COUNT(*) FROM messages m JOIN message_receipts mr ON mr.message_id=m.id
-			WHERE m.conversation_id=c.id AND mr.user_id=? AND mr.status<>'read' AND (m.expires_at IS NULL OR m.expires_at>?))
+		WHERE m.conversation_id=c.id AND m.created_at>=cm.created_at AND mr.user_id=? AND mr.status<>'read' AND (m.expires_at IS NULL OR m.expires_at>?))
 		FROM conversations c JOIN conversation_members cm ON cm.conversation_id=c.id
 		LEFT JOIN federated_conversations fc ON fc.local_conversation_id=c.id
 		LEFT JOIN federated_instances fi ON fi.id=fc.instance_id
 		LEFT JOIN users ru ON ru.id=fc.remote_user_id
-		WHERE cm.user_id=? ORDER BY COALESCE((SELECT MAX(id) FROM messages WHERE conversation_id=c.id AND (expires_at IS NULL OR expires_at>?)),0) DESC,c.id DESC`, now, now, now, now, auth.UserID(r), now, auth.UserID(r), now)
+		WHERE cm.user_id=? ORDER BY COALESCE((SELECT MAX(id) FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?)),0) DESC,c.id DESC`, now, now, now, now, auth.UserID(r), now, auth.UserID(r), now)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "conversation lookup failed")
 		return
@@ -233,12 +233,12 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	var conversation Conversation
 	err = h.DB.QueryRow(`SELECT c.id,c.type,c.encrypted_title,c.encrypted_description,c.encrypted_avatar,c.federation_key_id,fi.base_url,ru.remote_username,
 		c.created_by,c.created_at,cm.encrypted_conversation_key,cm.role,
-		(SELECT MAX(created_at) FROM messages WHERE conversation_id=c.id AND (expires_at IS NULL OR expires_at>?)),
-		(SELECT encrypted_content FROM messages WHERE conversation_id=c.id AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
-		(SELECT iv FROM messages WHERE conversation_id=c.id AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
-		COALESCE((SELECT f.id IS NOT NULL FROM messages lm LEFT JOIN files f ON f.message_id=lm.id WHERE lm.conversation_id=c.id AND (lm.expires_at IS NULL OR lm.expires_at>?) ORDER BY lm.id DESC LIMIT 1),0),
+		(SELECT MAX(created_at) FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?)),
+		(SELECT encrypted_content FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
+		(SELECT iv FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
+		COALESCE((SELECT f.id IS NOT NULL FROM messages lm LEFT JOIN files f ON f.message_id=lm.id WHERE lm.conversation_id=c.id AND lm.created_at>=cm.created_at AND (lm.expires_at IS NULL OR lm.expires_at>?) ORDER BY lm.id DESC LIMIT 1),0),
 		(SELECT COUNT(*) FROM messages m JOIN message_receipts mr ON mr.message_id=m.id
-			WHERE m.conversation_id=c.id AND mr.user_id=? AND mr.status<>'read' AND (m.expires_at IS NULL OR m.expires_at>?))
+			WHERE m.conversation_id=c.id AND m.created_at>=cm.created_at AND mr.user_id=? AND mr.status<>'read' AND (m.expires_at IS NULL OR m.expires_at>?))
 		FROM conversations c JOIN conversation_members cm ON cm.conversation_id=c.id
 		LEFT JOIN federated_conversations fc ON fc.local_conversation_id=c.id
 		LEFT JOIN federated_instances fi ON fi.id=fc.instance_id
@@ -305,10 +305,6 @@ func (h *Handler) AddMember(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid member")
 		return
 	}
-	if !h.hasAcceptedContact(auth.UserID(r), input.UserID) {
-		httpx.Error(w, http.StatusForbidden, "contact acceptance required")
-		return
-	}
 	result, err := h.DB.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
 		SELECT ?,?,?, 'pending',? WHERE EXISTS(SELECT 1 FROM users WHERE id=? AND is_remote=0)`,
 		conversationID, input.UserID, input.EncryptedConversationKey, time.Now().UTC().Format(time.RFC3339Nano), input.UserID)
@@ -332,8 +328,9 @@ func (h *Handler) Accept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID := auth.UserID(r)
-	result, err := h.DB.Exec(`UPDATE conversation_members SET role='member' WHERE conversation_id=? AND user_id=? AND role='pending'
-		AND EXISTS(SELECT 1 FROM conversations WHERE id=? AND type='group')`, conversationID, userID, conversationID)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := h.DB.Exec(`UPDATE conversation_members SET role='member',created_at=? WHERE conversation_id=? AND user_id=? AND role='pending'
+		AND EXISTS(SELECT 1 FROM conversations WHERE id=? AND type='group')`, now, conversationID, userID, conversationID)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "conversation update failed")
 		return

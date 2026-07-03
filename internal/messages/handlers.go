@@ -88,7 +88,9 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 			ELSE 'sent'
 		END
 		FROM messages m JOIN users u ON u.id=m.sender_id LEFT JOIN files f ON f.message_id=m.id
-		WHERE m.conversation_id=? AND m.id<? AND (m.expires_at IS NULL OR m.expires_at>?) ORDER BY m.id DESC LIMIT ?`, conversationID, before, now, limit)
+		JOIN conversation_members cm ON cm.conversation_id=m.conversation_id AND cm.user_id=? AND cm.role<>'pending'
+		WHERE m.conversation_id=? AND m.id<? AND m.created_at>=cm.created_at AND (m.expires_at IS NULL OR m.expires_at>?) ORDER BY m.id DESC LIMIT ?`,
+		auth.UserID(r), conversationID, before, now, limit)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "message lookup failed")
 		return

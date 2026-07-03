@@ -1,4 +1,4 @@
-const CACHE = "chat-pwa-go-v139";
+const CACHE = "chat-pwa-go-v140";
 const SHELL = [
   "/", "/index.html", "/login.html", "/css/style.css",
   "/js/app.js", "/js/api.js", "/js/crypto.js", "/js/websocket.js", "/js/theme.js",
@@ -43,8 +43,11 @@ self.addEventListener("push", (event) => {
       icon: "/icons/icon-192.png",
       badge: "/icons/icon-192.png",
       data: { url: payload.url },
-      tag: "secure-message",
+      tag: payload.tag || `secure-message-${Date.now()}`,
       renotify: true,
+      requireInteraction: true,
+      timestamp: Date.now(),
+      vibrate: [180, 80, 180],
     });
   })());
 });

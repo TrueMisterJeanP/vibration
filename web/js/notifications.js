@@ -19,11 +19,7 @@ function equalBytes(left, right) {
 }
 
 function browserPushSupported() {
-  return "Notification" in window
-    && "serviceWorker" in navigator
-    && "PushManager" in window
-    && ["http:", "https:"].includes(location.protocol)
-    && !isIOSWithoutInstalledPWA();
+  return !pushSupportIssue();
 }
 
 export async function registerServiceWorker() {
@@ -46,6 +42,16 @@ function isIOSWithoutInstalledPWA() {
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches
     || navigator.standalone === true;
   return isIOS && !isStandalone;
+}
+
+function pushSupportIssue() {
+  if (isIOSWithoutInstalledPWA()) return "ios_requires_installed_pwa";
+  if (!["http:", "https:"].includes(location.protocol)) return "unsupported_protocol";
+  if (window.isSecureContext === false) return "insecure_context";
+  if (!("Notification" in window)) return "notification_api_missing";
+  if (!("serviceWorker" in navigator)) return "service_worker_missing";
+  if (!("PushManager" in window)) return "push_manager_missing";
+  return null;
 }
 
 // Start this directly from the connection/registration submit event. Some
@@ -84,7 +90,11 @@ function unsupportedPushError() {
   if (tauriNotificationAPI()) {
     return new Error("Les notifications natives sont locales. Pour recevoir quand l’application Android est arrêtée, ce client doit prendre en charge Web Push ou une intégration Push native Android.");
   }
-  if (isIOSWithoutInstalledPWA()) {
+  const issue = pushSupportIssue();
+  if (issue === "insecure_context") {
+    return new Error("Les notifications Push Android nécessitent HTTPS. Ouvrez l’application avec une adresse https:// valide, pas une adresse http:// du réseau local.");
+  }
+  if (issue === "ios_requires_installed_pwa") {
     return new Error("Sur iPhone ou iPad, ajoutez d’abord l’application à l’écran d’accueil, puis ouvrez-la depuis son icône.");
   }
   return new Error("Les notifications Push ne sont pas prises en charge par ce navigateur.");
@@ -180,14 +190,18 @@ export async function enableNotifications(onStatus = () => {}) {
 export async function notificationStatus() {
   const native = tauriNotificationAPI();
   const nativeGranted = native ? await native.isPermissionGranted() : false;
-  const server = await api("/api/push/status");
   const pushSupported = browserPushSupported();
   let browserSubscription = false;
+  let subscriptionEndpoint = "";
   if (pushSupported) {
     const registration = await registerServiceWorker();
     const subscription = await registration?.pushManager.getSubscription();
     browserSubscription = Boolean(subscription);
+    subscriptionEndpoint = subscription?.endpoint || "";
   }
+  const server = await api(subscriptionEndpoint
+    ? `/api/push/status?endpoint=${encodeURIComponent(subscriptionEndpoint)}`
+    : "/api/push/status");
   const permission = "Notification" in window
     ? Notification.permission
     : nativeGranted ? "granted" : "unsupported";
@@ -195,9 +209,11 @@ export async function notificationStatus() {
     permission,
     browserSubscription,
     serverSubscriptions: server.subscriptions || 0,
+    currentDeviceServerSubscription: Boolean(server.current_subscription),
     mode: native ? "native" : "web",
     nativeGranted,
     pushSupported,
+    supportIssue: pushSupportIssue(),
   };
 }
 
@@ -253,17 +269,36 @@ export async function showLocalTestNotification() {
     body: "Les notifications locales fonctionnent dans ce navigateur.",
     icon: "/icons/icon-192.png",
     badge: "/icons/icon-192.png",
-    tag: "secure-message-local-test",
+    tag: `secure-message-local-test-${Date.now()}`,
+    requireInteraction: true,
+    timestamp: Date.now(),
+    vibrate: [180, 80, 180],
   });
   return true;
 }
 
 export async function showIncomingMessageNotification() {
   const native = tauriNotificationAPI();
-  if (!native || !document.hidden || !await native.isPermissionGranted()) return false;
-  native.sendNotification({
-    title: "Nouveau message sécurisé",
+  if (native) {
+    if (!document.hidden || !await native.isPermissionGranted()) return false;
+    native.sendNotification({
+      title: "Nouveau message sécurisé",
+      body: "Ouvrez l’application pour le lire.",
+    });
+    return true;
+  }
+  if (!document.hidden || !("Notification" in window) || Notification.permission !== "granted") return false;
+  const registration = await registerServiceWorker();
+  await registration.showNotification("Nouveau message sécurisé", {
     body: "Ouvrez l’application pour le lire.",
+    icon: "/icons/icon-192.png",
+    badge: "/icons/icon-192.png",
+    tag: `secure-message-${Date.now()}`,
+    renotify: true,
+    requireInteraction: true,
+    timestamp: Date.now(),
+    vibrate: [180, 80, 180],
+    data: { url: "/" },
   });
   return true;
 }
@@ -290,7 +325,7 @@ export async function showIncomingCallNotification(title, body) {
 
 export async function testNotification() {
   const status = await notificationStatus();
-  if (status.serverSubscriptions > 0 || status.pushSupported) {
+  if (status.browserSubscription && status.currentDeviceServerSubscription) {
     return api("/api/push/test", { method: "POST", body: {} });
   }
   return {
@@ -298,6 +333,6 @@ export async function testNotification() {
     attempted: 0,
     sent: 0,
     removed: 0,
-    failures: status.nativeGranted ? ["native_only_no_remote_push"] : ["push_unavailable"],
+    failures: status.pushSupported ? ["current_device_not_subscribed"] : [status.supportIssue || (status.nativeGranted ? "native_only_no_remote_push" : "push_unavailable")],
   };
 }

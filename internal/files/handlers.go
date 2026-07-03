@@ -146,7 +146,7 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	err = h.DB.QueryRow(`SELECT f.encrypted_name,f.encrypted_mime,f.encrypted_data,f.iv,f.size
 		FROM files f JOIN messages m ON m.id=f.message_id JOIN conversation_members cm ON cm.conversation_id=m.conversation_id
-		WHERE f.id=? AND cm.user_id=? AND cm.role<>'pending' AND (m.expires_at IS NULL OR m.expires_at>?)`, fileID, auth.UserID(r), now).Scan(&name, &mime, &data, &iv, &size)
+		WHERE f.id=? AND cm.user_id=? AND cm.role<>'pending' AND m.created_at>=cm.created_at AND (m.expires_at IS NULL OR m.expires_at>?)`, fileID, auth.UserID(r), now).Scan(&name, &mime, &data, &iv, &size)
 	if err != nil {
 		httpx.Error(w, http.StatusNotFound, "file not found")
 		return

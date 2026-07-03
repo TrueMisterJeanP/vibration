@@ -62,6 +62,7 @@ func TestListIncludesUnreadCount(t *testing.T) {
 	ensureAcceptedContact(t, db, 1, 2)
 
 	conversationID := createPrivateConversation(t, mux, first, 2)
+	messageCreatedAt := "2026-12-01T00:00:00Z"
 	for _, message := range []struct {
 		id     int64
 		status string
@@ -70,11 +71,11 @@ func TestListIncludesUnreadCount(t *testing.T) {
 		{id: 2, status: "read"},
 	} {
 		if _, err := db.Exec(`INSERT INTO messages(id,conversation_id,sender_id,encrypted_content,iv,created_at)
-			VALUES(?,?,?,?,?,?)`, message.id, conversationID, 1, "encrypted-message", "message-iv", "2026-01-01T00:00:00Z"); err != nil {
+			VALUES(?,?,?,?,?,?)`, message.id, conversationID, 1, "encrypted-message", "message-iv", messageCreatedAt); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(`INSERT INTO message_receipts(message_id,user_id,status,created_at)
-			VALUES(?,?,?,?)`, message.id, 2, message.status, "2026-01-01T00:00:00Z"); err != nil {
+			VALUES(?,?,?,?)`, message.id, 2, message.status, messageCreatedAt); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -218,6 +219,45 @@ func TestGroupMemberLeavesAndOwnerDeletesGroup(t *testing.T) {
 	assertConversationCount(t, db, formatID(id), 0)
 }
 
+func TestAddGroupMemberDoesNotRequireAcceptedContact(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	handler := &Handler{DB: db, Hub: testHub{}}
+	owner := registerUser(t, authHandler, "invite_owner")
+	registerUser(t, authHandler, "invite_target")
+	mux := conversationMux(authHandler, handler)
+	now := "2026-01-01T00:00:00Z"
+	result, err := db.Exec(`INSERT INTO conversations(type,encrypted_title,created_by,created_at) VALUES('group','encrypted-title',1,?)`, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationID, _ := result.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
+		VALUES(?,1,'owner-key','owner',?)`, conversationID, now); err != nil {
+		t.Fatal(err)
+	}
+
+	added := request(t, mux, http.MethodPost, "/api/conversations/"+formatID(conversationID)+"/members", map[string]any{
+		"user_id":                    2,
+		"encrypted_conversation_key": "encrypted-target-key",
+	}, owner)
+	if added.Code != http.StatusCreated {
+		t.Fatalf("add member status=%d body=%s", added.Code, added.Body.String())
+	}
+	var role string
+	if err := db.QueryRow(`SELECT role FROM conversation_members WHERE conversation_id=? AND user_id=2`, conversationID).Scan(&role); err != nil || role != "pending" {
+		t.Fatalf("new member role=%q err=%v", role, err)
+	}
+	var contacts int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM contacts WHERE owner_id IN (1,2) OR contact_user_id IN (1,2)`).Scan(&contacts); err != nil || contacts != 0 {
+		t.Fatalf("contacts should not be created, count=%d err=%v", contacts, err)
+	}
+}
+
 func conversationMux(authHandler *auth.Handler, handler *Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/conversations", authHandler.Middleware(http.HandlerFunc(handler.List)))
@@ -226,6 +266,7 @@ func conversationMux(authHandler *auth.Handler, handler *Handler) *http.ServeMux
 	mux.Handle("POST /api/conversations/{id}/accept", authHandler.Middleware(http.HandlerFunc(handler.Accept)))
 	mux.Handle("PUT /api/conversations/{id}", authHandler.Middleware(http.HandlerFunc(handler.Update)))
 	mux.Handle("DELETE /api/conversations/{id}", authHandler.Middleware(http.HandlerFunc(handler.Delete)))
+	mux.Handle("POST /api/conversations/{id}/members", authHandler.Middleware(http.HandlerFunc(handler.AddMember)))
 	return mux
 }
 

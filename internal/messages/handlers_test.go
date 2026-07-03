@@ -250,6 +250,56 @@ func TestAuthorCanDeleteMessage(t *testing.T) {
 	}
 }
 
+func TestListOnlyReturnsMessagesAfterMembershipCreatedAt(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	registerMessageUserNamed(t, authHandler, "history_owner", "History Owner")
+	member := registerMessageUserNamed(t, authHandler, "history_member", "History Member")
+	conversation, err := db.Exec(`INSERT INTO conversations(type,created_by,created_at) VALUES('group',1,'2026-01-01T00:00:00Z')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationID, _ := conversation.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
+		VALUES(?,1,'owner-key','owner','2026-01-01T00:00:00Z'),(?,2,'member-key','member','2026-01-02T00:00:00Z')`,
+		conversationID, conversationID); err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range []struct {
+		content   string
+		createdAt string
+	}{
+		{content: "old-encrypted-message", createdAt: "2026-01-01T12:00:00Z"},
+		{content: "new-encrypted-message", createdAt: "2026-01-02T12:00:00Z"},
+	} {
+		if _, err := db.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,created_at)
+			VALUES(?,1,?,'message-iv',?)`, conversationID, message.content, message.createdAt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handler := &Handler{DB: db, Hub: &testHub{}}
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/conversations/{id}/messages", authHandler.Middleware(http.HandlerFunc(handler.List)))
+	request := httptest.NewRequest(http.MethodGet, "/api/conversations/"+formatMessageID(conversationID)+"/messages", nil)
+	request.AddCookie(member)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", response.Code, response.Body.String())
+	}
+	var messages []Message
+	if err := json.Unmarshal(response.Body.Bytes(), &messages); err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 || messages[0].EncryptedContent == nil || *messages[0].EncryptedContent != "new-encrypted-message" {
+		t.Fatalf("visible messages=%+v", messages)
+	}
+}
+
 func registerMessageUser(t *testing.T, handler *auth.Handler) *http.Cookie {
 	return registerMessageUserNamed(t, handler, "message_author", "Message Author")
 }
