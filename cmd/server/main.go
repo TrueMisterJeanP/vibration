@@ -1,6 +1,8 @@
 package main
 
 import (
+	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -32,12 +34,7 @@ func main() {
 	}
 	configuredDatabase = editionDatabaseConfig(configuredDatabase)
 	activeDatabase := configuredDatabase
-	db, err := database.OpenConfigured(configuredDatabase.Driver, cfg.DatabasePath, configuredDatabase.DSN)
-	if err != nil && !database.IsSQLiteDriver(configuredDatabase.Driver) {
-		log.Printf("database %s unavailable, falling back to sqlite: %v", configuredDatabase.Driver, err)
-		activeDatabase = database.ActiveConfig{Driver: "sqlite"}
-		db, err = database.OpenConfigured("sqlite", cfg.DatabasePath, "")
-	}
+	db, err := openConfiguredDatabase(configuredDatabase, cfg.DatabasePath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -148,6 +145,30 @@ func main() {
 	})
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
+	}
+}
+
+func openConfiguredDatabase(configured database.ActiveConfig, sqlitePath string) (*sql.DB, error) {
+	if database.IsSQLiteDriver(configured.Driver) {
+		return database.OpenConfigured(configured.Driver, sqlitePath, configured.DSN)
+	}
+	const startupWait = 90 * time.Second
+	deadline := time.Now().Add(startupWait)
+	var lastErr error
+	for attempt := 1; ; attempt++ {
+		db, err := database.OpenConfigured(configured.Driver, sqlitePath, configured.DSN)
+		if err == nil {
+			if attempt > 1 {
+				log.Printf("database %s available after retry", configured.Driver)
+			}
+			return db, nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("database %s unavailable after %s; refusing to fall back to sqlite because an external database is configured: %w", configured.Driver, startupWait, lastErr)
+		}
+		log.Printf("database %s unavailable, retrying without sqlite fallback: %v", configured.Driver, err)
+		time.Sleep(3 * time.Second)
 	}
 }
 
