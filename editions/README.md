@@ -21,6 +21,7 @@ La version Community publiee sur GitHub doit rester claire :
 - pas de federation ;
 - base SQLite uniquement ;
 - pas de configuration Coturn ;
+- pas de wrapper desktop/mobile Tauri ;
 - WebRTC limite a `stun:stun.l.google.com:19302`.
 
 La page GitHub doit renvoyer vers l'offre Enterprise pour l'administration complete, Coturn prive, federation, base externe et support : https://vibration-shop.appbox.fr

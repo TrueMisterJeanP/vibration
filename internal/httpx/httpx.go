@@ -3,6 +3,7 @@ package httpx
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -168,6 +169,11 @@ func Decode(w http.ResponseWriter, r *http.Request, destination any) bool {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
+		Error(w, http.StatusBadRequest, "invalid JSON body")
+		return false
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
 		Error(w, http.StatusBadRequest, "invalid JSON body")
 		return false
 	}

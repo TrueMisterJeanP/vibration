@@ -35,7 +35,18 @@ Elle n’inclut pas :
 - pas de migration MariaDB/MySQL/PostgreSQL ;
 - pas de configuration Coturn ;
 - pas de configuration WebRTC avancée ;
+- pas d’application desktop/mobile Tauri ;
 - appels WebRTC avec uniquement `stun:stun.l.google.com:19302`.
+
+## Audit et sécurité
+
+La version Community est pensée pour être inspectable. Les documents suivants
+décrivent le périmètre public, les dépendances et les règles de sécurité :
+
+- [DEPENDENCIES.md](DEPENDENCIES.md) : inventaire des dépendances et services externes ;
+- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) : licences des composants tiers ;
+- [SECURITY.md](SECURITY.md) : politique de signalement et modèle de sécurité ;
+- [COMMUNITY_VS_ENTERPRISE.md](COMMUNITY_VS_ENTERPRISE.md) : différences entre Community et Enterprise.
 
 ## Edition Enterprise
 
@@ -201,14 +212,14 @@ Chaque utilisateur doit conserver sa phrase secrète. Le serveur ne peut ni la r
 
 Le serveur envoie uniquement :
 
-- titre : `Nouveau message sécurisé` ;
+- titre : `Nouveau message` ;
 - corps : `Ouvrez l’application pour le lire.`
 
 Le contenu clair n’est jamais inclus dans la notification. Selon le navigateur et le système, les notifications locales peuvent être limitées même sur `localhost`. Pour un déploiement distant, HTTPS est obligatoire.
 
 Navigateurs pris en charge : versions récentes de Chrome, Edge, Firefox et Safari. Sur iPhone et iPad, le Web Push fonctionne uniquement lorsque l’application a été ajoutée à l’écran d’accueil et ouverte depuis son icône. Les navigateurs sans API Push ne peuvent pas recevoir de Web Push.
 
-Dans l’application Tauri/Android, les notifications natives locales ne réveillent pas une application arrêtée. Pour recevoir dans cet état, le WebView doit exposer Web Push (`PushManager`) ou l’application doit intégrer un service Push natif Android côté serveur et client.
+En PWA, la réception des notifications dépend du support Web Push du navigateur et du système. Sur mobile, certaines restrictions peuvent s’appliquer quand l’application est fermée.
 
 ## Profil utilisateur
 
@@ -372,6 +383,10 @@ Vibration/
 │   └── sw.js
 ├── data/.gitkeep
 ├── scripts/export-community.sh
+├── COMMUNITY_VS_ENTERPRISE.md
+├── DEPENDENCIES.md
+├── SECURITY.md
+├── THIRD_PARTY_NOTICES.md
 ├── go.mod
 ├── go.sum
 └── README.md

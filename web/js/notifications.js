@@ -282,14 +282,14 @@ export async function showIncomingMessageNotification() {
   if (native) {
     if (!document.hidden || !await native.isPermissionGranted()) return false;
     native.sendNotification({
-      title: "Nouveau message sécurisé",
+      title: "Nouveau message",
       body: "Ouvrez l’application pour le lire.",
     });
     return true;
   }
   if (!document.hidden || !("Notification" in window) || Notification.permission !== "granted") return false;
   const registration = await registerServiceWorker();
-  await registration.showNotification("Nouveau message sécurisé", {
+  await registration.showNotification("Nouveau message", {
     body: "Ouvrez l’application pour le lire.",
     icon: "/icons/icon-192.png",
     badge: "/icons/icon-192.png",

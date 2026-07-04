@@ -166,7 +166,7 @@ func (h *Handler) notify(userID int64) DeliveryResult {
 	rows.Close()
 	result.Subscriptions = len(subscriptions)
 	payload, _ := json.Marshal(map[string]string{
-		"title": "Nouveau message sécurisé",
+		"title": "Nouveau message",
 		"body":  "Ouvrez l’application pour le lire.",
 		"url":   "/",
 	})

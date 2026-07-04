@@ -4531,7 +4531,7 @@ async function handleSocketEvent(event) {
       await appendMessage(event.message);
       await refreshConversationList();
     } else {
-      if (!isCallHistory) toast("Nouveau message sécurisé.");
+      if (!isCallHistory) toast("Nouveau message.");
       await refreshAll();
     }
     await refreshTypingIndicators(event.message.conversation_id);

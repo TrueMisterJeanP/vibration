@@ -1,24 +1,15 @@
 {
-  "name": "webtchat",
+  "name": "vibration-community",
   "version": "1.0.0",
-  "description": "Application de messagerie web installable, responsive et chiffrée côté navigateur. Le serveur Go assure l’authentification, le routage REST/WebSocket, la persistance SQLite et les notifications Web Push, sans jamais déchiffrer les messages, noms de groupes ou fichiers.",
+  "description": "Edition Community de Vibration pour tester la philosophie et les principales fonctions de la messagerie web/PWA.",
   "main": "index.js",
   "scripts": {
-    "tauri": "tauri",
     "test": "GOCACHE=/tmp/webtchat-go-cache go test -tags community ./...",
     "test:community": "GOCACHE=/tmp/webtchat-go-cache go test -tags community ./...",
-    "export:community": "sh scripts/export-community.sh",
     "check:js": "for f in web/js/*.js; do node --check --input-type=module < \"$f\" || exit 1; done"
   },
   "keywords": [],
   "author": "Jean-Pierre",
   "license": "GPL-3.0-or-later",
-  "type": "commonjs",
-  "devDependencies": {
-    "@tauri-apps/cli": "^2.11.3"
-  },
-  "dependencies": {
-    "@tauri-apps/plugin-notification": "^2.3.3",
-    "pdfjs-dist": "^4.10.38"
-  }
+  "type": "commonjs"
 }

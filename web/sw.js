@@ -36,7 +36,7 @@ self.addEventListener("fetch", (event) => {
 
 self.addEventListener("push", (event) => {
   event.waitUntil((async () => {
-    let payload = { title: "Nouveau message sécurisé", body: "Ouvrez l’application pour le lire.", url: "/" };
+    let payload = { title: "Nouveau message", body: "Ouvrez l’application pour le lire.", url: "/" };
     try { payload = { ...payload, ...event.data.json() }; } catch {}
     await self.registration.showNotification(payload.title, {
       body: payload.body,

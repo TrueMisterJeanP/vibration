@@ -1,6 +1,7 @@
 .git/
 .DS_Store
 node_modules/
+dist/
 /data/chat.db
 /data/chat.db-*
 /data/app_secret
@@ -14,14 +15,16 @@ node_modules/
 certs/
 turnserver.conf
 docker-compose.override.yml
-src-tauri/target/
-src-tauri/gen/schemas/
+src-tauri/
+editions/community.package.json
+editions/community.package-lock.json
 SiteWeb/modèles/
 editions/enterprise.private.md
 cmd/server/edition_enterprise.go
 internal/admin/
 internal/federation/
 internal/db/db.go
+internal/db/external_integration_test.go
 internal/db/pgqmark.go
 internal/db/pgqmark_test.go
 internal/db/transfer.go

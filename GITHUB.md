@@ -12,6 +12,7 @@ La version GitHub doit etre presentee comme **Vibration Community** :
 - pas de code d'activation ;
 - inscriptions ouvertes ;
 - pas de configuration Coturn ;
+- pas de wrapper desktop/mobile Tauri ;
 - appels avec `stun:stun.l.google.com:19302` uniquement.
 
 Le README public doit aussi mentionner l'edition Enterprise et son URL : https://vibration-shop.appbox.fr
@@ -24,7 +25,8 @@ Le projet contient des fichiers locaux qui ne doivent pas etre envoyes sur GitHu
 - `data/app_secret` : secret applicatif.
 - `data/vapid.json` : clefs de notifications push.
 - `node_modules/` : dependances installees localement.
-- `src-tauri/target/` : fichiers compiles.
+- `dist/` : exports locaux regenerables.
+- `src-tauri/` : application desktop/mobile Tauri, hors perimetre Community.
 - `server`, `vibration-server` : binaires locaux ou binaires Linux de deploiement.
 - `.env`, `*.pem`, `*.key`, `certs/`, `turnserver.conf` : configuration locale, certificats et secrets Coturn.
 - `.DS_Store` : fichier macOS inutile.
@@ -84,7 +86,7 @@ Affiche les fichiers que Git voit :
 git status
 ```
 
-Tu ne dois pas voir `data/chat.db`, `data/app_secret`, `data/vapid.json`, `node_modules/`, `src-tauri/target/`, `.env`, `turnserver.conf`, `certs/`, `*.pem` ou `*.key` dans les fichiers a ajouter.
+Tu ne dois pas voir `data/chat.db`, `data/app_secret`, `data/vapid.json`, `node_modules/`, `dist/`, `src-tauri/`, `.env`, `turnserver.conf`, `certs/`, `*.pem` ou `*.key` dans les fichiers a ajouter.
 
 Pour controler plus clairement :
 
@@ -94,7 +96,7 @@ git add --dry-run .
 git check-ignore -v data/chat.db data/app_secret data/vapid.json server vibration-server .env
 ```
 
-`git add --dry-run .` ne doit pas afficher `data/chat.db`, `data/app_secret`, `data/vapid.json`, `server`, `vibration-server`, `.env`, `node_modules/` ou `src-tauri/target/`.
+`git add --dry-run .` ne doit pas afficher `data/chat.db`, `data/app_secret`, `data/vapid.json`, `server`, `vibration-server`, `.env`, `node_modules/`, `dist/` ou `src-tauri/`.
 
 ## 5. Verifier le projet avant publication
 
