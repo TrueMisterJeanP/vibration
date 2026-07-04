@@ -1,81 +1,83 @@
-# Security Policy
+# Politique de sécurité
 
-Vibration is designed for self-hosting and auditability. The Community edition
-is intentionally limited so visitors can inspect and test the core philosophy:
-browser-side encryption, a small Go server, SQLite storage, and no hosted
-Vibration control plane.
+Vibration est conçu pour l’auto-hébergement et l’auditabilité. L’édition
+Community est volontairement limitée afin de permettre aux visiteurs d’inspecter
+et de tester la philosophie centrale du projet : chiffrement côté navigateur,
+petit serveur Go, stockage SQLite et absence de plan de contrôle Vibration
+hébergé.
 
-## Reporting A Vulnerability
+## Signaler une vulnérabilité
 
-Do not open a public issue for a suspected vulnerability before it has been
-triaged.
+N’ouvrez pas d’issue publique pour une vulnérabilité présumée avant qu’elle ait
+été qualifiée.
 
-Send a private report to the project maintainer with:
+Envoyez un signalement privé au mainteneur du projet avec :
 
-- affected version or commit;
-- deployment mode and operating system;
-- clear reproduction steps;
-- expected and observed impact;
-- logs or screenshots when useful, without sharing private keys or real user
-  message content.
+- la version ou le commit concerné ;
+- le mode de déploiement et le système d’exploitation ;
+- des étapes de reproduction claires ;
+- l’impact attendu et l’impact observé ;
+- des journaux ou captures si nécessaire, sans partager de clefs privées ni de
+  contenu réel de messages.
 
-If no private security contact is published for the repository, contact the
-maintainer through the official Vibration website before disclosing details
-publicly.
+Si aucun contact de sécurité privé n’est publié dans le dépôt, contactez le
+mainteneur via le site officiel de Vibration avant toute divulgation publique.
 
-## Supported Security Scope
+## Périmètre de sécurité pris en compte
 
-Security fixes are prioritized for:
+Les correctifs de sécurité sont priorisés pour :
 
-- authentication and session handling;
-- browser-side cryptography and key storage flows;
-- message, file and call metadata exposure;
-- WebSocket authorization;
-- file upload/download authorization;
-- push notification payload minimization;
-- dependency vulnerabilities with a practical impact on Community.
+- l’authentification et la gestion des sessions ;
+- les flux de chiffrement côté navigateur et de stockage local des clefs ;
+- l’exposition des métadonnées de messages, fichiers et appels ;
+- l’autorisation WebSocket ;
+- l’autorisation d’envoi et de téléchargement de fichiers ;
+- la minimisation du contenu des notifications push ;
+- les vulnérabilités de dépendances ayant un impact pratique sur Community.
 
-The Community edition does not include the Enterprise administration console,
-federation, private Coturn configuration, managed restart hooks, external
-database deployment options, or the Tauri desktop/mobile wrapper.
+L’édition Community n’inclut pas la console d’administration Enterprise, la
+fédération, la configuration Coturn privée, les hooks de redémarrage administré,
+les options de déploiement sur base externe, ni le wrapper desktop/mobile Tauri.
 
-## Security Model
+## Modèle de sécurité
 
-Vibration aims to minimize server trust:
+Vibration cherche à minimiser la confiance accordée au serveur :
 
-- message content, file metadata and conversation data are encrypted in the
-  browser before being sent to the server;
-- the server stores and routes encrypted payloads but is not expected to read
-  clear message content;
-- Web Push notifications intentionally avoid clear message content;
-- Community uses local SQLite storage by default;
-- no analytics or hosted Vibration telemetry service is required.
+- le contenu des messages, les métadonnées de fichiers et les données de
+  conversation sont chiffrés dans le navigateur avant d’être envoyés au serveur ;
+- le serveur stocke et route des charges chiffrées, sans être censé lire le
+  contenu clair des messages ;
+- les notifications Web Push évitent volontairement le contenu clair ;
+- Community utilise par défaut un stockage local SQLite ;
+- aucun service d’analytique ou de télémétrie hébergé par Vibration n’est requis.
 
-This model does not remove every trust boundary. Operators still control:
+Ce modèle ne supprime pas toutes les frontières de confiance. L’opérateur
+contrôle toujours :
 
-- the deployed server binary and static web assets;
-- TLS termination and reverse proxy configuration;
-- backups and filesystem permissions;
-- database files and server-side logs;
-- application secrets and VAPID keys.
+- le binaire serveur déployé et les fichiers web statiques ;
+- la terminaison TLS et la configuration du reverse proxy ;
+- les sauvegardes et permissions du système de fichiers ;
+- les fichiers de base de données et les journaux serveur ;
+- les secrets applicatifs et les clefs VAPID.
 
-## Hardening Checklist
+## Liste de durcissement
 
-For production-like self-hosted tests:
+Pour un test auto-hébergé proche de la production :
 
-- serve the application over HTTPS;
-- set `SECURE_COOKIES=true` behind a correct HTTPS reverse proxy;
-- keep `data/app_secret` and `data/vapid.json` private;
-- restrict filesystem permissions on `data/`;
-- back up `data/chat.db`, `data/app_secret` and VAPID keys together;
-- keep the Go toolchain and operating system patched;
-- review `DEPENDENCIES.md` and `THIRD_PARTY_NOTICES.md` before redistribution;
-- do not publish `.env`, certificates, private keys, database files or local
-  binaries.
+- servez l’application en HTTPS ;
+- activez `SECURE_COOKIES=true` derrière un reverse proxy HTTPS correctement
+  configuré ;
+- gardez `data/app_secret` et `data/vapid.json` privés ;
+- limitez les permissions du dossier `data/` ;
+- sauvegardez ensemble `data/chat.db`, `data/app_secret` et les clefs VAPID ;
+- maintenez à jour l’outil Go et le système d’exploitation ;
+- relisez `DEPENDENCIES.md` et `THIRD_PARTY_NOTICES.md` avant redistribution ;
+- ne publiez pas `.env`, certificats, clefs privées, bases de données ou
+  binaires locaux.
 
-## Dependency Review
+## Revue des dépendances
 
-Before publishing a Community release:
+Avant de publier une version Community :
 
 ```bash
 GOCACHE=/tmp/webtchat-go-cache go test -count=1 -tags community ./...
@@ -84,7 +86,7 @@ npm ci
 npm run check:js
 ```
 
-Dependency license and scope are documented in:
+Les licences et le périmètre des dépendances sont documentés dans :
 
 - [DEPENDENCIES.md](DEPENDENCIES.md)
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)

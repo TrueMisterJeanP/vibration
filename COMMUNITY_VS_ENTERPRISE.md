@@ -1,79 +1,81 @@
-# Community vs Enterprise
+# Community et Enterprise
 
-Vibration Community is the public GitHub edition. Its purpose is to let
-visitors inspect, run and test the philosophy of Vibration: sovereign
-self-hosting, browser-side encryption, and the main messaging workflows without
-depending on a hosted Vibration service.
+Vibration Community est l’édition publique GitHub. Son objectif est de permettre
+aux visiteurs d’inspecter, d’exécuter et de tester la philosophie de Vibration :
+auto-hébergement souverain, chiffrement côté navigateur et principaux flux de
+messagerie sans dépendre d’un service Vibration hébergé.
 
-Vibration Enterprise keeps the same core codebase and adds operational features
-for organizations that need production support, administration and managed
-self-hosted deployment.
+Vibration Enterprise conserve le même socle de code et ajoute des fonctions
+opérationnelles pour les organisations qui ont besoin de production, de support,
+d’administration et d’un accompagnement d’auto-hébergement.
 
-## Summary
+## Résumé
 
-| Area | Community | Enterprise |
+| Domaine | Community | Enterprise |
 | --- | --- | --- |
-| License | GPL-3.0-or-later | GPL-3.0-or-later for delivered client code |
-| Source availability | Public GitHub export | Delivered to customers for their version |
-| Main goal | Audit and test the core philosophy and functions | Production deployment and operational control |
-| Server | Go server | Go server with additional modules |
-| Web client | Web/PWA | Web/PWA plus Enterprise interfaces |
-| Desktop/mobile wrapper | Not published | Can include Tauri/Android packaging work |
-| Database | SQLite only | SQLite plus external database deployment options |
-| Registration | Open registration | Can include activation/admin workflows |
-| Administration console | Not included | Included |
-| Federation | Not included | Available where configured |
-| TURN/Coturn | Public STUN fallback only | Private Coturn configuration support |
-| Support | Community/self-service | Commercial support and deployment guidance |
+| Licence | GPL-3.0-or-later | GPL-3.0-or-later pour le code livré au client |
+| Accès au code | export public GitHub | livré aux clients pour leur version |
+| Objectif principal | auditer et tester la philosophie et les fonctions centrales | déploiement de production et contrôle opérationnel |
+| Serveur | serveur Go | serveur Go avec modules supplémentaires |
+| Client web | web/PWA | web/PWA avec interfaces Enterprise |
+| Wrapper desktop/mobile | non publié | peut inclure le packaging Tauri/Android |
+| Base de données | SQLite uniquement | SQLite et options de déploiement sur base externe |
+| Inscription | inscriptions ouvertes | peut inclure activation et administration |
+| Console d’administration | non incluse | incluse |
+| Fédération | non incluse | disponible si configurée |
+| TURN/Coturn | STUN public de secours uniquement | configuration Coturn privée |
+| Support | communauté / autonome | support commercial et accompagnement de déploiement |
 
-## Included In Community
+## Inclus dans Community
 
-- user registration and login;
-- contacts;
-- direct and group conversations;
-- browser-side encrypted message payloads;
-- encrypted file workflows;
-- audio/video calls using browser WebRTC APIs;
-- screen sharing where supported by the browser;
-- whiteboard;
-- Web Push notifications without clear message content;
-- PWA installation from the browser;
-- SQLite persistence;
-- reproducible public export script.
+- inscription et connexion des utilisateurs ;
+- contacts ;
+- conversations privées et groupes ;
+- messages chiffrés côté navigateur ;
+- fichiers chiffrés ;
+- appels audio/vidéo via les API WebRTC du navigateur ;
+- partage d’écran lorsque le navigateur le permet ;
+- tableau blanc ;
+- notifications Web Push sans contenu clair ;
+- installation PWA depuis le navigateur ;
+- persistance SQLite ;
+- script d’export public reproductible.
 
-## Not Included In Community
+## Non inclus dans Community
 
-- `src-tauri/` desktop/mobile wrapper;
-- administration console;
-- Enterprise route registration;
-- federation modules;
-- private Coturn configuration;
-- activation-code workflow;
-- external database deployment support as a public feature;
-- managed production support.
+- wrapper desktop/mobile `src-tauri/` ;
+- console d’administration ;
+- enregistrement des routes Enterprise ;
+- modules de fédération ;
+- configuration Coturn privée ;
+- workflow de code d’activation ;
+- support public du déploiement sur base externe ;
+- support de production administré.
 
-The Community export excludes these files through `editions/community.exclude`.
+L’export Community exclut ces fichiers via `editions/community.exclude`.
 
-## Why This Split Exists
+## Pourquoi cette séparation existe
 
-Community should be small enough to audit and run locally. It demonstrates the
-product principles without turning the public repository into the full
-commercial operations package.
+Community doit rester assez simple pour être auditée et lancée localement. Elle
+démontre les principes du produit sans transformer le dépôt public en package
+complet d’exploitation commerciale.
 
-Enterprise is for organizations that need stronger production guarantees:
-administration, deployment assistance, private relay infrastructure, federation
-options, and database choices.
+Enterprise s’adresse aux organisations qui ont besoin de garanties de
+production plus fortes : administration, assistance de déploiement,
+infrastructure de relais privée, options de fédération et choix de base de
+données.
 
-## Public Positioning
+## Positionnement public
 
-Community should be described as:
+Community doit être présentée comme :
 
-- auditable;
-- self-hostable;
-- sovereign by default;
-- focused on the core user experience;
-- intentionally limited compared with Enterprise.
+- auditable ;
+- auto-hébergeable ;
+- souveraine par défaut ;
+- centrée sur l’expérience utilisateur principale ;
+- volontairement limitée par rapport à Enterprise.
 
-It should not be described as the full production operations edition.
+Elle ne doit pas être présentée comme l’édition complète d’exploitation en
+production.
 
-Enterprise offer: https://vibration-shop.appbox.fr
+Offre Enterprise : https://vibration-shop.appbox.fr

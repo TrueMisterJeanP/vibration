@@ -1,33 +1,33 @@
-# Third Party Notices
+# Notices des composants tiers
 
-Vibration Community is distributed under `GPL-3.0-or-later`. This file lists
-third-party components used by the Community edition and the license under
-which each component is made available by its authors.
+Vibration Community est distribué sous licence `GPL-3.0-or-later`. Ce fichier
+liste les composants tiers utilisés par l’édition Community et la licence sous
+laquelle chaque composant est fourni par ses auteurs.
 
-This notice is informational and is not legal advice. When redistributing a
-binary or modified distribution, keep the corresponding upstream license texts
-with the distribution where required.
+Cette notice est informative et ne constitue pas un avis juridique. Lors de la
+redistribution d’un binaire ou d’une distribution modifiée, conservez les textes
+de licence amont lorsque les licences concernées l’exigent.
 
-## Vendored Browser Code
+## Code navigateur embarqué
 
-| Component | Version | Location | License | Copyright / Notice |
+| Composant | Version | Emplacement | Licence | Notice |
 | --- | --- | --- | --- | --- |
-| PDF.js | `4.10.38` | `web/vendor/pdfjs/` | Apache-2.0 | Copyright Mozilla and contributors. Full license text is stored in `web/vendor/pdfjs/LICENSE`. |
+| PDF.js | `4.10.38` | `web/vendor/pdfjs/` | Apache-2.0 | Copyright Mozilla et contributeurs. Le texte complet de la licence est conservé dans `web/vendor/pdfjs/LICENSE`. |
 
-## Go Modules
+## Modules Go
 
-| Module | Version | License | Notice |
+| Module | Version | Licence | Notice |
 | --- | --- | --- | --- |
 | `filippo.io/edwards25519` | `v1.2.0` | BSD-3-Clause | Copyright The Go Authors. |
 | `github.com/SherClockHolmes/webpush-go` | `v1.4.0` | MIT | Copyright Ethan Holmes. |
 | `github.com/dustin/go-humanize` | `v1.0.1` | MIT | Copyright Dustin Sallings. |
-| `github.com/go-sql-driver/mysql` | `v1.10.0` | MPL-2.0 | Copyright The Go-MySQL-Driver Authors. Present for shared error compatibility; MySQL deployment is not a Community feature. |
-| `github.com/golang-jwt/jwt/v5` | `v5.2.1` | MIT | Copyright Dave Grijalva and golang-jwt maintainers. |
+| `github.com/go-sql-driver/mysql` | `v1.10.0` | MPL-2.0 | Copyright The Go-MySQL-Driver Authors. Présent pour la compatibilité d’erreurs du code partagé ; le déploiement MySQL n’est pas une fonction Community. |
+| `github.com/golang-jwt/jwt/v5` | `v5.2.1` | MIT | Copyright Dave Grijalva et les mainteneurs golang-jwt. |
 | `github.com/google/uuid` | `v1.6.0` | BSD-3-Clause | Copyright Google Inc. |
 | `github.com/gorilla/websocket` | `v1.5.3` | BSD-2-Clause | Copyright The Gorilla WebSocket Authors. |
 | `github.com/jackc/pgpassfile` | `v1.0.0` | MIT | Copyright Jack Christensen. |
 | `github.com/jackc/pgservicefile` | `v0.0.0-20240606120523-5a60cdf6a761` | MIT | Copyright Jack Christensen. |
-| `github.com/jackc/pgx/v5` | `v5.10.0` | MIT | Copyright Jack Christensen. Present for shared error compatibility; PostgreSQL deployment is not a Community feature. |
+| `github.com/jackc/pgx/v5` | `v5.10.0` | MIT | Copyright Jack Christensen. Présent pour la compatibilité d’erreurs du code partagé ; le déploiement PostgreSQL n’est pas une fonction Community. |
 | `github.com/jackc/puddle/v2` | `v2.2.2` | MIT | Copyright Jack Christensen. |
 | `github.com/mattn/go-isatty` | `v0.0.20` | MIT | Copyright Yasuhiro Matsumoto. |
 | `github.com/ncruces/go-strftime` | `v0.1.9` | MIT | Copyright Nuno Cruces. |
@@ -41,19 +41,19 @@ with the distribution where required.
 | `modernc.org/memory` | `v1.8.0` | BSD-3-Clause | Copyright The Memory Authors. |
 | `modernc.org/sqlite` | `v1.34.5` | BSD-3-Clause | Copyright The Sqlite Authors. |
 
-## npm Packages
+## Paquets npm
 
-The exported Community `package-lock.json` currently contains only the root
-project package and no npm dependency tree. The Enterprise working tree can
-contain Tauri-related npm packages, but those are not included in the Community
-export.
+Le `package-lock.json` exporté pour Community ne contient actuellement que le
+paquet racine du projet et aucun arbre de dépendances npm. L’arborescence de
+travail Enterprise peut contenir des paquets npm liés à Tauri, mais ils ne sont
+pas inclus dans l’export Community.
 
-## Full License Texts
+## Textes de licence complets
 
-- Vibration: `LICENSE`
-- PDF.js: `web/vendor/pdfjs/LICENSE`
-- Go modules: license files are part of the module source downloaded and
-  verified through `go.sum`.
+- Vibration : `LICENSE`
+- PDF.js : `web/vendor/pdfjs/LICENSE`
+- Modules Go : les fichiers de licence font partie du code source des modules
+  téléchargés et vérifiés par `go.sum`.
 
-The dependency inventory can be reproduced with the commands listed in
+L’inventaire des dépendances peut être reproduit avec les commandes listées dans
 [DEPENDENCIES.md](DEPENDENCIES.md).

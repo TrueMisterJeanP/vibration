@@ -1,106 +1,109 @@
-# Dependencies
+# Dépendances
 
-This document describes the external dependencies used by the public
-Vibration Community edition. It is intended to make the project auditable:
-what is embedded, what is downloaded at build time, and what stays outside
-the Community scope.
+Ce document décrit les dépendances externes utilisées par l’édition publique
+Vibration Community. Son objectif est de rendre le projet auditable : ce qui
+est embarqué, ce qui est résolu à la compilation, et ce qui reste hors du
+périmètre Community.
 
-## Community Scope
+## Périmètre Community
 
-Vibration Community is a self-hosted web/PWA application:
+Vibration Community est une application web/PWA auto-hébergeable :
 
-- Go server;
-- browser client served from `web/`;
-- SQLite local database;
-- WebSocket realtime transport;
-- Web Push notifications;
-- no Tauri desktop/mobile wrapper;
-- no administration console;
-- no external managed database feature in the public UI/configuration.
+- serveur Go ;
+- client navigateur servi depuis `web/` ;
+- base locale SQLite ;
+- transport temps réel WebSocket ;
+- notifications Web Push ;
+- pas de wrapper desktop/mobile Tauri ;
+- pas de console d’administration ;
+- pas de fonctionnalité de base externe configurable dans l’interface ou la
+  configuration publique.
 
-The Community export rewrites `package.json` and `package-lock.json` with
-Community-specific files from `editions/community.package.json` and
-`editions/community.package-lock.json`. The exported package has no npm
-runtime dependency.
+L’export Community remplace `package.json` et `package-lock.json` par les
+fichiers dédiés `editions/community.package.json` et
+`editions/community.package-lock.json`. Le paquet exporté n’a aucune dépendance
+npm d’exécution.
 
-## Runtime Dependencies
+## Dépendances d’exécution
 
-### Server
+### Serveur
 
-Go modules are resolved from `go.mod` and verified with `go.sum`.
+Les modules Go sont déclarés dans `go.mod` et vérifiés par `go.sum`.
 
-| Dependency | Version | Purpose | License |
+| Dépendance | Version | Rôle | Licence |
 | --- | --- | --- | --- |
-| `github.com/SherClockHolmes/webpush-go` | `v1.4.0` | Web Push encryption and delivery | MIT |
-| `github.com/gorilla/websocket` | `v1.5.3` | WebSocket server transport | BSD-2-Clause |
-| `golang.org/x/crypto` | `v0.31.0` | Cryptographic primitives used by server dependencies | BSD-3-Clause |
-| `modernc.org/sqlite` | `v1.34.5` | Pure Go SQLite driver | BSD-3-Clause |
-| `github.com/google/uuid` | `v1.6.0` | UUID generation | BSD-3-Clause |
-| `github.com/golang-jwt/jwt/v5` | `v5.2.1` | JWT handling used by Web Push dependency chain | MIT |
-| `filippo.io/edwards25519` | `v1.2.0` | Ed25519 implementation used by crypto dependency chain | BSD-3-Clause |
-| `github.com/dustin/go-humanize` | `v1.0.1` | SQLite dependency chain utility | MIT |
-| `github.com/ncruces/go-strftime` | `v0.1.9` | SQLite dependency chain utility | MIT |
-| `github.com/remyoudompheng/bigfft` | `v0.0.0-20230129092748-24d4a6f8daec` | SQLite dependency chain utility | BSD-3-Clause |
-| `golang.org/x/sys` | `v0.28.0` | System calls used by Go dependencies | BSD-3-Clause |
-| `golang.org/x/text` | `v0.29.0` | Text processing used by dependency chain | BSD-3-Clause |
-| `modernc.org/libc` | `v1.55.3` | Pure Go libc layer for SQLite | BSD-3-Clause |
-| `modernc.org/mathutil` | `v1.6.0` | SQLite dependency chain utility | BSD-3-Clause |
-| `modernc.org/memory` | `v1.8.0` | Memory management layer for SQLite | BSD-3-Clause |
+| `github.com/SherClockHolmes/webpush-go` | `v1.4.0` | chiffrement et envoi Web Push | MIT |
+| `github.com/gorilla/websocket` | `v1.5.3` | transport WebSocket côté serveur | BSD-2-Clause |
+| `golang.org/x/crypto` | `v0.31.0` | primitives cryptographiques utilisées par les dépendances serveur | BSD-3-Clause |
+| `modernc.org/sqlite` | `v1.34.5` | pilote SQLite pur Go | BSD-3-Clause |
+| `github.com/google/uuid` | `v1.6.0` | génération d’UUID | BSD-3-Clause |
+| `github.com/golang-jwt/jwt/v5` | `v5.2.1` | gestion JWT utilisée par la chaîne Web Push | MIT |
+| `filippo.io/edwards25519` | `v1.2.0` | implémentation Ed25519 utilisée par la chaîne crypto | BSD-3-Clause |
+| `github.com/dustin/go-humanize` | `v1.0.1` | utilitaire de la chaîne SQLite | MIT |
+| `github.com/ncruces/go-strftime` | `v0.1.9` | utilitaire de la chaîne SQLite | MIT |
+| `github.com/remyoudompheng/bigfft` | `v0.0.0-20230129092748-24d4a6f8daec` | utilitaire de la chaîne SQLite | BSD-3-Clause |
+| `golang.org/x/sys` | `v0.28.0` | appels système utilisés par les dépendances Go | BSD-3-Clause |
+| `golang.org/x/text` | `v0.29.0` | traitement de texte utilisé par la chaîne de dépendances | BSD-3-Clause |
+| `modernc.org/libc` | `v1.55.3` | couche libc pur Go pour SQLite | BSD-3-Clause |
+| `modernc.org/mathutil` | `v1.6.0` | utilitaire de la chaîne SQLite | BSD-3-Clause |
+| `modernc.org/memory` | `v1.8.0` | couche de gestion mémoire pour SQLite | BSD-3-Clause |
 
-The current shared server code also imports database driver types used to
-normalize duplicate constraint errors across editions:
+Le code serveur partagé importe aussi des types de pilotes de bases externes
+afin de normaliser certaines erreurs d’unicité entre éditions :
 
-| Dependency | Version | Purpose in current code | License |
+| Dépendance | Version | Rôle dans le code actuel | Licence |
 | --- | --- | --- | --- |
-| `github.com/go-sql-driver/mysql` | `v1.10.0` | Error type compatibility in shared auth code | MPL-2.0 |
-| `github.com/jackc/pgx/v5` | `v5.10.0` | PostgreSQL error type compatibility in shared auth code | MIT |
-| `github.com/jackc/pgpassfile` | `v1.0.0` | `pgx` dependency | MIT |
-| `github.com/jackc/pgservicefile` | `v0.0.0-20240606120523-5a60cdf6a761` | `pgx` dependency | MIT |
-| `github.com/mattn/go-isatty` | `v0.0.20` | `pgx` dependency | MIT |
+| `github.com/go-sql-driver/mysql` | `v1.10.0` | compatibilité des types d’erreurs dans le code d’authentification partagé | MPL-2.0 |
+| `github.com/jackc/pgx/v5` | `v5.10.0` | compatibilité des types d’erreurs PostgreSQL dans le code d’authentification partagé | MIT |
+| `github.com/jackc/pgpassfile` | `v1.0.0` | dépendance de `pgx` | MIT |
+| `github.com/jackc/pgservicefile` | `v0.0.0-20240606120523-5a60cdf6a761` | dépendance de `pgx` | MIT |
+| `github.com/mattn/go-isatty` | `v0.0.20` | dépendance de `pgx` | MIT |
 
-Community still exposes SQLite-only configuration. MySQL and PostgreSQL are
-Enterprise deployment features, not Community features.
+Community expose uniquement une configuration SQLite. MySQL et PostgreSQL sont
+des fonctions de déploiement Enterprise, pas des fonctions Community.
 
-### Browser Client
+### Client navigateur
 
-The browser client uses standard browser APIs where possible:
+Le client navigateur s’appuie autant que possible sur les API standard :
 
-- Web Crypto API for client-side encryption;
-- IndexedDB for local key/device state;
-- Service Worker and Push API for notifications;
-- WebRTC APIs for calls and screen sharing;
-- Fetch, WebSocket and File APIs.
+- Web Crypto API pour le chiffrement côté navigateur ;
+- IndexedDB pour l’état local des clefs et de l’appareil ;
+- Service Worker et Push API pour les notifications ;
+- API WebRTC pour les appels et le partage d’écran ;
+- Fetch, WebSocket et File APIs.
 
-The only vendored browser library in Community is:
+La seule bibliothèque navigateur embarquée dans Community est :
 
-| Dependency | Version | Location | Purpose | License |
+| Dépendance | Version | Emplacement | Rôle | Licence |
 | --- | --- | --- | --- | --- |
-| PDF.js | `4.10.38` | `web/vendor/pdfjs/` | PDF preview/rendering | Apache-2.0 |
+| PDF.js | `4.10.38` | `web/vendor/pdfjs/` | prévisualisation et rendu PDF | Apache-2.0 |
 
-## Development Dependencies
+## Dépendances de développement
 
-The Community export has no npm package dependency. `npm ci` installs an empty
-package graph and is kept in CI so `npm run check:js` has a stable entry point.
+L’export Community n’a aucune dépendance npm. `npm ci` installe donc un graphe
+vide et reste présent dans la CI pour conserver un point d’entrée stable avant
+`npm run check:js`.
 
-The Enterprise working tree can include additional local tooling, notably Tauri
-packages and the `src-tauri/` application wrapper. These are deliberately
-excluded from the Community export by `editions/community.exclude`.
+L’arborescence de travail Enterprise peut contenir des outils locaux
+supplémentaires, notamment les paquets Tauri et le wrapper `src-tauri/`. Ces
+éléments sont volontairement exclus de l’export Community par
+`editions/community.exclude`.
 
-## External Network Services
+## Services réseau externes
 
-Community is self-hosted by default. The following network interactions are
-worth auditing:
+Community est auto-hébergeable par défaut. Les interactions réseau suivantes
+méritent d’être auditées :
 
-- Web Push uses the push service selected by the user's browser/vendor after
-  the instance submits an encrypted notification payload.
-- Calls use the public STUN server `stun:stun.l.google.com:19302` in Community.
-  This is only for NAT discovery; it is not a TURN relay.
-- No analytics, telemetry or hosted Vibration control plane is required by
-  Community.
+- Web Push utilise le service push choisi par le navigateur ou le système de
+  l’utilisateur après l’envoi par l’instance d’une notification chiffrée.
+- Les appels utilisent le serveur STUN public `stun:stun.l.google.com:19302`
+  en Community. Il sert à la découverte NAT ; ce n’est pas un relais TURN.
+- Community ne nécessite ni analytique, ni télémétrie, ni plan de contrôle
+  hébergé par Vibration.
 
-## Reproducing The Inventory
+## Reproduire l’inventaire
 
-From the Community export:
+Depuis l’export Community :
 
 ```bash
 GOCACHE=/tmp/webtchat-go-cache go list -deps -tags community -f '{{with .Module}}{{.Path}} {{.Version}}{{end}}' ./... | sort -u
@@ -109,4 +112,5 @@ npm run check:js
 find web/vendor -maxdepth 3 -type f | sort
 ```
 
-License notices are summarized in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Les notices de licences sont résumées dans
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
