@@ -34,14 +34,15 @@ type Contact struct {
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserID(r)
+	h.ensureFederatedContacts(userID)
 	rows, err := h.DB.Query(`SELECT id,contact_user_id,username,display_name,description,public_key,avatar,encrypted_label,status,direction,created_at
 		FROM (
-			SELECT c.id AS id,c.contact_user_id AS contact_user_id,u.username AS username,u.display_name AS display_name,
+			SELECT c.id AS id,c.contact_user_id AS contact_user_id,COALESCE(u.remote_username,u.username) AS username,u.display_name AS display_name,
 				u.description AS description,u.public_key AS public_key,u.avatar AS avatar,c.encrypted_label AS encrypted_label,
 				c.status AS status,'outgoing' AS direction,c.created_at AS created_at
 			FROM contacts c JOIN users u ON u.id=c.contact_user_id WHERE c.owner_id=?
 			UNION ALL
-			SELECT c.id AS id,c.owner_id AS contact_user_id,u.username AS username,u.display_name AS display_name,
+			SELECT c.id AS id,c.owner_id AS contact_user_id,COALESCE(u.remote_username,u.username) AS username,u.display_name AS display_name,
 				u.description AS description,u.public_key AS public_key,u.avatar AS avatar,c.encrypted_label AS encrypted_label,
 				c.status AS status,'incoming' AS direction,c.created_at AS created_at
 			FROM contacts c JOIN users u ON u.id=c.owner_id WHERE c.contact_user_id=? AND c.status='pending'
@@ -60,6 +61,29 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	httpx.JSON(w, http.StatusOK, contacts)
+}
+
+func (h *Handler) ensureFederatedContacts(userID int64) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	rows, err := h.DB.Query(`SELECT local_user_id,remote_user_id FROM federated_conversations WHERE local_user_id=?`, userID)
+	if err != nil {
+		return
+	}
+	pairs := [][2]int64{}
+	for rows.Next() {
+		var localID, remoteID int64
+		if rows.Scan(&localID, &remoteID) == nil {
+			pairs = append(pairs, [2]int64{localID, remoteID})
+		}
+	}
+	rows.Close()
+	for _, pair := range pairs {
+		for _, direction := range [][2]int64{pair, {pair[1], pair[0]}} {
+			_, _ = h.DB.Exec(`INSERT INTO contacts(owner_id,contact_user_id,status,created_at)
+				SELECT ?,?,'accepted',? WHERE NOT EXISTS(SELECT 1 FROM contacts WHERE owner_id=? AND contact_user_id=?)`,
+				direction[0], direction[1], now, direction[0], direction[1])
+		}
+	}
 }
 
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {

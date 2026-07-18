@@ -33,6 +33,60 @@ type testPush struct {
 	users chan int64
 }
 
+type testFederationRouter struct {
+	created      []Message
+	updated      []int64
+	deleted      []int64
+	voted        []int64
+	eventUpdated []int64
+	eventDeleted []int64
+}
+
+func (r *testFederationRouter) QueueMessage(message Message) {
+	r.created = append(r.created, message)
+}
+
+func (r *testFederationRouter) QueueMessageUpdate(messageID int64, _, _, _ string) {
+	r.updated = append(r.updated, messageID)
+}
+func (r *testFederationRouter) QueueMessageDelete(_ int64, messageID int64, _ int64) {
+	r.deleted = append(r.deleted, messageID)
+}
+func (r *testFederationRouter) QueueReaction(_ int64, _ int64, _ string, _ bool, _ string) {}
+func (r *testFederationRouter) QueuePin(_ int64, _ int64, _ bool, _ string)                {}
+func (r *testFederationRouter) QueueReceipt(_ int64, _ int64, _, _ string)                 {}
+func (r *testFederationRouter) QueueFile(_ int64)                                          {}
+func (r *testFederationRouter) RelayRealtime(_ int64, _ int64, _ map[string]any) bool {
+	return false
+}
+func (r *testFederationRouter) RelayPresence(_ int64, _ bool)           {}
+func (r *testFederationRouter) QueueGroupCreate(_ int64)                {}
+func (r *testFederationRouter) QueueGroupAccept(_ int64, _ int64)       {}
+func (r *testFederationRouter) QueueGroupUpdate(_ int64)                {}
+func (r *testFederationRouter) QueueGroupDelete(_ int64, _ int64)       {}
+func (r *testFederationRouter) QueueGroupMemberAdd(_ int64, _ int64)    {}
+func (r *testFederationRouter) QueueGroupMemberRemove(_ int64, _ int64) {}
+
+func (r *testFederationRouter) QueuePollUpdate(messageID int64, _, _ string, _ int, _ *string) {
+	r.updated = append(r.updated, messageID)
+}
+
+func (r *testFederationRouter) QueuePollDelete(_ int64, messageID int64, _ int64) {
+	r.deleted = append(r.deleted, messageID)
+}
+
+func (r *testFederationRouter) QueuePollVote(messageID int64, _ int64, _ int, _ string) {
+	r.voted = append(r.voted, messageID)
+}
+
+func (r *testFederationRouter) QueueEventUpdate(messageID int64, _, _, _, _ string) {
+	r.eventUpdated = append(r.eventUpdated, messageID)
+}
+
+func (r *testFederationRouter) QueueEventDelete(_ int64, messageID int64, _ int64) {
+	r.eventDeleted = append(r.eventDeleted, messageID)
+}
+
 func (p *testPush) NotifyUser(userID int64) {
 	p.users <- userID
 }
@@ -250,6 +304,289 @@ func TestAuthorCanDeleteMessage(t *testing.T) {
 	}
 }
 
+func TestPollLifecycleEnforcesOwnerAndSingleVote(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	owner := registerMessageUserNamed(t, authHandler, "poll_owner", "Poll Owner")
+	member := registerMessageUserNamed(t, authHandler, "poll_member", "Poll Member")
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	conversation, err := db.Exec(`INSERT INTO conversations(type,created_by,created_at) VALUES('private',1,?)`, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationID, _ := conversation.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
+		VALUES(?,1,'owner-key','owner',?),(?,2,'member-key','member',?)`, conversationID, now, conversationID, now); err != nil {
+		t.Fatal(err)
+	}
+
+	federation := &testFederationRouter{}
+	handler := &Handler{DB: db, Hub: &testHub{}, Federation: federation}
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/conversations/{id}/polls", authHandler.Middleware(http.HandlerFunc(handler.CreatePoll)))
+	mux.Handle("POST /api/messages/{id}/poll/vote", authHandler.Middleware(http.HandlerFunc(handler.VotePoll)))
+	mux.Handle("PUT /api/messages/{id}/poll", authHandler.Middleware(http.HandlerFunc(handler.UpdatePoll)))
+	mux.Handle("GET /api/conversations/{id}/messages", authHandler.Middleware(http.HandlerFunc(handler.List)))
+	mux.Handle("DELETE /api/messages/{id}", authHandler.Middleware(http.HandlerFunc(handler.Delete)))
+
+	create := httptest.NewRequest(http.MethodPost, "/api/conversations/"+formatMessageID(conversationID)+"/polls",
+		bytes.NewBufferString(`{"encrypted_content":"encrypted-poll","iv":"poll-message-iv","option_count":2,"expires_in_seconds":300}`))
+	create.Header.Set("Content-Type", "application/json")
+	create.AddCookie(owner)
+	createResponse := httptest.NewRecorder()
+	mux.ServeHTTP(createResponse, create)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create poll status=%d body=%s", createResponse.Code, createResponse.Body.String())
+	}
+	var created Message
+	if err := json.Unmarshal(createResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Poll == nil || len(created.Poll.Options) != 2 || created.Poll.ExpiresAt == nil || created.Poll.Closed {
+		t.Fatalf("created poll=%+v", created.Poll)
+	}
+	if len(federation.created) != 1 || federation.created[0].ID != created.ID {
+		t.Fatalf("federated creations=%+v", federation.created)
+	}
+
+	votePath := "/api/messages/" + formatMessageID(created.ID) + "/poll/vote"
+	vote := httptest.NewRequest(http.MethodPost, votePath,
+		bytes.NewBufferString(`{"option_id":`+formatMessageID(created.Poll.Options[0].ID)+`}`))
+	vote.Header.Set("Content-Type", "application/json")
+	vote.AddCookie(member)
+	voteResponse := httptest.NewRecorder()
+	mux.ServeHTTP(voteResponse, vote)
+	if voteResponse.Code != http.StatusOK {
+		t.Fatalf("vote status=%d body=%s", voteResponse.Code, voteResponse.Body.String())
+	}
+	if len(federation.voted) != 1 || federation.voted[0] != created.ID {
+		t.Fatalf("federated votes=%v", federation.voted)
+	}
+
+	secondVote := httptest.NewRequest(http.MethodPost, votePath,
+		bytes.NewBufferString(`{"option_id":`+formatMessageID(created.Poll.Options[1].ID)+`}`))
+	secondVote.Header.Set("Content-Type", "application/json")
+	secondVote.AddCookie(member)
+	secondVoteResponse := httptest.NewRecorder()
+	mux.ServeHTTP(secondVoteResponse, secondVote)
+	if secondVoteResponse.Code != http.StatusConflict {
+		t.Fatalf("second vote status=%d body=%s", secondVoteResponse.Code, secondVoteResponse.Body.String())
+	}
+
+	list := httptest.NewRequest(http.MethodGet, "/api/conversations/"+formatMessageID(conversationID)+"/messages", nil)
+	list.AddCookie(member)
+	listResponse := httptest.NewRecorder()
+	mux.ServeHTTP(listResponse, list)
+	var listed []Message
+	if err := json.Unmarshal(listResponse.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].Poll == nil || listed[0].Poll.TotalVotes != 1 || !listed[0].Poll.HasVoted || !listed[0].Poll.Options[0].Mine {
+		t.Fatalf("listed poll=%+v", listed)
+	}
+
+	updateBody := `{"encrypted_content":"updated-encrypted-poll","iv":"updated-poll-message-iv","option_count":3,"expires_in_seconds":3600}`
+	memberUpdate := httptest.NewRequest(http.MethodPut, "/api/messages/"+formatMessageID(created.ID)+"/poll", bytes.NewBufferString(updateBody))
+	memberUpdate.Header.Set("Content-Type", "application/json")
+	memberUpdate.AddCookie(member)
+	memberUpdateResponse := httptest.NewRecorder()
+	mux.ServeHTTP(memberUpdateResponse, memberUpdate)
+	if memberUpdateResponse.Code != http.StatusNotFound {
+		t.Fatalf("member update status=%d body=%s", memberUpdateResponse.Code, memberUpdateResponse.Body.String())
+	}
+
+	ownerUpdate := httptest.NewRequest(http.MethodPut, "/api/messages/"+formatMessageID(created.ID)+"/poll", bytes.NewBufferString(updateBody))
+	ownerUpdate.Header.Set("Content-Type", "application/json")
+	ownerUpdate.AddCookie(owner)
+	ownerUpdateResponse := httptest.NewRecorder()
+	mux.ServeHTTP(ownerUpdateResponse, ownerUpdate)
+	if ownerUpdateResponse.Code != http.StatusOK {
+		t.Fatalf("owner update status=%d body=%s", ownerUpdateResponse.Code, ownerUpdateResponse.Body.String())
+	}
+	if len(federation.updated) != 1 || federation.updated[0] != created.ID {
+		t.Fatalf("federated updates=%v", federation.updated)
+	}
+	var options, votes int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM poll_options WHERE message_id=?`, created.ID).Scan(&options); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM poll_votes WHERE message_id=?`, created.ID).Scan(&votes); err != nil {
+		t.Fatal(err)
+	}
+	if options != 3 || votes != 0 {
+		t.Fatalf("after update options=%d votes=%d", options, votes)
+	}
+	var updatedExpiry string
+	if err := db.QueryRow(`SELECT poll_expires_at FROM messages WHERE id=?`, created.ID).Scan(&updatedExpiry); err != nil {
+		t.Fatal(err)
+	}
+	if deadline, err := time.Parse(time.RFC3339Nano, updatedExpiry); err != nil || time.Until(deadline) < 59*time.Minute {
+		t.Fatalf("updated expiry=%q err=%v", updatedExpiry, err)
+	}
+	var updatedOptionID int64
+	if err := db.QueryRow(`SELECT id FROM poll_options WHERE message_id=? ORDER BY position LIMIT 1`, created.ID).Scan(&updatedOptionID); err != nil {
+		t.Fatal(err)
+	}
+	expiredAt := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)
+	if _, err := db.Exec(`UPDATE messages SET poll_expires_at=? WHERE id=?`, expiredAt, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	expiredVote := httptest.NewRequest(http.MethodPost, votePath,
+		bytes.NewBufferString(`{"option_id":`+formatMessageID(updatedOptionID)+`}`))
+	expiredVote.Header.Set("Content-Type", "application/json")
+	expiredVote.AddCookie(member)
+	expiredVoteResponse := httptest.NewRecorder()
+	mux.ServeHTTP(expiredVoteResponse, expiredVote)
+	if expiredVoteResponse.Code != http.StatusGone {
+		t.Fatalf("expired vote status=%d body=%s", expiredVoteResponse.Code, expiredVoteResponse.Body.String())
+	}
+	if len(federation.voted) != 1 {
+		t.Fatalf("expired vote was federated: %v", federation.voted)
+	}
+	expiredList := httptest.NewRequest(http.MethodGet, "/api/conversations/"+formatMessageID(conversationID)+"/messages", nil)
+	expiredList.AddCookie(member)
+	expiredListResponse := httptest.NewRecorder()
+	mux.ServeHTTP(expiredListResponse, expiredList)
+	listed = nil
+	if err := json.Unmarshal(expiredListResponse.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].Poll == nil || !listed[0].Poll.Closed || listed[0].Poll.ExpiresAt == nil {
+		t.Fatalf("expired listed poll=%+v", listed)
+	}
+
+	memberDelete := httptest.NewRequest(http.MethodDelete, "/api/messages/"+formatMessageID(created.ID), nil)
+	memberDelete.AddCookie(member)
+	memberDeleteResponse := httptest.NewRecorder()
+	mux.ServeHTTP(memberDeleteResponse, memberDelete)
+	if memberDeleteResponse.Code != http.StatusNotFound {
+		t.Fatalf("member delete status=%d body=%s", memberDeleteResponse.Code, memberDeleteResponse.Body.String())
+	}
+	ownerDelete := httptest.NewRequest(http.MethodDelete, "/api/messages/"+formatMessageID(created.ID), nil)
+	ownerDelete.AddCookie(owner)
+	ownerDeleteResponse := httptest.NewRecorder()
+	mux.ServeHTTP(ownerDeleteResponse, ownerDelete)
+	if ownerDeleteResponse.Code != http.StatusOK {
+		t.Fatalf("owner delete status=%d body=%s", ownerDeleteResponse.Code, ownerDeleteResponse.Body.String())
+	}
+	if len(federation.deleted) != 1 || federation.deleted[0] != created.ID {
+		t.Fatalf("federated deletions=%v", federation.deleted)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM poll_options WHERE message_id=?`, created.ID).Scan(&options); err != nil || options != 0 {
+		t.Fatalf("options after delete=%d err=%v", options, err)
+	}
+}
+
+func TestEventLifecycleCalendarAndOwnerPermissions(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	owner := registerMessageUserNamed(t, authHandler, "event_owner", "Event Owner")
+	member := registerMessageUserNamed(t, authHandler, "event_member", "Event Member")
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	conversation, err := db.Exec(`INSERT INTO conversations(type,created_by,created_at) VALUES('group',1,?)`, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationID, _ := conversation.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
+		VALUES(?,1,'owner-key','owner',?),(?,2,'member-key','member',?)`, conversationID, now, conversationID, now); err != nil {
+		t.Fatal(err)
+	}
+	federation := &testFederationRouter{}
+	handler := &Handler{DB: db, Hub: &testHub{}, Federation: federation}
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/conversations/{id}/events", authHandler.Middleware(http.HandlerFunc(handler.CreateEvent)))
+	mux.Handle("PUT /api/messages/{id}/event", authHandler.Middleware(http.HandlerFunc(handler.UpdateEvent)))
+	mux.Handle("GET /api/events", authHandler.Middleware(http.HandlerFunc(handler.ListEvents)))
+	mux.Handle("DELETE /api/messages/{id}", authHandler.Middleware(http.HandlerFunc(handler.Delete)))
+
+	start := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	end := start.Add(90 * time.Minute)
+	createBody := `{"encrypted_content":"encrypted-event","iv":"event-message-iv","starts_at":"` + start.Format(time.RFC3339Nano) + `","ends_at":"` + end.Format(time.RFC3339Nano) + `"}`
+	create := httptest.NewRequest(http.MethodPost, "/api/conversations/"+formatMessageID(conversationID)+"/events", bytes.NewBufferString(createBody))
+	create.Header.Set("Content-Type", "application/json")
+	create.AddCookie(owner)
+	createResponse := httptest.NewRecorder()
+	mux.ServeHTTP(createResponse, create)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create event status=%d body=%s", createResponse.Code, createResponse.Body.String())
+	}
+	var created Message
+	if err := json.Unmarshal(createResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Event == nil || created.Event.StartsAt != start.Format(time.RFC3339Nano) || created.Event.EndsAt != end.Format(time.RFC3339Nano) {
+		t.Fatalf("created event=%+v", created.Event)
+	}
+	if len(federation.created) != 1 || federation.created[0].Event == nil {
+		t.Fatalf("federated create=%+v", federation.created)
+	}
+
+	calendar := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	calendar.AddCookie(member)
+	calendarResponse := httptest.NewRecorder()
+	mux.ServeHTTP(calendarResponse, calendar)
+	var listed []Message
+	if err := json.Unmarshal(calendarResponse.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].ID != created.ID || listed[0].Event == nil {
+		t.Fatalf("calendar events=%+v", listed)
+	}
+
+	updatedStart := start.Add(24 * time.Hour)
+	updatedEnd := updatedStart.Add(2 * time.Hour)
+	updateBody := `{"encrypted_content":"updated-encrypted-event","iv":"updated-event-iv","starts_at":"` + updatedStart.Format(time.RFC3339Nano) + `","ends_at":"` + updatedEnd.Format(time.RFC3339Nano) + `"}`
+	memberUpdate := httptest.NewRequest(http.MethodPut, "/api/messages/"+formatMessageID(created.ID)+"/event", bytes.NewBufferString(updateBody))
+	memberUpdate.Header.Set("Content-Type", "application/json")
+	memberUpdate.AddCookie(member)
+	memberUpdateResponse := httptest.NewRecorder()
+	mux.ServeHTTP(memberUpdateResponse, memberUpdate)
+	if memberUpdateResponse.Code != http.StatusNotFound {
+		t.Fatalf("member update status=%d body=%s", memberUpdateResponse.Code, memberUpdateResponse.Body.String())
+	}
+	ownerUpdate := httptest.NewRequest(http.MethodPut, "/api/messages/"+formatMessageID(created.ID)+"/event", bytes.NewBufferString(updateBody))
+	ownerUpdate.Header.Set("Content-Type", "application/json")
+	ownerUpdate.AddCookie(owner)
+	ownerUpdateResponse := httptest.NewRecorder()
+	mux.ServeHTTP(ownerUpdateResponse, ownerUpdate)
+	if ownerUpdateResponse.Code != http.StatusOK || len(federation.eventUpdated) != 1 {
+		t.Fatalf("owner update status=%d federation=%v body=%s", ownerUpdateResponse.Code, federation.eventUpdated, ownerUpdateResponse.Body.String())
+	}
+	var storedStart, storedEnd string
+	if err := db.QueryRow(`SELECT starts_at,ends_at FROM message_events WHERE message_id=?`, created.ID).Scan(&storedStart, &storedEnd); err != nil ||
+		storedStart != updatedStart.Format(time.RFC3339Nano) || storedEnd != updatedEnd.Format(time.RFC3339Nano) {
+		t.Fatalf("stored dates=%q..%q err=%v", storedStart, storedEnd, err)
+	}
+
+	memberDelete := httptest.NewRequest(http.MethodDelete, "/api/messages/"+formatMessageID(created.ID), nil)
+	memberDelete.AddCookie(member)
+	memberDeleteResponse := httptest.NewRecorder()
+	mux.ServeHTTP(memberDeleteResponse, memberDelete)
+	if memberDeleteResponse.Code != http.StatusNotFound {
+		t.Fatalf("member delete status=%d body=%s", memberDeleteResponse.Code, memberDeleteResponse.Body.String())
+	}
+	ownerDelete := httptest.NewRequest(http.MethodDelete, "/api/messages/"+formatMessageID(created.ID), nil)
+	ownerDelete.AddCookie(owner)
+	ownerDeleteResponse := httptest.NewRecorder()
+	mux.ServeHTTP(ownerDeleteResponse, ownerDelete)
+	if ownerDeleteResponse.Code != http.StatusOK || len(federation.eventDeleted) != 1 {
+		t.Fatalf("owner delete status=%d federation=%v body=%s", ownerDeleteResponse.Code, federation.eventDeleted, ownerDeleteResponse.Body.String())
+	}
+	var remaining int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM message_events WHERE message_id=?`, created.ID).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("remaining event=%d err=%v", remaining, err)
+	}
+}
+
 func TestListOnlyReturnsMessagesAfterMembershipCreatedAt(t *testing.T) {
 	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
 	if err != nil {
@@ -297,6 +634,54 @@ func TestListOnlyReturnsMessagesAfterMembershipCreatedAt(t *testing.T) {
 	}
 	if len(messages) != 1 || messages[0].EncryptedContent == nil || *messages[0].EncryptedContent != "new-encrypted-message" {
 		t.Fatalf("visible messages=%+v", messages)
+	}
+}
+
+func TestListSupportsMessagesAfterTargetInChronologicalOrder(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	member := registerMessageUserNamed(t, authHandler, "after_reader", "After Reader")
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	conversation, err := db.Exec(`INSERT INTO conversations(type,created_by,created_at) VALUES('private',1,?)`, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationID, _ := conversation.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
+		VALUES(?,1,'owner-key','owner',?)`, conversationID, now); err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]int64, 0, 5)
+	for index := 1; index <= 5; index++ {
+		result, err := db.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,created_at) VALUES(?,1,?,?,?)`,
+			conversationID, "encrypted-"+strconv.Itoa(index), "message-iv", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := result.LastInsertId()
+		ids = append(ids, id)
+	}
+	handler := &Handler{DB: db, Hub: &testHub{}}
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/conversations/{id}/messages", authHandler.Middleware(http.HandlerFunc(handler.List)))
+	request := httptest.NewRequest(http.MethodGet,
+		"/api/conversations/"+formatMessageID(conversationID)+"/messages?after="+formatMessageID(ids[1])+"&limit=2", nil)
+	request.AddCookie(member)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("list after status=%d body=%s", response.Code, response.Body.String())
+	}
+	var messages []Message
+	if err := json.Unmarshal(response.Body.Bytes(), &messages); err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 || messages[0].ID != ids[2] || messages[1].ID != ids[3] {
+		t.Fatalf("messages after target=%+v want ids %d,%d", messages, ids[2], ids[3])
 	}
 }
 

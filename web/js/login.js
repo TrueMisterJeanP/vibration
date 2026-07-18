@@ -18,6 +18,69 @@ const loginTab = document.querySelector("#login-tab");
 const registerTab = document.querySelector("#register-tab");
 let retryLoginAfterInstanceUpdate = false;
 let registrationSettingsRequest = 0;
+let termsAcceptancePromise = null;
+const SHARE_RETURN_STORAGE_KEY = "vibration.file_share_return";
+
+function postAuthenticationDestination() {
+  if (new URLSearchParams(location.search).get("return_share") !== "1") return "/";
+  let stored;
+  try { stored = sessionStorage.getItem(SHARE_RETURN_STORAGE_KEY); } catch { return "/"; }
+  if (!stored) return "/";
+  try {
+    const target = new URL(stored);
+    if (target.origin !== location.origin || target.pathname !== "/share.html") return "/";
+    try { sessionStorage.removeItem(SHARE_RETURN_STORAGE_KEY); } catch {}
+    return target.toString();
+  } catch {
+    return "/";
+  }
+}
+
+async function ensureTermsAccepted() {
+  if (termsAcceptancePromise) return termsAcceptancePromise;
+  termsAcceptancePromise = (async () => {
+    const status = await api("/api/terms/status");
+    if (status.accepted) return true;
+    const dialog = document.querySelector("#terms-dialog");
+    const form = document.querySelector("#terms-acceptance-form");
+    const checkbox = document.querySelector("#terms-accepted");
+    const error = document.querySelector("#terms-error");
+    document.querySelector("#terms-content").textContent = status.content || "";
+    document.querySelector("#terms-version-label").textContent = `Version ${status.version}`;
+    checkbox.checked = false;
+    error.textContent = "";
+    dialog.oncancel = (event) => event.preventDefault();
+    dialog.showModal();
+    document.querySelector("#terms-content").focus({ preventScroll: true });
+    return new Promise((resolve) => {
+      form.onsubmit = async (event) => {
+        event.preventDefault();
+        if (!checkbox.checked) return;
+        const button = form.querySelector('button[type="submit"]');
+        button.disabled = true;
+        error.textContent = "";
+        try {
+          await api("/api/terms/accept", { method: "POST", body: { version: status.version, accept: true } });
+          dialog.close();
+          resolve(true);
+        } catch (exception) {
+          error.textContent = frenchErrorMessage(exception, "Acceptation impossible.");
+          button.disabled = false;
+        }
+      };
+      document.querySelector("#terms-refuse").onclick = async () => {
+        try { await api("/api/logout", { method: "POST", body: {} }); } catch {}
+        dialog.close();
+        resolve(false);
+      };
+    });
+  })();
+  try {
+    return await termsAcceptancePromise;
+  } finally {
+    termsAcceptancePromise = null;
+  }
+}
 
 function ensureInstanceForm() {
   const existing = document.querySelector("#instance-form");
@@ -175,6 +238,11 @@ loginForm.addEventListener("submit", async (event) => {
         desktop_client: isDesktopClient(),
       },
     });
+    if (!await ensureTermsAccepted()) {
+      button.disabled = false;
+      errorRegion.textContent = "Vous devez accepter les conditions d’utilisation pour accéder au service.";
+      return;
+    }
     const user = await api("/api/me");
     const verificationRequired = await recordSuccessfulLogin(user.id);
     await notificationPermission;
@@ -185,7 +253,7 @@ loginForm.addEventListener("submit", async (event) => {
     } else {
       sessionStorage.removeItem("force_identity_verification");
     }
-    location.href = "/";
+    location.href = postAuthenticationDestination();
   } catch (error) {
     button.disabled = false;
     if (isInstanceConnectionError(error)) {
@@ -282,10 +350,17 @@ registerForm.addEventListener("submit", async (event) => {
     });
     await notificationPermission;
     await showRecoveryCode(result.recovery_code);
+    if (!await ensureTermsAccepted()) {
+      button.disabled = false;
+      button.textContent = originalLabel;
+      showTab(false);
+      errorRegion.textContent = "Compte créé. Vous devrez accepter les conditions d’utilisation lors de votre prochaine connexion.";
+      return;
+    }
     sessionStorage.setItem("crypto_phrase", data.phrase);
     sessionStorage.setItem("remember_encryption_key", "true");
     sessionStorage.removeItem("force_identity_verification");
-    location.href = "/";
+    location.href = postAuthenticationDestination();
   } catch (error) {
     errorRegion.textContent = frenchErrorMessage(error);
     button.disabled = false;
@@ -295,6 +370,7 @@ registerForm.addEventListener("submit", async (event) => {
 
 registerServiceWorker().catch(() => {});
 syncLoginInstanceField();
-api("/api/me").then(() => {
-  location.href = "/";
+if (new URLSearchParams(location.search).get("mode") === "register") showTab(true);
+api("/api/me").then(async () => {
+  if (await ensureTermsAccepted()) location.href = postAuthenticationDestination();
 }).catch(() => {});

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="referrer" content="no-referrer">
+  <script src="/js/theme.js"></script>
+  <title>Vibration · Fichier partagé</title>
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/css/style.css?v=calendar-focus-v160">
+</head>
+<body class="share-page">
+  <main class="share-shell">
+    <section class="share-invitation" aria-labelledby="share-welcome-title">
+      <div class="brand large"><span>◈</span><div><strong>Vibration</strong><small>Messagerie chiffrée de bout en bout</small></div></div>
+      <h1 id="share-welcome-title">Un fichier vous a été partagé</h1>
+      <p>Vous pouvez le télécharger sans compte. Pour échanger des fichiers et discuter de façon sécurisée, rejoignez la messagerie.</p>
+      <div class="share-auth-actions">
+        <a id="share-login-link" class="button-link outline-link" href="/login.html?return_share=1">Se connecter</a>
+        <a id="share-register-link" class="button-link" href="/login.html?mode=register&amp;return_share=1">S’inscrire</a>
+      </div>
+    </section>
+    <section class="share-file-card" aria-labelledby="share-file-name">
+      <div class="share-file-type" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M6 2h8l4 4v16H6Z"></path><path d="M14 2v5h5M9 12h6M9 16h6"></path></svg>
+      </div>
+      <div class="share-file-details">
+        <small>Fichier partagé</small>
+        <h2 id="share-file-name">Déchiffrement…</h2>
+        <p id="share-file-meta"></p>
+        <p id="share-file-expiry"></p>
+        <p id="share-file-status" role="status" aria-live="polite"></p>
+      </div>
+      <button id="share-download-button" class="share-download-button" type="button" title="Télécharger le fichier" aria-label="Télécharger le fichier" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>
+      </button>
+    </section>
+    <p id="share-error" class="share-page-error" role="alert"></p>
+  </main>
+  <script type="module" src="/js/share.js?v=calendar-focus-v160"></script>
+</body>
+</html>

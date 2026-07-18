@@ -20,10 +20,65 @@ type PushSender interface {
 	NotifyUser(userID int64)
 }
 
+type FederationRouter interface {
+	QueueFile(messageID int64)
+}
+
 type Handler struct {
-	DB   *sql.DB
-	Hub  Broadcaster
-	Push PushSender
+	DB         *sql.DB
+	Hub        Broadcaster
+	Push       PushSender
+	Federation FederationRouter
+}
+
+type listedFile struct {
+	ID            int64  `json:"id"`
+	EncryptedName string `json:"encrypted_name"`
+	EncryptedMIME string `json:"encrypted_mime"`
+	IV            string `json:"iv"`
+	Size          int64  `json:"size"`
+}
+
+type listedFileMessage struct {
+	ID               int64       `json:"id"`
+	ConversationID   int64       `json:"conversation_id"`
+	SenderID         int64       `json:"sender_id"`
+	SenderUsername   string      `json:"sender_username"`
+	SenderAvatar     *string     `json:"sender_avatar"`
+	EncryptedContent *string     `json:"encrypted_content"`
+	IV               string      `json:"iv"`
+	ExpiresAt        *string     `json:"expires_at"`
+	CreatedAt        string      `json:"created_at"`
+	UpdatedAt        *string     `json:"updated_at"`
+	File             *listedFile `json:"file"`
+}
+
+func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	rows, err := h.DB.Query(`SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,
+		m.encrypted_content,m.iv,m.expires_at,m.created_at,m.updated_at,
+		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size
+		FROM files f JOIN messages m ON m.id=f.message_id JOIN users u ON u.id=m.sender_id
+		JOIN conversation_members cm ON cm.conversation_id=m.conversation_id AND cm.user_id=? AND cm.role<>'pending'
+		WHERE m.created_at>=cm.created_at AND (m.expires_at IS NULL OR m.expires_at>?)
+		ORDER BY m.created_at DESC,m.id DESC`, auth.UserID(r), now)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "file lookup failed")
+		return
+	}
+	defer rows.Close()
+	result := make([]listedFileMessage, 0)
+	for rows.Next() {
+		var message listedFileMessage
+		var file listedFile
+		if rows.Scan(&message.ID, &message.ConversationID, &message.SenderID, &message.SenderUsername, &message.SenderAvatar,
+			&message.EncryptedContent, &message.IV, &message.ExpiresAt, &message.CreatedAt, &message.UpdatedAt,
+			&file.ID, &file.EncryptedName, &file.EncryptedMIME, &file.IV, &file.Size) == nil {
+			message.File = &file
+			result = append(result, message)
+		}
+	}
+	httpx.JSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
@@ -42,11 +97,6 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	if !h.isMember(input.ConversationID, userID) || len(input.EncryptedName) < 10 || len(input.EncryptedName) > 4096 ||
 		len(input.EncryptedMIME) < 10 || len(input.EncryptedMIME) > 4096 || len(input.IV) < 8 || len(input.IV) > 128 {
 		httpx.Error(w, http.StatusBadRequest, "invalid encrypted file")
-		return
-	}
-	var federated int
-	if h.DB.QueryRow(`SELECT COUNT(*) FROM federated_conversations WHERE local_conversation_id=?`, input.ConversationID).Scan(&federated) == nil && federated > 0 {
-		httpx.Error(w, http.StatusConflict, "federated files are not supported")
 		return
 	}
 	expiresAt, validExpiry := expiryTime(input.ExpiresInSeconds)
@@ -130,6 +180,9 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		if h.Hub != nil {
 			h.Hub.SendToUser(id, map[string]any{"type": "conversation_updated", "conversation_id": input.ConversationID})
 		}
+	}
+	if h.Federation != nil {
+		h.Federation.QueueFile(messageID)
 	}
 	httpx.JSON(w, http.StatusCreated, message)
 }

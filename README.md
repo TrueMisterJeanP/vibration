@@ -20,6 +20,10 @@ Elle inclut :
 - contacts ;
 - messages chiffrés ;
 - fichiers chiffrés ;
+- sondages chiffrés à réponses multiples avec durée de validité ;
+- évènements chiffrés et calendrier global des discussions ;
+- dossier global des fichiers et aperçus intégrés ;
+- liens temporaires de partage de fichiers, révocables par leur créateur ;
 - appels audio/vidéo WebRTC ;
 - tableau blanc partagé pendant les appels ;
 - notifications Web Push ;
@@ -165,6 +169,11 @@ Placer ensuite Vibration derrière un reverse proxy HTTPS, par exemple Nginx ou 
 - réponses, réactions, messages épinglés et messages éphémères configurables par appui long sur **Envoyer** ;
 - messages vocaux enregistrés dans le navigateur puis envoyés comme fichiers audio chiffrés ;
 - fichiers, nom de fichier et type MIME chiffrés avant envoi, limite 10 Mo ;
+- sondages à choix unique avec plusieurs réponses possibles, date d’expiration et modification réservée au créateur ;
+- évènements avec nom, description, lieu, début et fin, réunis dans un calendrier qui ramène au message d’origine ;
+- dossier global recensant les fichiers de toutes les discussions accessibles à l’utilisateur, avec aperçu des PDF et médias compatibles ;
+- liens publics temporaires et révocables pour télécharger un fichier : la clé reste dans le fragment de l’URL et le serveur conserve uniquement une copie chiffrée ;
+- acceptation obligatoire des conditions d’utilisation après l’inscription ;
 - événements WebSocket : nouveaux messages, reçu, lu, saisie, présence et mise à jour ;
 - PWA, cache applicatif hors ligne, icônes 192/512 et Service Worker ;
 - abonnements Web Push persistés dans SQLite et clés VAPID générées automatiquement ;

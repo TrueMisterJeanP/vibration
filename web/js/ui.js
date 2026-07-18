@@ -63,16 +63,38 @@ export function actionIcon(kind) {
   return svg;
 }
 
+export function materialFileIcon(kind = "file") {
+  const namespace = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(namespace, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.classList.add("file-kind-icon");
+  const paths = {
+    image: ["M3 5h18v14H3Z", "m5 16 4-4 3 3 2-2 4 3", "M16 9h.01"],
+    video: ["M3 5h18v14H3Z", "m10 9 5 3-5 3Z"],
+    audio: ["M9 18V6l10-2v12", "M9 10l10-2"],
+    pdf: ["M6 2h8l4 4v16H6Z", "M14 2v5h5", "M9 16h6M9 12h6"],
+    file: ["M6 2h8l4 4v16H6Z", "M14 2v5h5", "M9 12h6M9 16h6"],
+  }[kind] || ["M6 2h8l4 4v16H6Z", "M14 2v5h5"];
+  for (const data of paths) {
+    const path = document.createElementNS(namespace, "path");
+    path.setAttribute("d", data);
+    svg.append(path);
+  }
+  return svg;
+}
+
 export function renderMessage(
   container, message, clear, mine, onFilePreview, onFileDownload, onMessageEdit, onMessageDelete,
   onMessageReply = () => {}, onMessageReact = () => {}, onMessagePin = () => {}, onReplyFilePreview = () => {},
+  onPollVote = () => {}, onFileShare = () => {},
 ) {
   if (!message.file && isCallHistoryText(clear)) {
     renderCallHistoryMessage(container, message, clear);
     return;
   }
   const row = document.createElement("div");
-  row.className = `message-row ${message.file ? "file-message" : "text-message"} ${mine ? "mine" : "theirs"}`;
+  row.className = `message-row ${message.file ? "file-message" : message.poll ? "poll-message" : message.event ? "event-message" : "text-message"} ${mine ? "mine" : "theirs"}`;
   row.dataset.id = message.id;
   applyMessageVisualOrder(row, message);
   const article = document.createElement("article");
@@ -166,15 +188,100 @@ export function renderMessage(
     title.className = "file-title";
     const name = document.createElement("strong");
     name.textContent = clear.name;
+    const share = document.createElement("button");
+    share.type = "button";
+    share.className = "file-share-button";
+    share.title = "Partager le fichier";
+    share.setAttribute("aria-label", `Partager ${clear.name}`);
+    const shareIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    shareIcon.setAttribute("viewBox", "0 0 24 24");
+    shareIcon.setAttribute("aria-hidden", "true");
+    shareIcon.classList.add("file-share-icon");
+    for (const attributes of [
+      { element: "circle", cx: "18", cy: "5", r: "3" },
+      { element: "circle", cx: "6", cy: "12", r: "3" },
+      { element: "circle", cx: "18", cy: "19", r: "3" },
+    ]) {
+      const node = document.createElementNS("http://www.w3.org/2000/svg", attributes.element);
+      for (const [key, value] of Object.entries(attributes)) if (key !== "element") node.setAttribute(key, value);
+      shareIcon.append(node);
+    }
+    for (const data of ["m8.6 10.7 6.8-4.4", "m8.6 13.3 6.8 4.4"]) {
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", data);
+      shareIcon.append(path);
+    }
+    share.append(shareIcon);
+    share.addEventListener("click", () => onFileShare(message, clear));
     const size = document.createElement("small");
     size.textContent = `${Math.max(1, Math.ceil(message.file.size / 1024))} Ko`;
-    title.append(name, size);
+    const actions = document.createElement("span");
+    actions.className = "file-title-actions";
+    actions.append(share, size);
+    title.append(name, actions);
     const preview = document.createElement("div");
     preview.className = "file-preview";
     preview.textContent = "Chargement de l’aperçu…";
     attachment.append(title, preview);
     article.append(attachment);
     filePreview = preview;
+  } else if (message.event) {
+    const event = document.createElement("section");
+    event.className = "event-card";
+    const name = document.createElement("h4");
+    name.textContent = clear?.name || "Évènement impossible à déchiffrer";
+    event.append(name);
+    if (clear?.description) {
+      const description = document.createElement("p");
+      description.className = "event-description";
+      description.textContent = clear.description;
+      event.append(description);
+    }
+    if (clear?.location) {
+      const location = document.createElement("span");
+      location.className = "event-location";
+      location.textContent = `📍 ${clear.location}`;
+      event.append(location);
+    }
+    const dates = document.createElement("span");
+    dates.className = "event-dates";
+    dates.textContent = eventDateRange(message.event.starts_at, message.event.ends_at);
+    event.append(dates);
+    article.append(event);
+  } else if (message.poll) {
+    const poll = document.createElement("section");
+    poll.className = "poll-card";
+    const question = document.createElement("h4");
+    question.textContent = clear?.question || "Sondage impossible à déchiffrer";
+    const options = document.createElement("div");
+    options.className = "poll-options";
+    const deadline = Date.parse(message.poll.expires_at || "");
+    const closed = Boolean(message.poll.closed) || (Number.isFinite(deadline) && deadline <= Date.now());
+    for (const option of message.poll.options || []) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `poll-option ${option.mine ? "mine" : ""}`;
+      button.disabled = Boolean(message.poll.has_voted) || closed;
+      const percent = message.poll.total_votes ? Math.round((option.vote_count / message.poll.total_votes) * 100) : 0;
+      button.style.setProperty("--poll-percent", `${percent}%`);
+      const label = document.createElement("span");
+      label.textContent = clear?.options?.[option.position] || `Réponse ${option.position + 1}`;
+      const result = document.createElement("span");
+      result.textContent = `${option.vote_count} · ${percent} %`;
+      button.append(label, result);
+      button.onclick = () => onPollVote(message, option.id);
+      options.append(button);
+    }
+    const summary = document.createElement("small");
+    summary.className = "poll-summary";
+    const validity = closed
+      ? " · Terminé"
+      : Number.isFinite(deadline)
+        ? ` · Clôture le ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(deadline))}`
+        : " · Sans limite";
+    summary.textContent = `${message.poll.total_votes} vote${message.poll.total_votes === 1 ? "" : "s"}${message.poll.has_voted ? " · Vous avez voté" : ""}${validity}`;
+    poll.append(question, options, summary);
+    article.append(poll);
   } else {
     const body = document.createElement("p");
     body.textContent = clear;
@@ -238,6 +345,14 @@ export function renderMessage(
   }
   container.append(row);
   if (filePreview) onFilePreview(message, filePreview);
+}
+
+function eventDateRange(startsAt, endsAt) {
+  const formatter = new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" });
+  const start = new Date(startsAt);
+  const end = new Date(endsAt);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return "Date inconnue";
+  return `Du ${formatter.format(start)} au ${formatter.format(end)}`;
 }
 
 function isCallHistoryText(clear) {

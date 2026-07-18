@@ -33,6 +33,11 @@ d’administration et d’un accompagnement d’auto-hébergement.
 - conversations privées et groupes ;
 - messages chiffrés côté navigateur ;
 - fichiers chiffrés ;
+- sondages à durée limitée ;
+- évènements et calendrier global des discussions ;
+- dossier global des fichiers avec aperçus ;
+- liens temporaires et révocables de partage de fichiers ;
+- acceptation des conditions d’utilisation après l’inscription ;
 - appels audio/vidéo via les API WebRTC du navigateur ;
 - partage d’écran lorsque le navigateur le permet ;
 - tableau blanc ;

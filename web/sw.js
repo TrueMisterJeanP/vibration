@@ -1,9 +1,12 @@
-const CACHE = "chat-pwa-go-v140";
+const CACHE = "chat-pwa-go-v160";
 const SHELL = [
-  "/", "/index.html", "/login.html", "/css/style.css",
-  "/js/app.js", "/js/api.js", "/js/crypto.js", "/js/websocket.js", "/js/theme.js",
-  "/js/notifications.js", "/js/device-vault.js", "/js/ui.js", "/js/login.js", "/manifest.json",
-  "/vendor/pdfjs/pdf.min.mjs", "/vendor/pdfjs/pdf.worker.min.mjs",
+  "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=calendar-focus-v160",
+  "/js/app.js?v=calendar-focus-v160", "/js/api.js", "/js/crypto.js", "/js/websocket.js", "/js/theme.js",
+  "/js/notifications.js", "/js/device-vault.js", "/js/ui.js?v=calendar-focus-v160", "/js/share.js?v=calendar-focus-v160", "/js/login.js", "/manifest.json",
+  "/vendor/pdfjs/pdf.compat.mjs?v=calendar-focus-v160",
+  "/vendor/pdfjs/pdf.min.mjs?v=calendar-focus-v160",
+  "/vendor/pdfjs/pdf.worker.compat.mjs?v=calendar-focus-v160",
+  "/vendor/pdfjs/pdf.worker.min.mjs",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/person.svg", "/icons/group.svg",
 ];
 const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js"];

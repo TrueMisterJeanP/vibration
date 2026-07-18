@@ -52,11 +52,11 @@ func main() {
 	}
 	userHandler := &users.Handler{DB: db, Hub: hub}
 	contactHandler := &contacts.Handler{DB: db, Hub: hub}
-	conversationHandler := &conversations.Handler{DB: db, Hub: hub}
 	federationHandler := newEditionFederation(db, hub, pushHandler, cfg.FederationBaseURL)
+	conversationHandler := &conversations.Handler{DB: db, Hub: hub, Federation: federationHandler}
 	messageHandler := &messages.Handler{DB: db, Hub: hub, Push: pushHandler, Federation: federationHandler}
-	fileHandler := &files.Handler{DB: db, Hub: hub, Push: pushHandler}
-	wsHandler := &ws.Handler{DB: db, Hub: hub, ClientOrigins: cfg.ClientOrigins}
+	fileHandler := &files.Handler{DB: db, Hub: hub, Push: pushHandler, Federation: federationHandler}
+	wsHandler := &ws.Handler{DB: db, Hub: hub, ClientOrigins: cfg.ClientOrigins, Federation: federationHandler}
 	webRTCDefaults := editionWebRTCDefaults(settings.WebRTCDefaults{ICEServers: cfg.WebRTCICEServers, PublicFallbackURLs: cfg.WebRTCPublicFallbacks})
 	routeDeps := editionRouteDeps{
 		DB: db, Hub: hub, Auth: authHandler, Federation: federationHandler,
@@ -73,6 +73,9 @@ func main() {
 	mux.HandleFunc("POST /api/register", authHandler.Register)
 	mux.HandleFunc("POST /api/login", authHandler.Login)
 	mux.HandleFunc("POST /api/password/reset", authHandler.ResetPassword)
+	mux.HandleFunc("GET /api/terms", authHandler.Terms)
+	mux.Handle("GET /api/terms/status", authHandler.Middleware(http.HandlerFunc(authHandler.TermsStatus)))
+	mux.Handle("POST /api/terms/accept", authHandler.Middleware(http.HandlerFunc(authHandler.AcceptTerms)))
 	mux.Handle("POST /api/logout", authHandler.Middleware(http.HandlerFunc(authHandler.Logout)))
 	mux.Handle("GET /api/me", authHandler.Middleware(http.HandlerFunc(authHandler.Me)))
 	mux.Handle("PUT /api/me", authHandler.Middleware(http.HandlerFunc(userHandler.UpdateProfile)))
@@ -94,13 +97,25 @@ func main() {
 	mux.Handle("DELETE /api/conversations/{id}/members/{user_id}", authHandler.Middleware(http.HandlerFunc(conversationHandler.RemoveMember)))
 	mux.Handle("GET /api/conversations/{id}/messages", authHandler.Middleware(http.HandlerFunc(messageHandler.List)))
 	mux.Handle("POST /api/conversations/{id}/messages", authHandler.Middleware(http.HandlerFunc(messageHandler.Create)))
+	mux.Handle("POST /api/conversations/{id}/polls", authHandler.Middleware(http.HandlerFunc(messageHandler.CreatePoll)))
+	mux.Handle("POST /api/conversations/{id}/events", authHandler.Middleware(http.HandlerFunc(messageHandler.CreateEvent)))
+	mux.Handle("GET /api/events", authHandler.Middleware(http.HandlerFunc(messageHandler.ListEvents)))
 	mux.Handle("POST /api/messages/{id}/read", authHandler.Middleware(http.HandlerFunc(messageHandler.Read)))
 	mux.Handle("POST /api/messages/{id}/reactions", authHandler.Middleware(http.HandlerFunc(messageHandler.React)))
 	mux.Handle("POST /api/messages/{id}/pin", authHandler.Middleware(http.HandlerFunc(messageHandler.Pin)))
+	mux.Handle("POST /api/messages/{id}/poll/vote", authHandler.Middleware(http.HandlerFunc(messageHandler.VotePoll)))
+	mux.Handle("PUT /api/messages/{id}/poll", authHandler.Middleware(http.HandlerFunc(messageHandler.UpdatePoll)))
+	mux.Handle("PUT /api/messages/{id}/event", authHandler.Middleware(http.HandlerFunc(messageHandler.UpdateEvent)))
 	mux.Handle("PUT /api/messages/{id}", authHandler.Middleware(http.HandlerFunc(messageHandler.Update)))
 	mux.Handle("DELETE /api/messages/{id}", authHandler.Middleware(http.HandlerFunc(messageHandler.Delete)))
 	mux.Handle("POST /api/files", authHandler.Middleware(http.HandlerFunc(fileHandler.Upload)))
+	mux.Handle("GET /api/files", authHandler.Middleware(http.HandlerFunc(fileHandler.List)))
 	mux.Handle("GET /api/files/{id}", authHandler.Middleware(http.HandlerFunc(fileHandler.Download)))
+	mux.Handle("POST /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(fileHandler.CreateShare)))
+	mux.Handle("GET /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(fileHandler.ListShares)))
+	mux.HandleFunc("GET /api/file-shares/{token}", fileHandler.PublicShare)
+	mux.HandleFunc("GET /api/file-shares/{token}/download", fileHandler.DownloadShare)
+	mux.Handle("DELETE /api/file-shares/{id}", authHandler.Middleware(http.HandlerFunc(fileHandler.DeleteShare)))
 	mux.Handle("GET /api/push/vapid-public-key", authHandler.Middleware(http.HandlerFunc(pushHandler.PublicKey)))
 	mux.Handle("GET /api/push/status", authHandler.Middleware(http.HandlerFunc(pushHandler.Status)))
 	mux.Handle("POST /api/push/subscribe", authHandler.Middleware(http.HandlerFunc(pushHandler.Subscribe)))
@@ -130,7 +145,7 @@ func main() {
 	mux.Handle("/", noCacheStatic(http.FileServer(http.Dir(webDir)), webDir))
 
 	policy := newOriginPolicy(cfg.ClientOrigins)
-	handler := securityHeaders(cors(originGuard(mux, policy), policy), cfg.SecureCookies)
+	handler := securityHeaders(cors(originGuard(authHandler.TermsMiddleware(mux), policy), policy), cfg.SecureCookies)
 	server := &http.Server{
 		Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 90 * time.Second,
@@ -250,7 +265,7 @@ func securityHeaders(next http.Handler, strictTransport bool) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Permissions-Policy", "camera=(self), microphone=(self), display-capture=(self), geolocation=()")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-src 'self' blob:; frame-ancestors 'none'; form-action 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self'")
 		if strictTransport {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}

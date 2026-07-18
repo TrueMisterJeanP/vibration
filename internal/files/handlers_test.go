@@ -90,6 +90,28 @@ func TestUploadDownloadFileAndMarkDeliveredWhenRecipientOnline(t *testing.T) {
 	if downloadResponse.EncryptedData != base64.StdEncoding.EncodeToString([]byte("encrypted-file-data")) {
 		t.Fatalf("downloaded encrypted data=%q", downloadResponse.EncryptedData)
 	}
+
+	listed := fileRequest(t, mux, http.MethodGet, "/api/files", nil, recipient)
+	if listed.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", listed.Code, listed.Body.String())
+	}
+	var listedMessages []listedFileMessage
+	if err := json.Unmarshal(listed.Body.Bytes(), &listedMessages); err != nil {
+		t.Fatal(err)
+	}
+	if len(listedMessages) != 1 || listedMessages[0].ID != uploadResponse.ID || listedMessages[0].File == nil ||
+		listedMessages[0].File.ID != uploadResponse.File.ID || listedMessages[0].ConversationID != conversationID {
+		t.Fatalf("listed files=%+v", listedMessages)
+	}
+	outsider := registerFileUser(t, authHandlerForTest(db), "file_outsider")
+	outsiderList := fileRequest(t, mux, http.MethodGet, "/api/files", nil, outsider)
+	if outsiderList.Code != http.StatusOK {
+		t.Fatalf("outsider list status=%d body=%s", outsiderList.Code, outsiderList.Body.String())
+	}
+	listedMessages = nil
+	if err := json.Unmarshal(outsiderList.Body.Bytes(), &listedMessages); err != nil || len(listedMessages) != 0 {
+		t.Fatalf("outsider files=%+v err=%v", listedMessages, err)
+	}
 }
 
 func TestUploadFileNotifiesPushWhenRecipientOffline(t *testing.T) {
@@ -132,6 +154,123 @@ func TestUploadRejectsInvalidEncryptedFileMetadata(t *testing.T) {
 	}
 }
 
+func TestFileShareIsPublicEncryptedCountedAndRevocableByCreator(t *testing.T) {
+	db, conversationID, sender, recipient := setupFileConversation(t)
+	defer db.Close()
+
+	handler := &Handler{DB: db, Hub: &testHub{}}
+	mux := fileMux(authHandlerForTest(db), handler)
+	uploaded := fileRequest(t, mux, http.MethodPost, "/api/files", uploadBody(conversationID), sender)
+	if uploaded.Code != http.StatusCreated {
+		t.Fatalf("upload status=%d body=%s", uploaded.Code, uploaded.Body.String())
+	}
+	var uploadedFile struct {
+		File struct {
+			ID int64 `json:"id"`
+		} `json:"file"`
+	}
+	if err := json.Unmarshal(uploaded.Body.Bytes(), &uploadedFile); err != nil {
+		t.Fatal(err)
+	}
+	shareData := bytes.Repeat([]byte{7}, 20)
+	shareBody := map[string]any{
+		"encrypted_name":     `{"iv":"share-name-iv","data":"share-name-data"}`,
+		"encrypted_mime":     `{"iv":"share-mime-iv","data":"share-mime-data"}`,
+		"encrypted_data":     base64.StdEncoding.EncodeToString(shareData),
+		"iv":                 "share-data-iv",
+		"size":               4,
+		"expires_in_seconds": 3600,
+	}
+	created := fileRequest(t, mux, http.MethodPost, "/api/files/"+formatID(uploadedFile.File.ID)+"/shares", shareBody, recipient)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("share create status=%d body=%s", created.Code, created.Body.String())
+	}
+	var share struct {
+		ID    int64  `json:"id"`
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &share); err != nil || len(share.Token) != 43 {
+		t.Fatalf("share=%+v err=%v", share, err)
+	}
+	var storedToken string
+	if err := db.QueryRow(`SELECT token_hash FROM file_shares WHERE id=?`, share.ID).Scan(&storedToken); err != nil {
+		t.Fatal(err)
+	}
+	if storedToken == share.Token || len(storedToken) != 64 {
+		t.Fatalf("stored token hash=%q", storedToken)
+	}
+	listed := fileRequest(t, mux, http.MethodGet, "/api/files/"+formatID(uploadedFile.File.ID)+"/shares", nil, recipient)
+	if listed.Code != http.StatusOK || !bytes.Contains(listed.Body.Bytes(), []byte(`"active":true`)) {
+		t.Fatalf("share list status=%d body=%s", listed.Code, listed.Body.String())
+	}
+
+	metadata := publicFileRequest(t, mux, "/api/file-shares/"+share.Token)
+	if metadata.Code != http.StatusOK || bytes.Contains(metadata.Body.Bytes(), shareData) {
+		t.Fatalf("metadata status=%d body=%s", metadata.Code, metadata.Body.String())
+	}
+	download := publicFileRequest(t, mux, "/api/file-shares/"+share.Token+"/download")
+	if download.Code != http.StatusOK {
+		t.Fatalf("download status=%d body=%s", download.Code, download.Body.String())
+	}
+	var downloadPayload struct {
+		EncryptedData string `json:"encrypted_data"`
+	}
+	if err := json.Unmarshal(download.Body.Bytes(), &downloadPayload); err != nil ||
+		downloadPayload.EncryptedData != base64.StdEncoding.EncodeToString(shareData) {
+		t.Fatalf("download payload=%+v err=%v", downloadPayload, err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT download_count FROM file_shares WHERE id=?`, share.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("download count=%d err=%v", count, err)
+	}
+
+	denied := fileRequest(t, mux, http.MethodDelete, "/api/file-shares/"+formatID(share.ID), nil, sender)
+	if denied.Code != http.StatusNotFound {
+		t.Fatalf("non-creator revoke status=%d body=%s", denied.Code, denied.Body.String())
+	}
+	revoked := fileRequest(t, mux, http.MethodDelete, "/api/file-shares/"+formatID(share.ID), nil, recipient)
+	if revoked.Code != http.StatusOK {
+		t.Fatalf("creator revoke status=%d body=%s", revoked.Code, revoked.Body.String())
+	}
+	unavailable := publicFileRequest(t, mux, "/api/file-shares/"+share.Token)
+	if unavailable.Code != http.StatusGone {
+		t.Fatalf("revoked metadata status=%d body=%s", unavailable.Code, unavailable.Body.String())
+	}
+}
+
+func TestFileShareRequiresConversationMembershipAndValidExpiration(t *testing.T) {
+	db, conversationID, sender, _ := setupFileConversation(t)
+	defer db.Close()
+
+	handler := &Handler{DB: db, Hub: &testHub{}}
+	mux := fileMux(authHandlerForTest(db), handler)
+	uploaded := fileRequest(t, mux, http.MethodPost, "/api/files", uploadBody(conversationID), sender)
+	var uploadedFile struct {
+		File struct {
+			ID int64 `json:"id"`
+		} `json:"file"`
+	}
+	_ = json.Unmarshal(uploaded.Body.Bytes(), &uploadedFile)
+	body := map[string]any{
+		"encrypted_name":     `{"iv":"share-name-iv","data":"share-name-data"}`,
+		"encrypted_mime":     `{"iv":"share-mime-iv","data":"share-mime-data"}`,
+		"encrypted_data":     base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 20)),
+		"iv":                 "share-data-iv",
+		"size":               4,
+		"expires_in_seconds": 3600,
+	}
+	outsider := registerFileUser(t, authHandlerForTest(db), "share_outsider")
+	denied := fileRequest(t, mux, http.MethodPost, "/api/files/"+formatID(uploadedFile.File.ID)+"/shares", body, outsider)
+	if denied.Code != http.StatusNotFound {
+		t.Fatalf("outsider create status=%d body=%s", denied.Code, denied.Body.String())
+	}
+	body["expires_in_seconds"] = 0
+	invalid := fileRequest(t, mux, http.MethodPost, "/api/files/"+formatID(uploadedFile.File.ID)+"/shares", body, sender)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid expiry status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+}
+
 func setupFileConversation(t *testing.T) (*sql.DB, int64, *http.Cookie, *http.Cookie) {
 	t.Helper()
 	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
@@ -164,8 +303,22 @@ func authHandlerForTest(db *sql.DB) *auth.Handler {
 func fileMux(authHandler *auth.Handler, handler *Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/files", authHandler.Middleware(http.HandlerFunc(handler.Upload)))
+	mux.Handle("GET /api/files", authHandler.Middleware(http.HandlerFunc(handler.List)))
 	mux.Handle("GET /api/files/{id}", authHandler.Middleware(http.HandlerFunc(handler.Download)))
+	mux.Handle("POST /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(handler.CreateShare)))
+	mux.Handle("GET /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(handler.ListShares)))
+	mux.HandleFunc("GET /api/file-shares/{token}", handler.PublicShare)
+	mux.HandleFunc("GET /api/file-shares/{token}/download", handler.DownloadShare)
+	mux.Handle("DELETE /api/file-shares/{id}", authHandler.Middleware(http.HandlerFunc(handler.DeleteShare)))
 	return mux
+}
+
+func publicFileRequest(t *testing.T, mux http.Handler, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, path, nil)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	return response
 }
 
 func uploadBody(conversationID int64) map[string]any {

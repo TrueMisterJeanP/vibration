@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0f766e">
-  <meta name="vibration-build" content="android-visible-push-v138">
+  <meta name="vibration-build" content="calendar-focus-v160">
   <script src="/js/theme.js"></script>
   <title>Vibration</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/style.css?v=calendar-focus-v160">
 </head>
 <body>
   <main id="app-shell" class="sidebar-open" hidden>
@@ -40,7 +40,9 @@
           title="Afficher les contacts et groupes" aria-label="Afficher les contacts, groupes et conversations"
           aria-controls="sidebar" aria-expanded="false"><img class="header-avatar" alt="" hidden><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4.5 21a7.5 7.5 0 0 1 15 0"></path></svg><span class="menu-mark" aria-hidden="true">☰</span></button>
         <div><strong id="chat-title">Sélectionnez une conversation</strong><small id="chat-description"></small><small id="typing-label"></small></div>
-        <div class="call-buttons" aria-label="Appels">
+        <div class="call-buttons" aria-label="Fichiers, calendrier et appels">
+          <button id="global-files-button" class="icon-button" type="button" title="Afficher tous les fichiers" aria-label="Afficher les fichiers de toutes les discussions"><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h7l2 2h9v11H3Z"></path><path d="M3 6V4h7l2 2"></path></svg></button>
+          <button id="calendar-button" class="icon-button" type="button" title="Afficher le calendrier" aria-label="Afficher tous les évènements"><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v16H3Z"></path><path d="M7 3v4M17 3v4M3 10h18"></path></svg></button>
           <button id="audio-call-button" class="icon-button" type="button" title="Appel audio" aria-label="Appel audio" disabled><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.11 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.95.34 1.88.64 2.77a2 2 0 0 1-.45 2.11L8.03 9.87a16 16 0 0 0 6.1 6.1l1.27-1.27a2 2 0 0 1 2.11-.45c.89.3 1.82.52 2.77.64A2 2 0 0 1 22 16.92Z"></path></svg></button>
           <button id="video-call-button" class="icon-button" type="button" title="Appel vidéo" aria-label="Appel vidéo" disabled><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 10.5V6.8A2.8 2.8 0 0 0 12.2 4H5.8A2.8 2.8 0 0 0 3 6.8v10.4A2.8 2.8 0 0 0 5.8 20h6.4a2.8 2.8 0 0 0 2.8-2.8v-3.7l4.15 3.05A1.15 1.15 0 0 0 21 15.62V8.38a1.15 1.15 0 0 0-1.85-.93L15 10.5Z"></path></svg></button>
         </div>
@@ -100,11 +102,15 @@
           <button id="voice-draft-clear" type="button" aria-label="Supprimer le message vocal">×</button>
         </div>
         <div class="composer-tools">
-          <label class="file-picker" title="Envoyer un fichier" aria-label="Envoyer un fichier">📎<input id="file-input" type="file" hidden></label>
+          <label class="file-picker" title="Envoyer un fichier" aria-label="Envoyer un fichier"><svg class="composer-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m20.5 11.5-8.9 8.9a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.9-2.8l8.5-8.5"></path></svg><input id="file-input" type="file" hidden></label>
           <button id="emoji-button" class="composer-tool-button" type="button" title="Ajouter un emoji"
-            aria-label="Ajouter un emoji" aria-expanded="false" aria-controls="emoji-picker" disabled>😊</button>
+            aria-label="Ajouter un emoji" aria-expanded="false" aria-controls="emoji-picker" disabled><svg class="composer-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><circle cx="9" cy="9" r="1" class="icon-dot"></circle><circle cx="15" cy="9" r="1" class="icon-dot"></circle></svg></button>
           <button id="voice-button" class="composer-tool-button" type="button" title="Enregistrer un message vocal"
-            aria-label="Enregistrer un message vocal" disabled>🎙</button>
+            aria-label="Enregistrer un message vocal" disabled><svg class="composer-icon voice-mic-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3M8 22h8"></path></svg><svg class="composer-icon voice-stop-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1"></rect></svg></button>
+          <button id="poll-button" class="composer-tool-button" type="button" title="Créer un sondage"
+            aria-label="Créer un sondage" disabled><svg class="composer-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10h4v10M10 20V4h4v16M16 20v-7h4v7M3 20h18"></path></svg></button>
+          <button id="event-button" class="composer-tool-button" type="button" title="Créer un évènement"
+            aria-label="Créer un évènement" disabled><svg class="composer-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v16H3ZM7 3v4M17 3v4M3 10h18"></path><path d="m8 15 2 2 5-5"></path></svg></button>
           <div id="emoji-picker" role="dialog" aria-label="Choisir un emoji" hidden></div>
         </div>
         <textarea id="message-input" rows="1" maxlength="200000" placeholder="Message chiffré…" disabled></textarea>
@@ -133,6 +139,114 @@
       <div class="dialog-actions">
         <button id="expiration-cancel" class="outline" type="button">Annuler</button>
         <button id="expiration-apply" type="submit">Appliquer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="event-dialog">
+    <form id="event-form">
+      <button id="event-close" class="dialog-close" type="button" aria-label="Fermer">×</button>
+      <h3 id="event-dialog-title">Nouvel évènement</h3>
+      <label>Nom<input id="event-name" required maxlength="160" autocomplete="off"></label>
+      <label>Description<textarea id="event-description" rows="3" maxlength="2000"></textarea></label>
+      <label>Lieu<input id="event-location" maxlength="280" autocomplete="off"></label>
+      <div class="event-date-fields">
+        <label>Début<input id="event-start" type="datetime-local" required></label>
+        <label>Fin<input id="event-end" type="datetime-local" required></label>
+      </div>
+      <div class="dialog-actions">
+        <button id="event-cancel" class="outline" type="button">Annuler</button>
+        <button id="event-submit" type="submit">Publier</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="global-files-dialog" class="global-files-dialog">
+    <section>
+      <button id="global-files-close" class="dialog-close" type="button" aria-label="Fermer">×</button>
+      <h3>Fichiers</h3>
+      <p id="global-files-status" class="global-files-status" aria-live="polite">Fichiers présents dans toutes vos discussions.</p>
+      <div id="global-files-list" class="global-files-list"></div>
+    </section>
+  </dialog>
+
+  <dialog id="file-share-dialog" class="file-share-dialog">
+    <form id="file-share-form">
+      <button id="file-share-close" class="dialog-close" type="button" aria-label="Fermer">×</button>
+      <h3>Partager le fichier</h3>
+      <p id="file-share-name" class="file-share-name"></p>
+      <label>Durée de validité
+        <select id="file-share-expiration">
+          <option value="3600">1 heure</option>
+          <option value="86400">1 jour</option>
+          <option value="604800" selected>7 jours</option>
+          <option value="2592000">30 jours</option>
+        </select>
+      </label>
+      <p class="file-share-help">Le fichier est rechiffré avec une clé propre à ce lien. La conversation et ses autres contenus restent inaccessibles.</p>
+      <p id="file-share-error" class="error" role="alert"></p>
+      <div id="file-share-result" class="file-share-result" hidden>
+        <label>Lien sécurisé<input id="file-share-url" readonly spellcheck="false"></label>
+        <small id="file-share-validity"></small>
+        <div class="dialog-actions">
+          <button id="file-share-revoke" class="outline danger-text" type="button">Désactiver le lien</button>
+          <button id="file-share-copy" type="button">Copier le lien</button>
+        </div>
+      </div>
+      <section id="file-share-existing" class="file-share-existing" hidden>
+        <h4>Vos liens précédents</h4>
+        <div id="file-share-existing-list"></div>
+      </section>
+      <div id="file-share-create-actions" class="dialog-actions">
+        <button id="file-share-cancel" class="outline" type="button">Annuler</button>
+        <button id="file-share-create" type="submit">Créer le lien</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="calendar-dialog" class="calendar-dialog">
+    <section>
+      <button id="calendar-close" class="dialog-close" type="button" aria-label="Fermer">×</button>
+      <h3>Calendrier</h3>
+      <div class="calendar-toolbar">
+        <button id="calendar-previous" class="outline" type="button" aria-label="Mois précédent">‹</button>
+        <strong id="calendar-month-label" aria-live="polite"></strong>
+        <button id="calendar-today" class="outline" type="button">Aujourd’hui</button>
+        <button id="calendar-next" class="outline" type="button" aria-label="Mois suivant">›</button>
+      </div>
+      <p id="calendar-status" class="calendar-help" aria-live="polite">Tous les évènements de vos conversations.</p>
+      <div class="calendar-scroll">
+        <div class="calendar-weekdays" aria-hidden="true">
+          <span>Lun</span><span>Mar</span><span>Mer</span><span>Jeu</span><span>Ven</span><span>Sam</span><span>Dim</span>
+        </div>
+        <div id="calendar-grid" class="calendar-grid" role="grid" aria-label="Calendrier mensuel"></div>
+      </div>
+    </section>
+  </dialog>
+
+  <dialog id="poll-dialog">
+    <form id="poll-form">
+      <button id="poll-close" class="dialog-close" type="button" aria-label="Fermer">×</button>
+      <h3 id="poll-dialog-title">Nouveau sondage</h3>
+      <label>Question<input id="poll-question" required maxlength="280" autocomplete="off"></label>
+      <fieldset class="poll-editor-options">
+        <legend>Réponses</legend>
+        <div id="poll-option-inputs"></div>
+        <button id="poll-add-option" class="outline" type="button">+ Ajouter une réponse</button>
+      </fieldset>
+      <label>Durée de validité
+        <select id="poll-expiration">
+          <option value="300">5 minutes</option>
+          <option value="3600">1 heure</option>
+          <option value="86400" selected>1 jour</option>
+          <option value="604800">7 jours</option>
+          <option value="0">Sans limite</option>
+        </select>
+      </label>
+      <p class="poll-editor-help">De 2 à 10 réponses. Chaque participant ne peut voter qu’une fois.</p>
+      <div class="dialog-actions">
+        <button id="poll-cancel" class="outline" type="button">Annuler</button>
+        <button id="poll-submit" type="submit">Publier</button>
       </div>
     </form>
   </dialog>
@@ -242,6 +356,6 @@
     </form>
   </dialog>
   <div id="toasts" aria-live="polite"></div>
-  <script type="module" src="/js/app.js"></script>
+  <script type="module" src="/js/app.js?v=calendar-focus-v160"></script>
 </body>
 </html>

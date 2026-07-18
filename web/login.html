@@ -62,6 +62,19 @@
       <button type="submit">J’ai noté le code</button>
     </form>
   </dialog>
+  <dialog id="terms-dialog" class="terms-dialog">
+    <form id="terms-acceptance-form">
+      <h3>Conditions d’utilisation</h3>
+      <small id="terms-version-label"></small>
+      <div id="terms-content" class="terms-content" tabindex="0"></div>
+      <label class="checkbox-label"><input id="terms-accepted" type="checkbox" required> J’ai lu et j’accepte les conditions d’utilisation.</label>
+      <p id="terms-error" class="error" role="alert"></p>
+      <div class="dialog-actions">
+        <button id="terms-refuse" class="outline" type="button">Refuser et se déconnecter</button>
+        <button type="submit">Accepter et continuer</button>
+      </div>
+    </form>
+  </dialog>
   <script type="module" src="/js/login.js"></script>
 </body>
 </html>

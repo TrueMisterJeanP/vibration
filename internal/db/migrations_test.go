@@ -17,7 +17,7 @@ func TestOpenCreatesRequiredTables(t *testing.T) {
 
 	required := []string{
 		"users", "sessions", "contacts", "conversations", "conversation_members",
-		"messages", "message_reactions", "message_receipts", "files", "push_subscriptions", "admin_actions", "app_settings",
+		"messages", "message_events", "message_reactions", "poll_options", "poll_votes", "message_receipts", "files", "push_subscriptions", "admin_actions", "app_settings", "user_terms_acceptances",
 		"federated_instances", "federated_conversations", "federated_message_map", "federation_outbox",
 	}
 	for _, table := range required {
@@ -187,7 +187,7 @@ func TestMigrateAddsMessageFeatureColumnsToLegacyMessages(t *testing.T) {
 	}
 	defer database.Close()
 
-	for _, column := range []string{"expires_at", "pinned_by", "pinned_at"} {
+	for _, column := range []string{"expires_at", "poll_expires_at", "pinned_by", "pinned_at"} {
 		var count int
 		if err := database.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name=?`, column).Scan(&count); err != nil {
 			t.Fatal(err)

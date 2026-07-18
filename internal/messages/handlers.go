@@ -21,6 +21,25 @@ type PushSender interface {
 
 type FederationRouter interface {
 	QueueMessage(message Message)
+	QueueMessageUpdate(messageID int64, encryptedContent, iv, updatedAt string)
+	QueueMessageDelete(conversationID, messageID, userID int64)
+	QueueReaction(messageID, userID int64, emoji string, active bool, createdAt string)
+	QueuePin(messageID, userID int64, pinned bool, updatedAt string)
+	QueueReceipt(messageID, userID int64, status, updatedAt string)
+	QueueFile(messageID int64)
+	RelayRealtime(conversationID, senderID int64, event map[string]any) bool
+	RelayPresence(userID int64, online bool)
+	QueueGroupCreate(conversationID int64)
+	QueueGroupAccept(conversationID, userID int64)
+	QueueGroupUpdate(conversationID int64)
+	QueueGroupDelete(conversationID, userID int64)
+	QueueGroupMemberAdd(conversationID, memberID int64)
+	QueueGroupMemberRemove(conversationID, memberID int64)
+	QueuePollUpdate(messageID int64, encryptedContent, iv string, optionCount int, expiresAt *string)
+	QueuePollDelete(conversationID, messageID, userID int64)
+	QueuePollVote(messageID, userID int64, optionPosition int, votedAt string)
+	QueueEventUpdate(messageID int64, encryptedContent, iv, startsAt, endsAt string)
+	QueueEventDelete(conversationID, messageID, userID int64)
 }
 
 type Handler struct {
@@ -46,6 +65,8 @@ type Message struct {
 	CreatedAt        string     `json:"created_at"`
 	UpdatedAt        *string    `json:"updated_at"`
 	File             *File      `json:"file,omitempty"`
+	Poll             *Poll      `json:"poll,omitempty"`
+	Event            *Event     `json:"event,omitempty"`
 	Reactions        []Reaction `json:"reactions,omitempty"`
 	Status           string     `json:"status"`
 }
@@ -54,6 +75,26 @@ type Reaction struct {
 	Emoji string `json:"emoji"`
 	Count int    `json:"count"`
 	Mine  bool   `json:"mine"`
+}
+
+type Poll struct {
+	Options    []PollOption `json:"options"`
+	TotalVotes int          `json:"total_votes"`
+	HasVoted   bool         `json:"has_voted"`
+	ExpiresAt  *string      `json:"expires_at"`
+	Closed     bool         `json:"closed"`
+}
+
+type PollOption struct {
+	ID        int64 `json:"id"`
+	Position  int   `json:"position"`
+	VoteCount int   `json:"vote_count"`
+	Mine      bool  `json:"mine"`
+}
+
+type Event struct {
+	StartsAt string `json:"starts_at"`
+	EndsAt   string `json:"ends_at"`
 }
 
 type File struct {
@@ -78,9 +119,18 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	if before <= 0 {
 		before = 1<<63 - 1
 	}
+	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	comparison := "<"
+	boundary := before
+	order := "DESC"
+	if after > 0 {
+		comparison = ">"
+		boundary = after
+		order = "ASC"
+	}
 	h.deleteExpired(conversationID)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	rows, err := h.DB.Query(`SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,m.encrypted_content,m.iv,m.reply_to,m.expires_at,m.pinned_by,m.pinned_at,m.created_at,m.updated_at,
+	query := `SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,m.encrypted_content,m.iv,m.reply_to,m.expires_at,m.pinned_by,m.pinned_at,m.created_at,m.updated_at,
 		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,
 		CASE
 			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status<>'read') THEN 'read'
@@ -89,8 +139,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		END
 		FROM messages m JOIN users u ON u.id=m.sender_id LEFT JOIN files f ON f.message_id=m.id
 		JOIN conversation_members cm ON cm.conversation_id=m.conversation_id AND cm.user_id=? AND cm.role<>'pending'
-		WHERE m.conversation_id=? AND m.id<? AND m.created_at>=cm.created_at AND (m.expires_at IS NULL OR m.expires_at>?) ORDER BY m.id DESC LIMIT ?`,
-		auth.UserID(r), conversationID, before, now, limit)
+		WHERE m.conversation_id=? AND m.id` + comparison + `? AND m.created_at>=cm.created_at AND (m.expires_at IS NULL OR m.expires_at>?) ORDER BY m.id ` + order + ` LIMIT ?`
+	rows, err := h.DB.Query(query, auth.UserID(r), conversationID, boundary, now, limit)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "message lookup failed")
 		return
@@ -119,8 +169,12 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.attachReactions(result, auth.UserID(r))
-	for left, right := 0, len(result)-1; left < right; left, right = left+1, right-1 {
-		result[left], result[right] = result[right], result[left]
+	h.attachPolls(result, auth.UserID(r))
+	h.attachEvents(result)
+	if after <= 0 {
+		for left, right := 0, len(result)-1; left < right; left, right = left+1, right-1 {
+			result[left], result[right] = result[right], result[left]
+		}
 	}
 	httpx.JSON(w, http.StatusOK, result)
 }
@@ -150,7 +204,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid message expiration")
 		return
 	}
-	message, err := h.insert(conversationID, userID, &input.EncryptedContent, input.IV, input.ReplyTo, expiresAt)
+	message, err := h.insert(conversationID, userID, &input.EncryptedContent, input.IV, input.ReplyTo, expiresAt, nil, 0, nil)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "message creation failed")
 		return
@@ -162,15 +216,15 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, message)
 }
 
-func (h *Handler) insert(conversationID, userID int64, content *string, iv string, replyTo *int64, expiresAt *string) (Message, error) {
+func (h *Handler) insert(conversationID, userID int64, content *string, iv string, replyTo *int64, expiresAt, pollExpiresAt *string, pollOptionCount int, event *Event) (Message, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := h.DB.Begin()
 	if err != nil {
 		return Message{}, err
 	}
 	defer tx.Rollback()
-	result, err := tx.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,reply_to,expires_at,created_at) VALUES(?,?,?,?,?,?,?)`,
-		conversationID, userID, content, iv, replyTo, expiresAt, now)
+	result, err := tx.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,reply_to,expires_at,poll_expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)`,
+		conversationID, userID, content, iv, replyTo, expiresAt, pollExpiresAt, now)
 	if err != nil {
 		return Message{}, err
 	}
@@ -196,6 +250,33 @@ func (h *Handler) insert(conversationID, userID int64, content *string, iv strin
 			return Message{}, err
 		}
 	}
+	poll := (*Poll)(nil)
+	if pollOptionCount > 0 {
+		poll = &Poll{Options: make([]PollOption, 0, pollOptionCount), ExpiresAt: pollExpiresAt}
+		for position := 0; position < pollOptionCount; position++ {
+			if _, err := tx.Exec(`INSERT INTO poll_options(message_id,position) VALUES(?,?)`, id, position); err != nil {
+				return Message{}, err
+			}
+		}
+		optionRows, err := tx.Query(`SELECT id,position FROM poll_options WHERE message_id=? ORDER BY position`, id)
+		if err != nil {
+			return Message{}, err
+		}
+		for optionRows.Next() {
+			var option PollOption
+			if optionRows.Scan(&option.ID, &option.Position) == nil {
+				poll.Options = append(poll.Options, option)
+			}
+		}
+		if err := optionRows.Close(); err != nil {
+			return Message{}, err
+		}
+	}
+	if event != nil {
+		if _, err := tx.Exec(`INSERT INTO message_events(message_id,starts_at,ends_at) VALUES(?,?,?)`, id, event.StartsAt, event.EndsAt); err != nil {
+			return Message{}, err
+		}
+	}
 	var username string
 	var avatar *string
 	if err := tx.QueryRow(`SELECT COALESCE(remote_username,username),avatar FROM users WHERE id=?`, userID).Scan(&username, &avatar); err != nil {
@@ -205,7 +286,7 @@ func (h *Handler) insert(conversationID, userID int64, content *string, iv strin
 		return Message{}, err
 	}
 	return Message{ID: id, ConversationID: conversationID, SenderID: userID, SenderUsername: username,
-		SenderAvatar: avatar, EncryptedContent: content, IV: iv, ReplyTo: replyTo, ExpiresAt: expiresAt, CreatedAt: now, Status: "sent"}, nil
+		SenderAvatar: avatar, EncryptedContent: content, IV: iv, ReplyTo: replyTo, ExpiresAt: expiresAt, CreatedAt: now, Poll: poll, Event: event, Status: "sent"}, nil
 }
 
 func (h *Handler) Read(w http.ResponseWriter, r *http.Request) {
@@ -234,6 +315,9 @@ func (h *Handler) Read(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.Hub != nil {
 		h.Hub.SendToUser(senderID, map[string]any{"type": "message_read", "message_id": messageID, "conversation_id": conversationID, "user_id": userID})
+	}
+	if h.Federation != nil {
+		h.Federation.QueueReceipt(messageID, userID, "read", now)
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -264,13 +348,12 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "message not found")
 		return
 	}
-	if h.isFederatedConversation(conversationID) {
-		httpx.Error(w, http.StatusConflict, "federated message updates are not supported")
-		return
-	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := h.DB.Exec(`UPDATE messages SET encrypted_content=?,iv=?,updated_at=?
-		WHERE id=? AND sender_id=? AND NOT EXISTS(SELECT 1 FROM files WHERE message_id=messages.id)`,
+		WHERE id=? AND sender_id=?
+		AND NOT EXISTS(SELECT 1 FROM files WHERE message_id=messages.id)
+		AND NOT EXISTS(SELECT 1 FROM poll_options WHERE message_id=messages.id)
+		AND NOT EXISTS(SELECT 1 FROM message_events WHERE message_id=messages.id)`,
 		input.EncryptedContent, input.IV, now, messageID, auth.UserID(r))
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "message update failed")
@@ -284,6 +367,9 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	h.broadcastEvent(conversationID, map[string]any{
 		"type": "conversation_updated", "conversation_id": conversationID, "updated_message_id": messageID,
 	})
+	if h.Federation != nil {
+		h.Federation.QueueMessageUpdate(messageID, input.EncryptedContent, input.IV, now)
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "updated_at": now})
 }
 
@@ -294,17 +380,17 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var conversationID int64
-	err = h.DB.QueryRow(`SELECT conversation_id FROM messages WHERE id=? AND sender_id=?`, messageID, auth.UserID(r)).Scan(&conversationID)
+	var isPoll, isEvent bool
+	err = h.DB.QueryRow(`SELECT conversation_id,
+		EXISTS(SELECT 1 FROM poll_options WHERE message_id=messages.id),
+		EXISTS(SELECT 1 FROM message_events WHERE message_id=messages.id)
+		FROM messages WHERE id=? AND sender_id=?`, messageID, auth.UserID(r)).Scan(&conversationID, &isPoll, &isEvent)
 	if err != nil {
 		httpx.Error(w, http.StatusNotFound, "message not found")
 		return
 	}
 	if !h.isMember(conversationID, auth.UserID(r)) {
 		httpx.Error(w, http.StatusNotFound, "message not found")
-		return
-	}
-	if h.isFederatedConversation(conversationID) {
-		httpx.Error(w, http.StatusConflict, "federated message updates are not supported")
 		return
 	}
 	tx, err := h.DB.Begin()
@@ -334,6 +420,15 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	h.broadcastEvent(conversationID, map[string]any{
 		"type": "message_deleted", "conversation_id": conversationID, "message_id": messageID,
 	})
+	if isPoll && h.Federation != nil {
+		h.Federation.QueuePollDelete(conversationID, messageID, auth.UserID(r))
+	}
+	if isEvent && h.Federation != nil {
+		h.Federation.QueueEventDelete(conversationID, messageID, auth.UserID(r))
+	}
+	if !isPoll && !isEvent && h.Federation != nil {
+		h.Federation.QueueMessageDelete(conversationID, messageID, auth.UserID(r))
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -379,6 +474,9 @@ func (h *Handler) React(w http.ResponseWriter, r *http.Request) {
 	h.broadcastEvent(conversationID, map[string]any{
 		"type": "conversation_updated", "conversation_id": conversationID, "reaction_message_id": messageID,
 	})
+	if h.Federation != nil {
+		h.Federation.QueueReaction(messageID, userID, emoji, existing == 0, now)
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "active": existing == 0})
 }
 
@@ -414,6 +512,9 @@ func (h *Handler) Pin(w http.ResponseWriter, r *http.Request) {
 	h.broadcastEvent(conversationID, map[string]any{
 		"type": "conversation_updated", "conversation_id": conversationID, "pinned_message_id": messageID,
 	})
+	if h.Federation != nil {
+		h.Federation.QueuePin(messageID, userID, input.Pinned, now)
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -460,10 +561,46 @@ func (h *Handler) attachReactions(messages []Message, userID int64) {
 	}
 }
 
-func (h *Handler) isFederatedConversation(conversationID int64) bool {
-	var count int
-	return h.DB.QueryRow(`SELECT COUNT(*) FROM federated_conversations WHERE local_conversation_id=?`, conversationID).
-		Scan(&count) == nil && count > 0
+func (h *Handler) attachPolls(messages []Message, userID int64) {
+	for index := range messages {
+		rows, err := h.DB.Query(`SELECT po.id,po.position,COUNT(pv.id),
+			COALESCE(SUM(CASE WHEN pv.user_id=? THEN 1 ELSE 0 END),0),m.poll_expires_at
+			FROM poll_options po JOIN messages m ON m.id=po.message_id LEFT JOIN poll_votes pv ON pv.option_id=po.id
+			WHERE po.message_id=? GROUP BY po.id,po.position,m.poll_expires_at ORDER BY po.position`, userID, messages[index].ID)
+		if err != nil {
+			continue
+		}
+		poll := &Poll{Options: []PollOption{}}
+		for rows.Next() {
+			var option PollOption
+			var mineCount int
+			var expiresAt sql.NullString
+			if rows.Scan(&option.ID, &option.Position, &option.VoteCount, &mineCount, &expiresAt) == nil {
+				if expiresAt.Valid {
+					poll.ExpiresAt = &expiresAt.String
+					poll.Closed = pollExpired(expiresAt.String, time.Now().UTC())
+				}
+				option.Mine = mineCount > 0
+				poll.HasVoted = poll.HasVoted || option.Mine
+				poll.TotalVotes += option.VoteCount
+				poll.Options = append(poll.Options, option)
+			}
+		}
+		rows.Close()
+		if len(poll.Options) > 0 {
+			messages[index].Poll = poll
+		}
+	}
+}
+
+func (h *Handler) attachEvents(messages []Message) {
+	for index := range messages {
+		var event Event
+		if h.DB.QueryRow(`SELECT starts_at,ends_at FROM message_events WHERE message_id=?`, messages[index].ID).
+			Scan(&event.StartsAt, &event.EndsAt) == nil {
+			messages[index].Event = &event
+		}
+	}
 }
 
 func (h *Handler) broadcast(message Message) {

@@ -6,7 +6,9 @@ import {
   encryptBytes,
   encryptEnvelope,
   encryptText,
+  exportShareKey,
   generateGroupKey,
+  generateShareKey,
   privateConversationKey,
   unlockIdentity,
   unwrapGroupKey,
@@ -31,14 +33,14 @@ import {
   testNotification,
 } from "./notifications.js";
 import { ChatSocket } from "./websocket.js";
-import { actionIcon, bindSwipeActions, frenchErrorMessage, renderMessage, setBusy, toast } from "./ui.js";
+import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=calendar-focus-v160";
 
 const CALL_INVITE_TIMEOUT_MS = 45000;
 const CALL_SIGNAL_LOSS_GRACE_MS = 15000;
 const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
 const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "android-visible-push-v138";
+const APP_BUILD = "calendar-focus-v160";
 
 window.VIBRATION_BUILD = APP_BUILD;
 console.info(`Vibration build ${APP_BUILD}`);
@@ -72,6 +74,12 @@ const state = {
   recorder: null,
   recordingChunks: [],
   recordingStopTimer: null,
+  editingPoll: null,
+  editingEvent: null,
+  calendarItems: [],
+  calendarMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+  pendingFileShare: null,
+  activeFileShareID: null,
 };
 
 let profileAvatar = null;
@@ -90,6 +98,8 @@ const elements = {
   threadTyping: ensureThreadTypingLabel(),
   audioCallButton: document.querySelector("#audio-call-button"),
   videoCallButton: document.querySelector("#video-call-button"),
+  calendarButton: document.querySelector("#calendar-button"),
+  globalFilesButton: document.querySelector("#global-files-button"),
   callBanner: document.querySelector("#call-banner"),
   callBannerLabel: document.querySelector("#call-banner-label"),
   callTurnIndicator: document.querySelector("#call-turn-indicator"),
@@ -123,6 +133,8 @@ const elements = {
   send: document.querySelector("#send-button"),
   file: document.querySelector("#file-input"),
   voiceButton: document.querySelector("#voice-button"),
+  pollButton: document.querySelector("#poll-button"),
+  eventButton: document.querySelector("#event-button"),
   expirationOptions: document.querySelector("#expiration-options"),
   voiceDraft: document.querySelector("#voice-draft"),
   voiceDraftAudio: document.querySelector("#voice-draft-audio"),
@@ -131,6 +143,40 @@ const elements = {
   replyClear: document.querySelector("#reply-clear"),
   emojiButton: document.querySelector("#emoji-button"),
   emojiPicker: document.querySelector("#emoji-picker"),
+  pollDialog: document.querySelector("#poll-dialog"),
+  pollQuestion: document.querySelector("#poll-question"),
+  pollOptionInputs: document.querySelector("#poll-option-inputs"),
+  pollAddOption: document.querySelector("#poll-add-option"),
+  pollExpiration: document.querySelector("#poll-expiration"),
+  pollSubmit: document.querySelector("#poll-submit"),
+  eventDialog: document.querySelector("#event-dialog"),
+  eventName: document.querySelector("#event-name"),
+  eventDescription: document.querySelector("#event-description"),
+  eventLocation: document.querySelector("#event-location"),
+  eventStart: document.querySelector("#event-start"),
+  eventEnd: document.querySelector("#event-end"),
+  eventSubmit: document.querySelector("#event-submit"),
+  calendarDialog: document.querySelector("#calendar-dialog"),
+  calendarGrid: document.querySelector("#calendar-grid"),
+  calendarMonthLabel: document.querySelector("#calendar-month-label"),
+  calendarStatus: document.querySelector("#calendar-status"),
+  globalFilesDialog: document.querySelector("#global-files-dialog"),
+  globalFilesStatus: document.querySelector("#global-files-status"),
+  globalFilesList: document.querySelector("#global-files-list"),
+  fileShareDialog: document.querySelector("#file-share-dialog"),
+  fileShareForm: document.querySelector("#file-share-form"),
+  fileShareName: document.querySelector("#file-share-name"),
+  fileShareExpiration: document.querySelector("#file-share-expiration"),
+  fileShareError: document.querySelector("#file-share-error"),
+  fileShareResult: document.querySelector("#file-share-result"),
+  fileShareURL: document.querySelector("#file-share-url"),
+  fileShareValidity: document.querySelector("#file-share-validity"),
+  fileShareCreateActions: document.querySelector("#file-share-create-actions"),
+  fileShareCreate: document.querySelector("#file-share-create"),
+  fileShareCopy: document.querySelector("#file-share-copy"),
+  fileShareRevoke: document.querySelector("#file-share-revoke"),
+  fileShareExisting: document.querySelector("#file-share-existing"),
+  fileShareExistingList: document.querySelector("#file-share-existing-list"),
 };
 
 const emojis = [
@@ -474,8 +520,13 @@ function scheduleMessageExpiration(message) {
 
 async function boot() {
   try {
-    state.me = await api("/api/me");
-    state.edition = await api("/api/edition");
+    const [me, edition, terms] = await Promise.all([api("/api/me"), api("/api/edition"), api("/api/terms/status")]);
+    if (!terms.accepted) {
+      location.replace("/login.html?terms=required");
+      return;
+    }
+    state.me = me;
+    state.edition = edition;
   } catch (error) {
     location.replace("/login.html");
     return;
@@ -665,6 +716,34 @@ function bindUI() {
   elements.composer.addEventListener("submit", sendMessage);
   elements.file.addEventListener("change", sendFile);
   elements.voiceButton.addEventListener("click", toggleVoiceRecording);
+  elements.pollButton.onclick = () => {
+    try {
+      openPollDialog();
+    } catch (error) {
+      console.error("Ouverture du sondage impossible", error);
+      toast("Impossible d’ouvrir le formulaire de sondage. Rechargez l’application.", "error");
+    }
+  };
+  elements.eventButton.addEventListener("click", () => openEventDialog());
+  elements.calendarButton.addEventListener("click", () => openCalendar());
+  elements.globalFilesButton.addEventListener("click", () => openGlobalFiles());
+  document.querySelector("#event-form").addEventListener("submit", submitEvent);
+  document.querySelector("#event-close").addEventListener("click", closeEventDialog);
+  document.querySelector("#event-cancel").addEventListener("click", closeEventDialog);
+  document.querySelector("#calendar-close").addEventListener("click", () => elements.calendarDialog.close());
+  document.querySelector("#global-files-close").addEventListener("click", () => elements.globalFilesDialog.close());
+  elements.fileShareForm.addEventListener("submit", createFileShare);
+  document.querySelector("#file-share-close").addEventListener("click", closeFileShareDialog);
+  document.querySelector("#file-share-cancel").addEventListener("click", closeFileShareDialog);
+  elements.fileShareCopy.addEventListener("click", copyFileShareLink);
+  elements.fileShareRevoke.addEventListener("click", revokeFileShare);
+  document.querySelector("#calendar-previous").addEventListener("click", () => changeCalendarMonth(-1));
+  document.querySelector("#calendar-next").addEventListener("click", () => changeCalendarMonth(1));
+  document.querySelector("#calendar-today").addEventListener("click", showCurrentCalendarMonth);
+  document.querySelector("#poll-form").addEventListener("submit", submitPoll);
+  elements.pollAddOption.addEventListener("click", addPollOptionInput);
+  document.querySelector("#poll-close").addEventListener("click", closePollDialog);
+  document.querySelector("#poll-cancel").addEventListener("click", closePollDialog);
   elements.audioCallButton.addEventListener("click", () => startCallInvite("audio"));
   elements.videoCallButton.addEventListener("click", () => startCallInvite("video"));
   elements.callBanner.addEventListener("click", (event) => {
@@ -1503,6 +1582,8 @@ function closeCurrentConversation(conversationID) {
   elements.input.disabled = true;
   elements.send.disabled = true;
   elements.emojiButton.disabled = true;
+  elements.pollButton.disabled = true;
+  elements.eventButton.disabled = true;
   updateCallUI();
   closeEmojiPicker();
   elements.title.textContent = "Sélectionnez une conversation";
@@ -1715,6 +1796,15 @@ async function conversationListPreview(conversation, display) {
     try {
       const key = await getConversationKey(conversation);
       const clear = await decryptText(key, conversation.last_message_encrypted_content, conversation.last_message_iv);
+      try {
+        const structured = JSON.parse(clear);
+        if (structured?.v === 1 && typeof structured.question === "string" && Array.isArray(structured.options)) {
+          return compactPreviewText(`Sondage : ${structured.question}`);
+        }
+        if (structured?.v === 1 && structured.type === "event" && typeof structured.name === "string") {
+          return compactPreviewText(`Évènement : ${structured.name}`);
+        }
+      } catch {}
       return compactPreviewText(clear) || "Message chiffré";
     } catch {
       return "Message chiffré";
@@ -1727,7 +1817,7 @@ function compactPreviewText(value) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
-async function selectConversation(conversation) {
+async function selectConversation(conversation, targetMessageID = null) {
   if (conversation.role === "pending") {
     toast("Acceptez cette invitation avant d’ouvrir le groupe.", "error");
     return;
@@ -1746,6 +1836,8 @@ async function selectConversation(conversation) {
   elements.send.disabled = false;
   elements.emojiButton.disabled = false;
   elements.voiceButton.disabled = false;
+  elements.pollButton.disabled = false;
+  elements.eventButton.disabled = false;
   updateCallButtons();
   const selectedID = conversation.id;
   const display = await resolveConversationDisplay(conversation);
@@ -1757,9 +1849,10 @@ async function selectConversation(conversation) {
   renderTypingIndicator(elements.threadTyping, typing);
   elements.threadTyping.hidden = !typing;
   await renderConversations();
-  await loadMessages();
+  await loadMessages(targetMessageID);
   updateCallUI();
   elements.input.focus({ preventScroll: true });
+  if (targetMessageID) await revealMessage(targetMessageID);
 }
 
 function canSignalCall(conversation = state.current) {
@@ -3436,10 +3529,21 @@ async function handleCallSignal(event) {
   }
 }
 
-async function loadMessages() {
+async function loadMessages(targetMessageID = null) {
   clearFileCache();
   clearConversationMessageExpirations(state.current.id);
-  const messages = await api(`/api/conversations/${state.current.id}/messages?limit=50`);
+  let messages;
+  if (targetMessageID) {
+    const target = Number(targetMessageID);
+    const [older, newer] = await Promise.all([
+      api(`/api/conversations/${state.current.id}/messages?limit=25&before=${target + 1}`),
+      api(`/api/conversations/${state.current.id}/messages?limit=25&after=${target}`),
+    ]);
+    messages = [...new Map([...older, ...newer].map((message) => [String(message.id), message])).values()]
+      .sort((left, right) => Number(left.id) - Number(right.id));
+  } else {
+    messages = await api(`/api/conversations/${state.current.id}/messages?limit=50`);
+  }
   if (!messages.length) {
     state.messageClears.set(state.current.id, new Map());
     const empty = document.createElement("div");
@@ -3475,6 +3579,8 @@ async function loadMessages() {
       reactToMessage,
       togglePinnedMessage,
       (replyPreview, container) => scheduleReplyFilePreview(replyPreview, container, key),
+      votePoll,
+      openFileShareDialog,
     );
     if (message.sender_id !== state.me.id) {
       api(`/api/messages/${message.id}/read`, { method: "POST", body: {} }).catch(() => {});
@@ -3486,15 +3592,29 @@ async function loadMessages() {
 
 async function decryptMessageContent(message, key) {
   try {
-    return message.file
-      ? {
+    if (message.file) {
+      return {
           name: await decryptEnvelope(key, message.file.encrypted_name),
           mime: await decryptEnvelope(key, message.file.encrypted_mime),
           fileID: message.file.id,
           size: message.file.size,
-        }
-      : await decryptText(key, message.encrypted_content, message.iv);
+        };
+    }
+    const clear = await decryptText(key, message.encrypted_content, message.iv);
+    if (message.poll) {
+      const poll = JSON.parse(clear);
+      if (poll?.v !== 1 || typeof poll.question !== "string" || !Array.isArray(poll.options)) throw new Error("invalid poll");
+      return poll;
+    }
+    if (message.event) {
+      const event = JSON.parse(clear);
+      if (event?.v !== 1 || event.type !== "event" || typeof event.name !== "string") throw new Error("invalid event");
+      return event;
+    }
+    return clear;
   } catch {
+    if (message.poll) return { v: 1, question: "Sondage impossible à déchiffrer", options: [] };
+    if (message.event) return { v: 1, type: "event", name: "Évènement impossible à déchiffrer", description: "", location: "" };
     return message.file
       ? { name: "Fichier impossible à déchiffrer", mime: "application/octet-stream", fileID: message.file.id, size: message.file.size }
       : "Contenu impossible à déchiffrer";
@@ -3503,7 +3623,7 @@ async function decryptMessageContent(message, key) {
 
 function replyLabel(message, clear) {
   const author = message.sender_id === state.me.id ? "Vous" : message.sender_username;
-  const text = message.file ? clear.name : String(clear || "");
+  const text = message.file ? clear.name : message.poll ? `Sondage : ${clear.question}` : message.event ? `Évènement : ${clear.name}` : String(clear || "");
   return `${author} : ${text}`.slice(0, 120);
 }
 
@@ -3525,13 +3645,17 @@ function withReplyPreview(message, clearByID) {
   const parent = clearByID.get(message.reply_to);
   const replyPreview = typeof parent === "string"
     ? { type: "text", text: parent.slice(0, 120) }
-    : {
-        type: "file",
-        name: parent.name,
-        mime: parent.mime,
-        fileID: parent.fileID,
-        size: parent.size,
-      };
+    : parent?.question
+      ? { type: "text", text: `Sondage : ${parent.question}`.slice(0, 120) }
+      : parent?.type === "event"
+        ? { type: "text", text: `Évènement : ${parent.name}`.slice(0, 120) }
+        : {
+            type: "file",
+            name: parent.name,
+            mime: parent.mime,
+            fileID: parent.fileID,
+            size: parent.size,
+          };
   return {
     ...message,
     reply_preview: replyPreview,
@@ -3616,6 +3740,8 @@ async function appendMessage(message, scroll = true) {
     reactToMessage,
     togglePinnedMessage,
     (replyPreview, container) => scheduleReplyFilePreview(replyPreview, container, key),
+    votePoll,
+    openFileShareDialog,
   );
   elements.messages.prepend(fragment);
   if (filePreview) scheduleFilePreview(filePreview[0], filePreview[1], key);
@@ -3627,6 +3753,525 @@ async function appendMessage(message, scroll = true) {
     api(`/api/messages/${message.id}/read`, { method: "POST", body: {} }).catch(() => {});
   }
   if (scroll) scrollToBottom();
+}
+
+function pollOptionValues() {
+  return [...elements.pollOptionInputs.querySelectorAll("input")].map((input) => input.value);
+}
+
+function renderPollOptionInputs(values) {
+  elements.pollOptionInputs.replaceChildren();
+  values.forEach((value, index) => {
+    const row = document.createElement("div");
+    row.className = "poll-editor-row";
+    const input = document.createElement("input");
+    input.required = true;
+    input.maxLength = 160;
+    input.value = value;
+    input.placeholder = `Réponse ${index + 1}`;
+    input.setAttribute("aria-label", input.placeholder);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.title = "Supprimer cette réponse";
+    remove.setAttribute("aria-label", remove.title);
+    remove.disabled = values.length <= 2;
+    remove.onclick = () => {
+      const next = pollOptionValues();
+      next.splice(index, 1);
+      renderPollOptionInputs(next);
+    };
+    row.append(input, remove);
+    elements.pollOptionInputs.append(row);
+  });
+  elements.pollAddOption.disabled = values.length >= 10;
+}
+
+function addPollOptionInput() {
+  const values = pollOptionValues();
+  if (values.length >= 10) return;
+  values.push("");
+  renderPollOptionInputs(values);
+  elements.pollOptionInputs.querySelector(".poll-editor-row:last-child input")?.focus();
+}
+
+function openPollDialog(message = null, clear = null) {
+  if (!state.current) {
+    toast("Sélectionnez d’abord une conversation.", "error");
+    return;
+  }
+  state.editingPoll = message ? { message, clear } : null;
+  document.querySelector("#poll-dialog-title").textContent = message ? "Modifier le sondage" : "Nouveau sondage";
+  elements.pollSubmit.textContent = message ? "Enregistrer" : "Publier";
+  const help = document.querySelector(".poll-editor-help");
+  help.textContent = message
+    ? "La modification des réponses remet tous les votes à zéro."
+    : "De 2 à 10 réponses. Chaque participant ne peut voter qu’une fois.";
+  elements.pollQuestion.value = clear?.question || "";
+  elements.pollExpiration.value = String(message ? pollDurationSeconds(message) : 86400);
+  renderPollOptionInputs(clear?.options?.length >= 2 ? clear.options.slice(0, 10) : ["", ""]);
+  if (!elements.pollDialog.open) {
+    if (typeof elements.pollDialog.showModal === "function") elements.pollDialog.showModal();
+    else elements.pollDialog.setAttribute("open", "");
+  }
+  elements.pollQuestion.focus();
+}
+
+function closePollDialog() {
+  state.editingPoll = null;
+  if (typeof elements.pollDialog.close === "function") elements.pollDialog.close();
+  else elements.pollDialog.removeAttribute("open");
+}
+
+async function submitPoll(event) {
+  event.preventDefault();
+  if (!state.current) return;
+  const question = elements.pollQuestion.value.trim();
+  const options = pollOptionValues().map((value) => value.trim());
+  const expiresInSeconds = Number(elements.pollExpiration.value);
+  if (!question || options.length < 2 || options.length > 10 || options.some((value) => !value)) {
+    toast("Saisissez une question et entre 2 et 10 réponses.", "error");
+    return;
+  }
+  if (new Set(options.map((value) => value.toLocaleLowerCase("fr"))).size !== options.length) {
+    toast("Chaque réponse doit être différente.", "error");
+    return;
+  }
+  const editing = state.editingPoll;
+  setBusy(elements.pollSubmit, true, "…");
+  try {
+    const key = await getConversationKey(state.current);
+    const encrypted = await encryptText(key, JSON.stringify({ v: 1, question, options }));
+    if (editing) {
+      await api(`/api/messages/${editing.message.id}/poll`, {
+        method: "PUT",
+        body: { encrypted_content: encrypted.data, iv: encrypted.iv, option_count: options.length, expires_in_seconds: expiresInSeconds },
+      });
+      closePollDialog();
+      await loadMessages();
+      await refreshConversationList();
+      toast("Sondage modifié. Les votes ont été remis à zéro.", "success");
+    } else {
+      const message = await api(`/api/conversations/${state.current.id}/polls`, {
+        method: "POST",
+        body: { encrypted_content: encrypted.data, iv: encrypted.iv, option_count: options.length, expires_in_seconds: expiresInSeconds },
+      });
+      closePollDialog();
+      await appendMessage(message);
+      await refreshConversationList();
+      toast("Sondage publié.", "success");
+    }
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible d’enregistrer le sondage."), "error");
+  } finally {
+    setBusy(elements.pollSubmit, false);
+  }
+}
+
+async function votePoll(message, optionID) {
+  if (message.poll?.has_voted) return;
+  if (message.poll?.closed || (message.poll?.expires_at && Date.parse(message.poll.expires_at) <= Date.now())) {
+    toast("Ce sondage est terminé.", "error");
+    await loadMessages();
+    return;
+  }
+  try {
+    await api(`/api/messages/${message.id}/poll/vote`, {
+      method: "POST",
+      body: { option_id: optionID },
+    });
+    await loadMessages();
+    toast("Vote enregistré.", "success");
+  } catch (error) {
+    const messageText = /poll expired/i.test(error?.message || "")
+      ? "Ce sondage est terminé."
+      : frenchErrorMessage(error, "Impossible d’enregistrer le vote.");
+    toast(messageText, "error");
+  }
+}
+
+function pollDurationSeconds(message) {
+  const deadline = Date.parse(message.poll?.expires_at || "");
+  if (!Number.isFinite(deadline)) return 0;
+  const base = Date.parse(message.updated_at || message.created_at || "");
+  if (!Number.isFinite(base)) return 86400;
+  const duration = Math.max(0, Math.round((deadline - base) / 1000));
+  return [300, 3600, 86400, 604800].reduce((closest, value) => (
+    Math.abs(value - duration) < Math.abs(closest - duration) ? value : closest
+  ), 300);
+}
+
+function openEventDialog(message = null, clear = null) {
+  if (!state.current) {
+    toast("Sélectionnez d’abord une conversation.", "error");
+    return;
+  }
+  state.editingEvent = message ? { message, clear } : null;
+  document.querySelector("#event-dialog-title").textContent = message ? "Modifier l’évènement" : "Nouvel évènement";
+  elements.eventSubmit.textContent = message ? "Enregistrer" : "Publier";
+  const defaultStart = new Date(Math.ceil((Date.now() + 30 * 60 * 1000) / 3600000) * 3600000);
+  const defaultEnd = new Date(defaultStart.getTime() + 3600000);
+  elements.eventName.value = clear?.name || "";
+  elements.eventDescription.value = clear?.description || "";
+  elements.eventLocation.value = clear?.location || "";
+  elements.eventStart.value = datetimeLocalValue(message?.event?.starts_at || defaultStart);
+  elements.eventEnd.value = datetimeLocalValue(message?.event?.ends_at || defaultEnd);
+  if (!elements.eventDialog.open) elements.eventDialog.showModal();
+  elements.eventName.focus();
+}
+
+function closeEventDialog() {
+  state.editingEvent = null;
+  if (elements.eventDialog.open) elements.eventDialog.close();
+}
+
+async function submitEvent(event) {
+  event.preventDefault();
+  if (!state.current) return;
+  const name = elements.eventName.value.trim();
+  const description = elements.eventDescription.value.trim();
+  const location = elements.eventLocation.value.trim();
+  const start = new Date(elements.eventStart.value);
+  const end = new Date(elements.eventEnd.value);
+  if (!name || !Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) {
+    toast("Saisissez un nom et une fin postérieure au début.", "error");
+    return;
+  }
+  const editing = state.editingEvent;
+  setBusy(elements.eventSubmit, true, "…");
+  try {
+    const key = await getConversationKey(state.current);
+    const encrypted = await encryptText(key, JSON.stringify({ v: 1, type: "event", name, description, location }));
+    const body = {
+      encrypted_content: encrypted.data,
+      iv: encrypted.iv,
+      starts_at: start.toISOString(),
+      ends_at: end.toISOString(),
+    };
+    if (editing) {
+      await api(`/api/messages/${editing.message.id}/event`, { method: "PUT", body });
+      closeEventDialog();
+      await loadMessages();
+      await refreshConversationList();
+      toast("Évènement modifié.", "success");
+    } else {
+      const message = await api(`/api/conversations/${state.current.id}/events`, { method: "POST", body });
+      closeEventDialog();
+      await appendMessage(message);
+      await refreshConversationList();
+      toast("Évènement publié.", "success");
+    }
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible d’enregistrer l’évènement."), "error");
+  } finally {
+    setBusy(elements.eventSubmit, false);
+  }
+}
+
+function datetimeLocalValue(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  const pad = (part) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+async function openGlobalFiles() {
+  elements.globalFilesStatus.textContent = "Chargement des fichiers…";
+  elements.globalFilesList.replaceChildren();
+  if (!elements.globalFilesDialog.open) elements.globalFilesDialog.showModal();
+  try {
+    const messages = await api("/api/files");
+    const items = await Promise.all(messages.map(async (message) => {
+      const conversation = state.conversations.find((item) => sameID(item.id, message.conversation_id));
+      if (!conversation) return null;
+      try {
+        const key = await getConversationKey(conversation);
+        const clear = await decryptMessageContent(message, key);
+        const display = await resolveConversationDisplay(conversation);
+        return {
+          message,
+          clear,
+          conversation,
+          conversationTitle: display.title,
+          conversationAvatar: display.avatar || null,
+          conversationInitial: display.title.slice(0, 1).toUpperCase(),
+        };
+      } catch {
+        return {
+          message,
+          clear: { name: "Fichier impossible à déchiffrer", mime: "application/octet-stream" },
+          conversation,
+          conversationTitle: "Conversation",
+          conversationAvatar: null,
+          conversationInitial: conversation.type === "group" ? "G" : "@",
+        };
+      }
+    }));
+    renderGlobalFiles(items.filter(Boolean));
+  } catch (error) {
+    elements.globalFilesStatus.textContent = frenchErrorMessage(error, "Impossible de charger les fichiers.");
+  }
+}
+
+function renderGlobalFiles(items) {
+  elements.globalFilesList.replaceChildren();
+  elements.globalFilesStatus.textContent = items.length
+    ? `${items.length} fichier${items.length === 1 ? "" : "s"} dans vos discussions.`
+    : "Aucun fichier dans vos discussions.";
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "global-files-empty";
+    empty.textContent = "Les pièces jointes envoyées dans vos discussions apparaîtront ici.";
+    elements.globalFilesList.append(empty);
+    return;
+  }
+  const dateFormatter = new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" });
+  for (const item of items) {
+    const row = document.createElement("div");
+    row.className = "global-file-row";
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "global-file-open";
+    const kind = document.createElement("span");
+    kind.className = "global-file-kind";
+    kind.append(materialFileIcon(fileKindIcon(item.clear.mime)));
+    const content = document.createElement("span");
+    content.className = "global-file-content";
+    const name = document.createElement("strong");
+    name.textContent = item.clear.name;
+    const meta = document.createElement("span");
+    meta.className = "global-file-meta";
+    meta.textContent = `${formatFileSize(item.message.file.size)} · ${dateFormatter.format(new Date(item.message.created_at))}`;
+    const source = document.createElement("span");
+    source.className = "global-file-conversation";
+    const avatar = createConversationBadge(item.conversationAvatar, item.conversationInitial, "global-file-conversation-avatar");
+    const title = document.createElement("span");
+    title.className = "global-file-conversation-title";
+    title.textContent = item.conversationTitle;
+    source.append(avatar, title);
+    content.append(name, meta, source);
+    open.append(kind, content);
+    open.title = `Ouvrir ${item.conversationTitle}`;
+    open.addEventListener("click", () => openGlobalFile(item));
+    const share = document.createElement("button");
+    share.type = "button";
+    share.className = "file-share-button global-file-share";
+    share.title = `Partager ${item.clear.name}`;
+    share.setAttribute("aria-label", share.title);
+    share.innerHTML = '<svg class="file-share-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><path d="m8.6 10.7 6.8-4.4"></path><path d="m8.6 13.3 6.8 4.4"></path></svg>';
+    share.addEventListener("click", () => {
+      elements.globalFilesDialog.close();
+      openFileShareDialog(item.message, item.clear, item.conversation);
+    });
+    row.append(open, share);
+    elements.globalFilesList.append(row);
+  }
+}
+
+async function openGlobalFile(item) {
+  elements.globalFilesDialog.close();
+  await selectConversation(item.conversation);
+  const row = elements.messages.querySelector(`[data-id="${item.message.id}"]`);
+  row?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function fileKindIcon(mime = "") {
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("video/")) return "video";
+  if (mime.startsWith("audio/")) return "audio";
+  if (mime === "application/pdf") return "pdf";
+  return "file";
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} o`;
+  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} Ko`;
+  return `${(bytes / (1024 * 1024)).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Mo`;
+}
+
+async function openCalendar() {
+  showCurrentCalendarMonth();
+  elements.calendarStatus.textContent = "Chargement des évènements…";
+  elements.calendarGrid.setAttribute("aria-busy", "true");
+  if (!elements.calendarDialog.open) elements.calendarDialog.showModal();
+  try {
+    const messages = await api("/api/events");
+    const items = await Promise.all(messages.map(async (message) => {
+      const conversation = state.conversations.find((item) => sameID(item.id, message.conversation_id));
+      if (!conversation) return null;
+      try {
+        const key = await getConversationKey(conversation);
+        const clear = await decryptMessageContent(message, key);
+        const display = await resolveConversationDisplay(conversation);
+        return {
+          message,
+          clear,
+          conversation,
+          conversationTitle: display.title,
+          conversationAvatar: display.avatar || null,
+          conversationInitial: display.title.slice(0, 1).toUpperCase(),
+        };
+      } catch {
+        return {
+          message,
+          clear: { name: "Évènement impossible à déchiffrer", description: "", location: "" },
+          conversation,
+          conversationTitle: "Conversation",
+          conversationAvatar: null,
+          conversationInitial: conversation.type === "group" ? "G" : "@",
+        };
+      }
+    }));
+    state.calendarItems = items.filter(Boolean).sort((left, right) => (
+      Date.parse(left.message.event.starts_at) - Date.parse(right.message.event.starts_at)
+    ));
+    renderCalendarMonth();
+  } catch (error) {
+    state.calendarItems = [];
+    elements.calendarStatus.textContent = frenchErrorMessage(error, "Impossible de charger le calendrier.");
+    renderCalendarMonth(false);
+  } finally {
+    elements.calendarGrid.removeAttribute("aria-busy");
+  }
+}
+
+function renderCalendarMonth(updateStatus = true) {
+  const month = state.calendarMonth;
+  const year = month.getFullYear();
+  const monthIndex = month.getMonth();
+  const monthName = new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric" }).format(month);
+  elements.calendarMonthLabel.textContent = monthName.charAt(0).toLocaleUpperCase("fr") + monthName.slice(1);
+  const firstWeekday = (new Date(year, monthIndex, 1).getDay() + 6) % 7;
+  const firstCellDate = new Date(year, monthIndex, 1 - firstWeekday);
+  const todayKey = calendarDayKey(new Date());
+  const fragment = document.createDocumentFragment();
+  const monthStart = new Date(year, monthIndex, 1).getTime();
+  const monthEnd = new Date(year, monthIndex + 1, 1).getTime();
+  const visibleEvents = state.calendarItems.filter((item) => (
+    Date.parse(item.message.event.starts_at) < monthEnd && Date.parse(item.message.event.ends_at) > monthStart
+  )).length;
+  for (let index = 0; index < 42; index += 1) {
+    const date = new Date(firstCellDate.getFullYear(), firstCellDate.getMonth(), firstCellDate.getDate() + index);
+    const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const dayEnd = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1);
+    const key = calendarDayKey(date);
+    const cell = document.createElement("section");
+    cell.className = "calendar-day";
+    cell.setAttribute("role", "gridcell");
+    cell.setAttribute("aria-label", new Intl.DateTimeFormat("fr-FR", { dateStyle: "full" }).format(date));
+    if (date.getMonth() !== monthIndex) cell.classList.add("outside-month");
+    if (key === todayKey) cell.classList.add("today");
+    const number = document.createElement("time");
+    number.dateTime = key;
+    number.className = "calendar-day-number";
+    number.textContent = String(date.getDate());
+    cell.append(number);
+    const dayItems = state.calendarItems.filter((item) => {
+      const start = Date.parse(item.message.event.starts_at);
+      const end = Date.parse(item.message.event.ends_at);
+      return Number.isFinite(start) && Number.isFinite(end) && start < dayEnd.getTime() && end > dayStart.getTime();
+    });
+    const events = document.createElement("div");
+    events.className = "calendar-day-events";
+    for (const item of dayItems) events.append(calendarEventButton(item, date));
+    cell.append(events);
+    fragment.append(cell);
+  }
+  elements.calendarGrid.replaceChildren(fragment);
+  if (updateStatus) {
+    const total = state.calendarItems.length;
+    elements.calendarStatus.textContent = total
+      ? `${visibleEvents} évènement${visibleEvents === 1 ? "" : "s"} ce mois · ${total} au total`
+      : "Aucun évènement dans vos conversations.";
+  }
+}
+
+function calendarEventButton(item, date) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "calendar-day-event";
+  const start = new Date(item.message.event.starts_at);
+  const end = new Date(item.message.event.ends_at);
+  const startsToday = calendarDayKey(start) === calendarDayKey(date);
+  // Une fin à minuit appartient visuellement à la journée précédente.
+  const effectiveEnd = new Date(end.getTime() - 1);
+  const endsToday = calendarDayKey(effectiveEnd) === calendarDayKey(date);
+  const timeFormatter = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const startTime = timeFormatter.format(start);
+  const endTime = timeFormatter.format(end);
+  const time = startsToday && endsToday
+    ? `${startTime}–${endTime}`
+    : startsToday
+      ? `${startTime} →`
+      : endsToday
+        ? `→ ${endTime}`
+        : "↔";
+  const timeLabel = document.createElement("span");
+  timeLabel.className = "calendar-day-event-time";
+  timeLabel.textContent = time;
+  const name = document.createElement("span");
+  name.className = "calendar-day-event-name";
+  name.textContent = item.clear.name;
+  const conversationIcon = createConversationBadge(item.conversationAvatar, item.conversationInitial, "calendar-day-event-avatar");
+  button.append(conversationIcon, name, timeLabel);
+  const fullDate = new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" });
+  button.title = `${item.clear.name}\n${fullDate.format(start)} → ${fullDate.format(end)}${item.clear.location ? `\n${item.clear.location}` : ""}\n${item.conversationTitle}`;
+  button.setAttribute("aria-label", `${item.clear.name}, dans ${item.conversationTitle}`);
+  button.addEventListener("click", () => openCalendarEvent(item));
+  return button;
+}
+
+function createConversationBadge(avatar, initial, className) {
+  const icon = document.createElement(avatar ? "img" : "span");
+  icon.className = className;
+  if (avatar) {
+    icon.src = avatar;
+    icon.alt = "";
+  } else {
+    icon.textContent = initial;
+  }
+  icon.setAttribute("aria-hidden", "true");
+  return icon;
+}
+
+async function openCalendarEvent(item) {
+  elements.calendarDialog.close();
+  await selectConversation(item.conversation, item.message.id);
+}
+
+async function revealMessage(messageID) {
+  const row = [...elements.messages.querySelectorAll(".message-row")]
+    .find((candidate) => sameID(candidate.dataset.id, messageID));
+  if (!row) {
+    toast("L’évènement n’est plus disponible dans cette discussion.", "error");
+    return;
+  }
+  row.classList.add("navigation-target");
+  row.tabIndex = -1;
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  row.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+  row.focus({ preventScroll: true });
+  window.setTimeout(() => row.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" }), 280);
+  window.setTimeout(() => {
+    row.classList.remove("navigation-target");
+    row.removeAttribute("tabindex");
+  }, 3200);
+}
+
+function changeCalendarMonth(offset) {
+  state.calendarMonth = new Date(state.calendarMonth.getFullYear(), state.calendarMonth.getMonth() + offset, 1);
+  renderCalendarMonth();
+}
+
+function showCurrentCalendarMonth() {
+  const now = new Date();
+  state.calendarMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  renderCalendarMonth();
+}
+
+function calendarDayKey(date) {
+  const pad = (part) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 async function sendMessage(event) {
@@ -3680,10 +4325,6 @@ async function sendFile(event) {
 }
 
 async function sendEncryptedFile(file, successMessage) {
-  if (state.current.federation_key_id) {
-    toast("Les fichiers fédérés ne sont pas encore pris en charge.", "error");
-    return false;
-  }
   if (file.size > 10 * 1024 * 1024) {
     toast("Le fichier dépasse la limite de 10 Mo.", "error");
     return false;
@@ -3776,7 +4417,7 @@ async function toggleVoiceRecording() {
       stream.getTracks().forEach((track) => track.stop());
       clearTimeout(state.recordingStopTimer);
       state.recordingStopTimer = null;
-      elements.voiceButton.textContent = "🎙";
+      elements.voiceButton.classList.remove("recording");
       const recordedMime = recorder.mimeType || mime || "audio/webm";
       const blob = new Blob(state.recordingChunks, { type: recordedMime });
       state.recorder = null;
@@ -3791,10 +4432,154 @@ async function toggleVoiceRecording() {
     state.recordingStopTimer = setTimeout(() => {
       if (state.recorder?.state === "recording") state.recorder.stop();
     }, 120000);
-    elements.voiceButton.textContent = "■";
+    elements.voiceButton.classList.add("recording");
     toast("Enregistrement vocal en cours.");
   } catch (error) {
     toast(frenchErrorMessage(error, "Microphone inaccessible."), "error");
+  }
+}
+
+function openFileShareDialog(message, clear, conversation = state.current) {
+  state.pendingFileShare = { message, clear, conversation };
+  state.activeFileShareID = null;
+  elements.fileShareName.textContent = clear.name;
+  elements.fileShareExpiration.value = "604800";
+  elements.fileShareError.textContent = "";
+  elements.fileShareURL.value = "";
+  elements.fileShareValidity.textContent = "";
+  elements.fileShareResult.hidden = true;
+  elements.fileShareCreateActions.hidden = false;
+  elements.fileShareExpiration.disabled = false;
+  elements.fileShareCopy.disabled = false;
+  elements.fileShareRevoke.disabled = false;
+  elements.fileShareExisting.hidden = true;
+  elements.fileShareExistingList.replaceChildren();
+  elements.fileShareDialog.showModal();
+  loadExistingFileShares(message.file.id);
+}
+
+async function loadExistingFileShares(fileID) {
+  try {
+    const shares = await api(`/api/files/${fileID}/shares`);
+    elements.fileShareExistingList.replaceChildren();
+    const active = shares.filter((share) => share.active);
+    elements.fileShareExisting.hidden = active.length === 0;
+    for (const share of active) {
+      const row = document.createElement("div");
+      row.className = "file-share-existing-row";
+      const details = document.createElement("span");
+      const label = document.createElement("strong");
+      label.textContent = `Valable jusqu’au ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(share.expires_at))}`;
+      const downloads = document.createElement("small");
+      downloads.textContent = `${share.download_count} téléchargement${share.download_count === 1 ? "" : "s"}`;
+      details.append(label, downloads);
+      const revoke = document.createElement("button");
+      revoke.type = "button";
+      revoke.className = "outline danger-text";
+      revoke.textContent = "Désactiver";
+      revoke.addEventListener("click", async () => {
+        setBusy(revoke, true, "…");
+        try {
+          await api(`/api/file-shares/${share.id}`, { method: "DELETE" });
+          row.remove();
+          elements.fileShareExisting.hidden = !elements.fileShareExistingList.children.length;
+          toast("Lien de partage désactivé.", "success");
+        } catch (error) {
+          setBusy(revoke, false);
+          elements.fileShareError.textContent = frenchErrorMessage(error, "Impossible de désactiver le lien.");
+        }
+      });
+      row.append(details, revoke);
+      elements.fileShareExistingList.append(row);
+    }
+  } catch {
+    elements.fileShareExisting.hidden = true;
+  }
+}
+
+function closeFileShareDialog() {
+  elements.fileShareDialog.close();
+  state.pendingFileShare = null;
+  state.activeFileShareID = null;
+}
+
+async function createFileShare(event) {
+  event.preventDefault();
+  if (!state.pendingFileShare?.conversation) return;
+  elements.fileShareError.textContent = "";
+  setBusy(elements.fileShareCreate, true, "Chiffrement…");
+  try {
+    const { message, conversation } = state.pendingFileShare;
+    const conversationKey = await getConversationKey(conversation);
+    const file = await loadDecryptedFile(message, conversationKey);
+    const shareKey = await generateShareKey();
+    const [encrypted, encryptedName, encryptedMIME, exportedKey] = await Promise.all([
+      encryptBytes(shareKey, file.data),
+      encryptEnvelope(shareKey, file.name),
+      encryptEnvelope(shareKey, file.mime || "application/octet-stream"),
+      exportShareKey(shareKey),
+    ]);
+    const share = await api(`/api/files/${message.file.id}/shares`, {
+      method: "POST",
+      body: {
+        encrypted_name: encryptedName,
+        encrypted_mime: encryptedMIME,
+        encrypted_data: encrypted.data,
+        iv: encrypted.iv,
+        size: file.data.byteLength,
+        expires_in_seconds: Number(elements.fileShareExpiration.value),
+      },
+    });
+    const publicURL = new URL("/share.html", `${getInstanceURL() || location.origin}/`);
+    publicURL.searchParams.set("token", share.token);
+    publicURL.hash = new URLSearchParams({ key: exportedKey }).toString();
+    elements.fileShareURL.value = publicURL.toString();
+    elements.fileShareValidity.textContent = `Valable jusqu’au ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "long", timeStyle: "short" }).format(new Date(share.expires_at))}.`;
+    elements.fileShareResult.hidden = false;
+    elements.fileShareCreateActions.hidden = true;
+    elements.fileShareExpiration.disabled = true;
+    state.activeFileShareID = share.id;
+    loadExistingFileShares(message.file.id);
+    toast("Lien de partage sécurisé créé.", "success");
+  } catch (error) {
+    elements.fileShareError.textContent = frenchErrorMessage(error, "Impossible de créer le lien de partage.");
+  } finally {
+    setBusy(elements.fileShareCreate, false);
+  }
+}
+
+async function copyFileShareLink() {
+  const link = elements.fileShareURL.value;
+  if (!link) return;
+  try {
+    await navigator.clipboard.writeText(link);
+  } catch {
+    elements.fileShareURL.focus();
+    elements.fileShareURL.select();
+    if (!document.execCommand("copy")) {
+      toast("Sélectionnez puis copiez le lien manuellement.", "error");
+      return;
+    }
+  }
+  toast("Lien copié.", "success");
+}
+
+async function revokeFileShare() {
+  if (!state.activeFileShareID) return;
+  setBusy(elements.fileShareRevoke, true, "Désactivation…");
+  try {
+    await api(`/api/file-shares/${state.activeFileShareID}`, { method: "DELETE" });
+    state.activeFileShareID = null;
+    elements.fileShareURL.value = "";
+    elements.fileShareValidity.textContent = "Ce lien a été désactivé.";
+    elements.fileShareCopy.disabled = true;
+    toast("Lien de partage désactivé.", "success");
+    if (state.pendingFileShare?.message?.file?.id) loadExistingFileShares(state.pendingFileShare.message.file.id);
+  } catch (error) {
+    elements.fileShareError.textContent = frenchErrorMessage(error, "Impossible de désactiver le lien.");
+  } finally {
+    setBusy(elements.fileShareRevoke, false);
+    elements.fileShareRevoke.disabled = !state.activeFileShareID;
   }
 }
 
@@ -3827,9 +4612,14 @@ async function downloadFile(message, name, button) {
 }
 
 async function editMessage(message, clear, row) {
-  if (state.current?.federation_key_id) {
+  if (message.poll) {
     row.dispatchEvent(new Event("swipe-close"));
-    toast("La modification des messages fédérés n’est pas encore prise en charge.", "error");
+    openPollDialog(message, clear);
+    return;
+  }
+  if (message.event) {
+    row.dispatchEvent(new Event("swipe-close"));
+    openEventDialog(message, clear);
     return;
   }
   const text = await actionDialog({
@@ -3860,11 +4650,6 @@ async function editMessage(message, clear, row) {
 }
 
 async function deleteMessage(message, row) {
-  if (state.current?.federation_key_id) {
-    row.dispatchEvent(new Event("swipe-close"));
-    toast("La suppression des messages fédérés n’est pas encore prise en charge.", "error");
-    return;
-  }
   const confirmed = await actionDialog({
     title: "Supprimer le message",
     message: "Supprimer définitivement ce message ?",
@@ -4009,18 +4794,49 @@ function scheduleReplyFilePreview(replyPreview, container, key) {
 
 async function pdfJS() {
   if (!pdfJSModule) {
-    pdfJSModule = import("/vendor/pdfjs/pdf.min.mjs").then((module) => {
-      module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.min.mjs";
-      return module;
-    });
+    pdfJSModule = import("/vendor/pdfjs/pdf.compat.mjs?v=calendar-focus-v160")
+      .then(() => import("/vendor/pdfjs/pdf.min.mjs?v=calendar-focus-v160"))
+      .then((module) => {
+        module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.compat.mjs?v=calendar-focus-v160";
+        return module;
+      })
+      .catch((error) => {
+        // Une coupure réseau pendant le chargement ne doit pas condamner tous
+        // les aperçus suivants jusqu'au prochain rechargement de l'application.
+        pdfJSModule = null;
+        throw error;
+      });
   }
   return pdfJSModule;
 }
 
-async function renderPDFPreview(file, container) {
-  const pdfjs = await pdfJS();
-  const pdfDocument = await pdfjs.getDocument({ data: file.data.slice() }).promise;
+function renderNativePDFPreview(file, container) {
+  const frame = document.createElement("iframe");
+  frame.className = "document-page-preview pdf-native-preview";
+  frame.src = file.url;
+  frame.title = `Aperçu de ${file.name}`;
+  frame.loading = "lazy";
+
+  const actions = document.createElement("div");
+  actions.className = "pdf-native-actions";
+  const label = document.createElement("span");
+  label.textContent = "Aperçu PDF fourni par le navigateur.";
+  const open = document.createElement("a");
+  open.className = "pdf-native-open";
+  open.href = file.url;
+  open.target = "_blank";
+  open.rel = "noopener";
+  open.textContent = "Ouvrir le PDF";
+  actions.append(label, open);
+  container.classList.add("pdf-native-fallback");
+  container.replaceChildren(frame, actions);
+}
+
+async function renderPDFPreview(file, container, allowNativeFallback = true) {
+  let pdfDocument;
   try {
+    const pdfjs = await pdfJS();
+    pdfDocument = await pdfjs.getDocument({ data: file.data.slice() }).promise;
     const page = await pdfDocument.getPage(1);
     const baseViewport = page.getViewport({ scale: 1 });
     const cssWidth = Math.min(Math.max(container.clientWidth, 240), 460);
@@ -4041,8 +4857,20 @@ async function renderPDFPreview(file, container) {
       background: "#ffffff",
     }).promise;
     container.append(canvas);
+  } catch (error) {
+    if (!allowNativeFallback) throw error;
+    console.warn("Rendu PDF.js impossible, utilisation de l’aperçu natif", error);
+    renderNativePDFPreview(file, container);
   } finally {
-    await pdfDocument.destroy();
+    if (pdfDocument) {
+      try {
+        await pdfDocument.destroy();
+      } catch (error) {
+        // Le document est déjà affiché : un échec de fermeture du worker ne
+        // doit pas remplacer l’aperçu par un message d’erreur.
+        console.warn("Fermeture du moteur PDF impossible", error);
+      }
+    }
   }
 }
 
@@ -4188,7 +5016,7 @@ async function renderFilePreview(message, container, key) {
     const unavailable = document.createElement("div");
     unavailable.className = "file-preview-unavailable";
     const icon = document.createElement("span");
-    icon.textContent = "📄";
+    icon.append(materialFileIcon("file"));
     const label = document.createElement("span");
     label.textContent = "Aperçu non disponible pour ce format";
     unavailable.append(icon, label);
@@ -4232,7 +5060,7 @@ async function renderReplyFilePreview(message, container, key) {
       return;
     }
     if (mime === "application/pdf") {
-      await renderPDFPreview(file, container);
+      await renderPDFPreview(file, container, false);
       return;
     }
     if (mime.startsWith("text/") || /(?:json|xml|javascript)$/i.test(mime)) {
@@ -4520,7 +5348,10 @@ async function createGroup(event) {
 }
 
 async function handleSocketEvent(event) {
-  if (event.type === "account_banned" || event.type === "sessions_revoked" || event.type === "role_changed") {
+  if (event.type === "terms_updated") {
+    state.socket?.close();
+    location.href = "/login.html?terms=required";
+  } else if (event.type === "account_banned" || event.type === "sessions_revoked" || event.type === "role_changed") {
     sessionStorage.removeItem("crypto_phrase");
     location.href = "/login.html";
   } else if (event.type === "new_message") {
@@ -4558,7 +5389,7 @@ async function handleSocketEvent(event) {
     }
     state.conversations = await api("/api/conversations");
     await renderConversations();
-    if ((event.deleted_message_id || event.updated_message_id || event.reaction_message_id || event.pinned_message_id || event.profile_updated) && currentID === event.conversation_id) {
+    if ((event.deleted_message_id || event.updated_message_id || event.reaction_message_id || event.pinned_message_id || event.poll_message_id || event.profile_updated) && currentID === event.conversation_id) {
       await loadMessages();
     }
   } else if (event.type === "typing") {

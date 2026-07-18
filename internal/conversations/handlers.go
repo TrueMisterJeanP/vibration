@@ -16,9 +16,19 @@ type Broadcaster interface {
 	SendToUser(userID int64, event any) bool
 }
 
+type FederationRouter interface {
+	QueueGroupCreate(conversationID int64)
+	QueueGroupAccept(conversationID, userID int64)
+	QueueGroupUpdate(conversationID int64)
+	QueueGroupDelete(conversationID, userID int64)
+	QueueGroupMemberAdd(conversationID, memberID int64)
+	QueueGroupMemberRemove(conversationID, memberID int64)
+}
+
 type Handler struct {
-	DB  *sql.DB
-	Hub Broadcaster
+	DB         *sql.DB
+	Hub        Broadcaster
+	Federation FederationRouter
 }
 
 type Conversation struct {
@@ -163,6 +173,21 @@ func (h *Handler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var remoteMembers int
+	for id := range set {
+		var remote bool
+		if h.DB.QueryRow(`SELECT is_remote FROM users WHERE id=?`, id).Scan(&remote) != nil {
+			httpx.Error(w, http.StatusNotFound, "user not found")
+			return
+		}
+		if remote {
+			remoteMembers++
+		}
+	}
+	if remoteMembers > 1 {
+		httpx.Error(w, http.StatusBadRequest, "a federated group currently supports one remote participant")
+		return
+	}
 	keys := make(map[int64]string, len(set))
 	roles := make(map[int64]string, len(set))
 	for id := range set {
@@ -182,6 +207,9 @@ func (h *Handler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.notifyMembers(id, "conversation_updated")
+	if h.Federation != nil {
+		h.Federation.QueueGroupCreate(id)
+	}
 	httpx.JSON(w, http.StatusCreated, map[string]any{"id": id})
 }
 
@@ -211,7 +239,7 @@ func (h *Handler) createConversation(kind string, title, description, avatar *st
 			role = roles[userID]
 		}
 		result, err := tx.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
-			SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM users WHERE id=? AND is_remote=0)`, id, userID, keys[userID], role, now, userID)
+			SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM users WHERE id=?)`, id, userID, keys[userID], role, now, userID)
 		if err != nil {
 			return 0, err
 		}
@@ -305,8 +333,22 @@ func (h *Handler) AddMember(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid member")
 		return
 	}
+	var isRemote bool
+	if h.DB.QueryRow(`SELECT is_remote FROM users WHERE id=?`, input.UserID).Scan(&isRemote) != nil {
+		httpx.Error(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if isRemote {
+		var existingRemote int
+		_ = h.DB.QueryRow(`SELECT COUNT(*) FROM conversation_members cm JOIN users u ON u.id=cm.user_id
+			WHERE cm.conversation_id=? AND u.is_remote=1`, conversationID).Scan(&existingRemote)
+		if existingRemote > 0 {
+			httpx.Error(w, http.StatusConflict, "a federated group currently supports one remote participant")
+			return
+		}
+	}
 	result, err := h.DB.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
-		SELECT ?,?,?, 'pending',? WHERE EXISTS(SELECT 1 FROM users WHERE id=? AND is_remote=0)`,
+		SELECT ?,?,?, 'pending',? WHERE EXISTS(SELECT 1 FROM users WHERE id=?)`,
 		conversationID, input.UserID, input.EncryptedConversationKey, time.Now().UTC().Format(time.RFC3339Nano), input.UserID)
 	if err != nil {
 		httpx.Error(w, http.StatusConflict, "member already exists")
@@ -318,6 +360,9 @@ func (h *Handler) AddMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.notifyMembers(conversationID, "conversation_updated")
+	if h.Federation != nil {
+		h.Federation.QueueGroupMemberAdd(conversationID, input.UserID)
+	}
 	httpx.JSON(w, http.StatusCreated, map[string]any{"ok": true})
 }
 
@@ -341,6 +386,9 @@ func (h *Handler) Accept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.notifyMembers(conversationID, "conversation_updated")
+	if h.Federation != nil {
+		h.Federation.QueueGroupAccept(conversationID, userID)
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -374,6 +422,9 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	}
 	h.Hub.SendToUser(memberID, map[string]any{"type": "conversation_updated", "conversation_id": conversationID, "removed": true})
 	h.notifyMembers(conversationID, "conversation_updated")
+	if h.Federation != nil {
+		h.Federation.QueueGroupMemberRemove(conversationID, memberID)
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -416,6 +467,9 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.notifyMembers(conversationID, "conversation_updated")
+	if h.Federation != nil {
+		h.Federation.QueueGroupUpdate(conversationID)
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -436,6 +490,9 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if kind == "group" && ownerID != userID {
+		if h.Federation != nil {
+			h.Federation.QueueGroupDelete(conversationID, userID)
+		}
 		if _, err := h.DB.Exec(`DELETE FROM conversation_members WHERE conversation_id=? AND user_id=?`, conversationID, userID); err != nil {
 			httpx.Error(w, http.StatusInternalServerError, "conversation deletion failed")
 			return
@@ -446,6 +503,9 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		h.notifyMembers(conversationID, "conversation_updated")
 		httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "action": "left"})
 		return
+	}
+	if kind == "group" && h.Federation != nil {
+		h.Federation.QueueGroupDelete(conversationID, userID)
 	}
 	rows, err := h.DB.Query(`SELECT user_id FROM conversation_members WHERE conversation_id=?`, conversationID)
 	if err != nil {

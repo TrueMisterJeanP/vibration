@@ -35,6 +35,11 @@ var migrations = []string{
 		expires_at TEXT NOT NULL,
 		created_at TEXT NOT NULL
 	)`,
+	`CREATE TABLE IF NOT EXISTS user_terms_acceptances (
+		user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+		version INTEGER NOT NULL,
+		accepted_at TEXT NOT NULL
+	)`,
 	`CREATE TABLE IF NOT EXISTS contacts (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -71,6 +76,7 @@ var migrations = []string{
 		iv TEXT NOT NULL,
 		reply_to INTEGER REFERENCES messages(id) ON DELETE SET NULL,
 		expires_at TEXT,
+		poll_expires_at TEXT,
 		pinned_by INTEGER REFERENCES users(id),
 		pinned_at TEXT,
 		created_at TEXT NOT NULL,
@@ -83,6 +89,25 @@ var migrations = []string{
 		emoji TEXT NOT NULL,
 		created_at TEXT NOT NULL,
 		UNIQUE(message_id, user_id, emoji)
+	)`,
+	`CREATE TABLE IF NOT EXISTS message_events (
+		message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+		starts_at TEXT NOT NULL,
+		ends_at TEXT NOT NULL
+	)`,
+	`CREATE TABLE IF NOT EXISTS poll_options (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+		position INTEGER NOT NULL,
+		UNIQUE(message_id, position)
+	)`,
+	`CREATE TABLE IF NOT EXISTS poll_votes (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+		option_id INTEGER NOT NULL REFERENCES poll_options(id) ON DELETE CASCADE,
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		created_at TEXT NOT NULL,
+		UNIQUE(message_id, user_id)
 	)`,
 	`CREATE TABLE IF NOT EXISTS message_receipts (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,6 +126,22 @@ var migrations = []string{
 		encrypted_data BLOB NOT NULL,
 		iv TEXT NOT NULL,
 		size INTEGER NOT NULL,
+		created_at TEXT NOT NULL
+	)`,
+	`CREATE TABLE IF NOT EXISTS file_shares (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+		created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		token_hash TEXT UNIQUE NOT NULL,
+		encrypted_name TEXT NOT NULL,
+		encrypted_mime TEXT NOT NULL,
+		encrypted_data BLOB NOT NULL,
+		iv TEXT NOT NULL,
+		size INTEGER NOT NULL,
+		expires_at TEXT NOT NULL,
+		revoked_at TEXT,
+		download_count INTEGER NOT NULL DEFAULT 0,
+		last_downloaded_at TEXT,
 		created_at TEXT NOT NULL
 	)`,
 	`CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -177,7 +218,12 @@ var migrations = []string{
 	`CREATE INDEX IF NOT EXISTS idx_members_user ON conversation_members(user_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, id DESC)`,
 	`CREATE INDEX IF NOT EXISTS idx_message_reactions_message ON message_reactions(message_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_message_events_dates ON message_events(starts_at, ends_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_poll_options_message ON poll_options(message_id, position)`,
+	`CREATE INDEX IF NOT EXISTS idx_poll_votes_message ON poll_votes(message_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_receipts_user ON message_receipts(user_id, status)`,
+	`CREATE INDEX IF NOT EXISTS idx_file_shares_file ON file_shares(file_id, created_by)`,
+	`CREATE INDEX IF NOT EXISTS idx_file_shares_expiry ON file_shares(expires_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_admin_actions_created ON admin_actions(created_at DESC)`,
 }
 
@@ -282,6 +328,7 @@ func Migrate(database *sql.DB) error {
 		definition string
 	}{
 		{"expires_at", "TEXT"},
+		{"poll_expires_at", "TEXT"},
 		{"pinned_by", "INTEGER REFERENCES users(id)"},
 		{"pinned_at", "TEXT"},
 	} {
@@ -304,12 +351,34 @@ func Migrate(database *sql.DB) error {
 			created_at TEXT NOT NULL,
 			UNIQUE(message_id, user_id, emoji)
 		)`,
+		`CREATE TABLE IF NOT EXISTS message_events (
+			message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+			starts_at TEXT NOT NULL,
+			ends_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS poll_options (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+			position INTEGER NOT NULL,
+			UNIQUE(message_id, position)
+		)`,
+		`CREATE TABLE IF NOT EXISTS poll_votes (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+			option_id INTEGER NOT NULL REFERENCES poll_options(id) ON DELETE CASCADE,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			created_at TEXT NOT NULL,
+			UNIQUE(message_id, user_id)
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_remote_users ON users(remote_instance_id, remote_username)`,
 		`CREATE INDEX IF NOT EXISTS idx_federated_instances_host ON federated_instances(host)`,
 		`CREATE INDEX IF NOT EXISTS idx_federation_outbox_due ON federation_outbox(sent_at, next_attempt_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_federation_outbox_ready ON federation_outbox(sent_at, next_attempt_at, locked_until_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages(expires_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_message_reactions_message ON message_reactions(message_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_message_events_dates ON message_events(starts_at, ends_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_poll_options_message ON poll_options(message_id, position)`,
+		`CREATE INDEX IF NOT EXISTS idx_poll_votes_message ON poll_votes(message_id)`,
 	} {
 		if _, err := tx.Exec(statement); err != nil {
 			return fmt.Errorf("create federation index: %w", err)

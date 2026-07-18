@@ -105,6 +105,23 @@ export async function generateGroupKey() {
   return crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
 }
 
+export async function generateShareKey() {
+  return crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+}
+
+export async function exportShareKey(key) {
+  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", key));
+  return bytesToBase64(raw).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export async function importShareKey(value) {
+  const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  const raw = base64ToBytes(padded);
+  if (raw.length !== 32) throw new Error("Clé de partage invalide.");
+  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["decrypt"]);
+}
+
 export async function wrapGroupKey(groupKey, privateKey, memberPublicKey, senderID) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));

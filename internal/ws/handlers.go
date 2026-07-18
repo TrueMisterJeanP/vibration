@@ -15,6 +15,12 @@ type Handler struct {
 	DB            *sql.DB
 	Hub           *Hub
 	ClientOrigins []string
+	Federation    FederationRouter
+}
+
+type FederationRouter interface {
+	RelayRealtime(conversationID, senderID int64, event map[string]any) bool
+	RelayPresence(userID int64, online bool)
 }
 
 var callSignalTypes = map[string]struct{}{
@@ -57,6 +63,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.sendPresenceState(userID)
 	if first {
 		h.broadcastPresence(userID, "user_online")
+		if h.Federation != nil {
+			h.Federation.RelayPresence(userID, true)
+		}
 	}
 	go h.writeLoop(connection, client)
 	h.readLoop(connection, client)
@@ -65,6 +74,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = connection.Close()
 	if last {
 		h.broadcastPresence(userID, "user_offline")
+		if h.Federation != nil {
+			h.Federation.RelayPresence(userID, false)
+		}
 	}
 }
 
@@ -128,10 +140,14 @@ func (h *Handler) readLoop(connection *websocket.Conn, client *Client) {
 			return
 		}
 		if event.Type == "typing" && h.isMember(event.ConversationID, client.UserID) {
-			h.broadcastConversation(event.ConversationID, client.UserID, map[string]any{
+			out := map[string]any{
 				"type": "typing", "conversation_id": event.ConversationID,
 				"user_id": client.UserID, "typing": event.Typing,
-			})
+			}
+			h.broadcastConversation(event.ConversationID, client.UserID, out)
+			if h.Federation != nil {
+				h.Federation.RelayRealtime(event.ConversationID, client.UserID, out)
+			}
 			continue
 		}
 		if _, ok := callSignalTypes[event.Type]; ok {
@@ -182,6 +198,9 @@ func (h *Handler) handleCallSignal(client *Client, event inboundEvent) {
 	}
 	if len(event.Candidate) > 0 {
 		out["candidate"] = event.Candidate
+	}
+	if h.Federation != nil && h.Federation.RelayRealtime(event.ConversationID, client.UserID, out) {
+		return
 	}
 	if event.TargetUserID > 0 {
 		h.Hub.SendToUser(event.TargetUserID, out)
