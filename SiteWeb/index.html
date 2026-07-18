@@ -7,7 +7,7 @@
   <meta name="description" content="Vibration réunit messagerie chiffrée, groupes, sondages, calendrier, fichiers, appels et fédération privée dans une application web auto-hébergeable.">
   <title>Vibration · La messagerie fédérée qui reste sous votre contrôle</title>
   <link rel="icon" href="assets/icon-512.png">
-  <link rel="stylesheet" href="css/site.css?v=2">
+  <link rel="stylesheet" href="css/site.css?v=3">
 </head>
 <body>
   <a class="skip-link" href="#contenu">Aller au contenu</a>
@@ -87,18 +87,26 @@
                   <svg viewBox="0 0 24 24"><path d="M3 5h18v16H3ZM7 3v4M17 3v4M3 10h18"></path></svg>
                   <svg viewBox="0 0 24 24"><path d="M22 17v3a2 2 0 0 1-2 2c-9.4-.8-17-8.4-18-18a2 2 0 0 1 2-2h3l2 5-2 2a16 16 0 0 0 8 8l2-2Z"></path></svg>
                   <svg viewBox="0 0 24 24"><path d="M15 10V5H3v14h12v-5l6 4V6Z"></path></svg>
+                  <svg class="active" viewBox="0 0 24 24"><path d="M3 4h18v16H3Z"></path><path d="M15 4v16"></path><path d="m9 9 3 3-3 3"></path></svg>
                 </div>
               </header>
-              <div class="mock-thread">
-                <div class="mock-message incoming"><small>Amélie · autre-instance.fr</small><p>Quelle date retenons-nous pour la présentation ?</p></div>
-                <div class="mock-poll">
-                  <div class="mock-poll-head"><svg viewBox="0 0 24 24"><path d="M4 20V10h4v10M10 20V4h4v16M16 20v-7h4v7"></path></svg><strong>Choisissez une date</strong></div>
-                  <div class="poll-option selected"><span>Mardi 21 juillet</span><b>67 %</b></div>
-                  <div class="poll-option"><span>Jeudi 23 juillet</span><b>33 %</b></div>
-                  <small>6 votes · clôture demain à 18:00</small>
+              <div class="mock-chat-workspace">
+                <div class="mock-thread">
+                  <div class="mock-message incoming"><small>Amélie · autre-instance.fr</small><p>Quelle date retenons-nous pour la présentation ?</p></div>
+                  <div class="mock-poll">
+                    <div class="mock-poll-head"><svg viewBox="0 0 24 24"><path d="M4 20V10h4v10M10 20V4h4v16M16 20v-7h4v7"></path></svg><strong>Choisissez une date</strong></div>
+                    <div class="poll-option selected"><span>Mardi 21 juillet</span><b>67 %</b></div>
+                    <div class="poll-option"><span>Jeudi 23 juillet</span><b>33 %</b></div>
+                    <small>6 votes · clôture demain à 18:00</small>
+                  </div>
+                  <div class="mock-event"><span class="calendar-day"><b>23</b><small>JUL</small></span><span><strong>Présentation du projet</strong><small>14:00–15:30 · Salle Horizon</small></span></div>
+                  <div class="mock-file"><span class="file-icon"><svg viewBox="0 0 24 24"><path d="M6 2h8l4 4v16H6ZM14 2v5h5"></path></svg></span><span><strong>cahier-des-charges.pdf</strong><small>528 Ko · aperçu disponible</small></span><button type="button" tabindex="-1" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><path d="m9 11 6-4M9 13l6 4"></path></svg></button></div>
                 </div>
-                <div class="mock-event"><span class="calendar-day"><b>23</b><small>JUL</small></span><span><strong>Présentation du projet</strong><small>14:00–15:30 · Salle Horizon</small></span></div>
-                <div class="mock-file"><span class="file-icon"><svg viewBox="0 0 24 24"><path d="M6 2h8l4 4v16H6ZM14 2v5h5"></path></svg></span><span><strong>cahier-des-charges.pdf</strong><small>528 Ko · aperçu disponible</small></span><button type="button" tabindex="-1" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><path d="m9 11 6-4M9 13l6 4"></path></svg></button></div>
+                <aside class="mock-pinned-panel">
+                  <header><strong>Messages épinglés</strong><small>Votre sélection</small></header>
+                  <article><small>Amélie</small><p>Quelle date retenons-nous pour la présentation ?</p><span>Afficher</span></article>
+                  <article><small>Vous</small><p>cahier-des-charges.pdf</p><span>Afficher</span></article>
+                </aside>
               </div>
               <div class="mock-composer">
                 <div class="mock-composer-icons" aria-hidden="true">
@@ -133,7 +141,7 @@
           <div class="feature-icon"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path></svg></div>
           <span class="feature-tag">Conversations</span>
           <h3>Messages privés et groupes chiffrés</h3>
-          <p>Réponses, réactions, épinglage, accusés de lecture, présence, saisie en temps réel et messages éphémères.</p>
+          <p>Réponses, réactions, épinglages personnels réunis dans une fenêtre latérale, accusés de lecture, présence, saisie en temps réel et messages éphémères.</p>
           <div class="mini-chat"><span>Les fichiers sont prêts.</span><span class="mine">Parfait, je lance le vote.</span><span>👍 3</span></div>
         </article>
         <article class="bento-card poll-feature">
@@ -274,7 +282,7 @@
           <h3>Pour explorer et auto-héberger</h3>
           <p class="offer-description">Une édition publique et volontairement compacte pour tester les principes de Vibration.</p>
           <ul class="check-list">
-            <li>Messages privés et groupes</li>
+            <li>Messages privés, groupes et épinglages personnels</li>
             <li>Fichiers chiffrés</li>
             <li>Audio, vidéo et tableau blanc</li>
             <li>PWA et notifications web</li>
