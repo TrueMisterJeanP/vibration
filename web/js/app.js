@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js?v=pinned-header-v165";
+import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js?v=responsive-pinned-v166";
 import {
   decryptBytes,
   decryptEnvelope,
@@ -32,15 +32,15 @@ import {
   syncBrowserSubscription,
   testNotification,
 } from "./notifications.js";
-import { ChatSocket } from "./websocket.js?v=pinned-header-v165";
-import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=pinned-header-v165";
+import { ChatSocket } from "./websocket.js?v=responsive-pinned-v166";
+import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=responsive-pinned-v166";
 
 const CALL_INVITE_TIMEOUT_MS = 45000;
 const CALL_SIGNAL_LOSS_GRACE_MS = 15000;
 const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
 const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "pinned-header-v165";
+const APP_BUILD = "responsive-pinned-v166";
 
 window.VIBRATION_BUILD = APP_BUILD;
 console.info(`Vibration build ${APP_BUILD}`);
@@ -4942,10 +4942,10 @@ function scheduleReplyFilePreview(replyPreview, container, key) {
 
 async function pdfJS() {
   if (!pdfJSModule) {
-    pdfJSModule = import("/vendor/pdfjs/pdf.compat.mjs?v=pinned-header-v165")
-      .then(() => import("/vendor/pdfjs/pdf.min.mjs?v=pinned-header-v165"))
+    pdfJSModule = import("/vendor/pdfjs/pdf.compat.mjs?v=responsive-pinned-v166")
+      .then(() => import("/vendor/pdfjs/pdf.min.mjs?v=responsive-pinned-v166"))
       .then((module) => {
-        module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.compat.mjs?v=pinned-header-v165";
+        module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.compat.mjs?v=responsive-pinned-v166";
         return module;
       })
       .catch((error) => {

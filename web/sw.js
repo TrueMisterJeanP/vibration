@@ -1,11 +1,11 @@
-const CACHE = "chat-pwa-go-v165";
+const CACHE = "chat-pwa-go-v166";
 const SHELL = [
-  "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=pinned-header-v165",
-  "/js/app.js?v=pinned-header-v165", "/js/api.js?v=pinned-header-v165", "/js/crypto.js", "/js/websocket.js?v=pinned-header-v165", "/js/theme.js",
-  "/js/notifications.js", "/js/device-vault.js", "/js/ui.js?v=pinned-header-v165", "/js/share.js?v=pinned-header-v165", "/js/login.js", "/manifest.json",
-  "/vendor/pdfjs/pdf.compat.mjs?v=pinned-header-v165",
-  "/vendor/pdfjs/pdf.min.mjs?v=pinned-header-v165",
-  "/vendor/pdfjs/pdf.worker.compat.mjs?v=pinned-header-v165",
+  "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=responsive-pinned-v166",
+  "/js/app.js?v=responsive-pinned-v166", "/js/api.js?v=responsive-pinned-v166", "/js/crypto.js", "/js/websocket.js?v=responsive-pinned-v166", "/js/theme.js",
+  "/js/notifications.js", "/js/device-vault.js", "/js/ui.js?v=responsive-pinned-v166", "/js/share.js?v=responsive-pinned-v166", "/js/login.js", "/manifest.json",
+  "/vendor/pdfjs/pdf.compat.mjs?v=responsive-pinned-v166",
+  "/vendor/pdfjs/pdf.min.mjs?v=responsive-pinned-v166",
+  "/vendor/pdfjs/pdf.worker.compat.mjs?v=responsive-pinned-v166",
   "/vendor/pdfjs/pdf.worker.min.mjs",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/person.svg", "/icons/group.svg",
 ];

@@ -1,4 +1,4 @@
-import { websocketProtocols, websocketURL } from "./api.js?v=pinned-header-v165";
+import { websocketProtocols, websocketURL } from "./api.js?v=responsive-pinned-v166";
 
 export class ChatSocket extends EventTarget {
   constructor() {

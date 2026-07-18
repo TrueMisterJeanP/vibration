@@ -167,7 +167,7 @@ small { color: var(--muted); }
 .sidebar-navigation-button .menu-mark { display: none; }
 #chat-workspace { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
 #chat-workspace.pinned-open { grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); }
-#message-list { overflow-y: auto; padding: 1.5rem clamp(1rem, 4vw, 4rem); display: flex; flex-direction: column-reverse; gap: .65rem; }
+#message-list { min-width: 0; overflow-y: auto; padding: 1.5rem clamp(1rem, 4vw, 4rem); display: flex; flex-direction: column-reverse; gap: .65rem; }
 #pinned-panel { min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid var(--line); background: rgb(8 31 40 / .98); box-shadow: -12px 0 30px rgb(0 0 0 / .16); }
 #pinned-panel:not([hidden]) { display: grid; grid-template-rows: auto minmax(0, 1fr); }
 #pinned-panel > header { display: flex; align-items: center; justify-content: space-between; gap: .65rem; padding: .9rem; border-bottom: 1px solid var(--line); }
@@ -332,7 +332,7 @@ small { color: var(--muted); }
 .message-reactions { display: flex; flex-wrap: wrap; gap: .25rem; margin-top: .4rem; }
 .message-reactions button { padding: .18rem .45rem; border-radius: 999px; background: rgb(255 255 255 / .1); color: var(--text); font-size: .82rem; }
 .message-reactions button.mine { background: rgb(32 199 181 / .24); border: 1px solid rgb(32 199 181 / .45); }
-.poll-card { display: grid; gap: .65rem; min-width: min(20rem, 70vw); margin-top: .45rem; }
+.poll-card { display: grid; gap: .65rem; width: min(20rem, 100%); min-width: 0; margin-top: .45rem; }
 .poll-card h4 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
 .poll-options { display: grid; gap: .45rem; }
 .poll-option { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .65rem; width: 100%; overflow: hidden; border: 1px solid rgb(255 255 255 / .16); background: rgb(0 0 0 / .12); color: var(--text); text-align: left; }
@@ -346,7 +346,7 @@ small { color: var(--muted); }
 .poll-editor-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .45rem; }
 .poll-editor-row button { width: 2.75rem; padding: 0; background: transparent; color: var(--danger); }
 .poll-editor-help { color: var(--muted); font-size: .85rem; }
-.event-card { display: grid; gap: .55rem; min-width: min(20rem, 72vw); margin-top: .45rem; padding: .75rem; border: 1px solid rgb(32 199 181 / .35); border-radius: .8rem; background: rgb(32 199 181 / .08); }
+.event-card { display: grid; gap: .55rem; width: min(20rem, 100%); min-width: 0; margin-top: .45rem; padding: .75rem; border: 1px solid rgb(32 199 181 / .35); border-radius: .8rem; background: rgb(32 199 181 / .08); }
 .event-card h4, .event-card p { margin: 0; overflow-wrap: anywhere; }
 .event-card h4::before { content: "📅 "; }
 .event-card .event-description { white-space: pre-wrap; }
@@ -489,6 +489,10 @@ fieldset { min-width: 0; border: 1px solid var(--line); border-radius: .8rem; }
 .badge.admin { border-color: #8d6b24; color: #ffe3a3; }
 .badge.manager { border-color: #2b8793; color: #a8eff8; }
 .badge.banned { border-color: #9f4754; color: #ffb7c1; }
+@media (max-width: 1100px) {
+  #chat-workspace.pinned-open { grid-template-columns: minmax(0, 1fr); }
+  #pinned-panel { position: absolute; z-index: 5; inset: 0 0 0 auto; width: min(92%, 360px); border-left: 1px solid var(--line); }
+}
 @media (max-width: 720px) {
   .event-date-fields { grid-template-columns: 1fr; }
   .calendar-dialog { width: calc(100dvw - .5rem); max-width: calc(100dvw - .5rem); }
@@ -574,8 +578,6 @@ fieldset { min-width: 0; border: 1px solid var(--line); border-radius: .8rem; }
     padding: .9rem;
   }
   #message-list { padding: 1rem .75rem; }
-  #chat-workspace.pinned-open { grid-template-columns: minmax(0, 1fr); }
-  #pinned-panel { position: absolute; z-index: 5; inset: 0 0 0 auto; width: min(92%, 360px); border-left: 1px solid var(--line); }
   #thread-typing-label { padding-inline: .9rem; }
   #composer {
     grid-template-columns: minmax(0, 1fr) auto;

@@ -1,5 +1,6 @@
 .git/
 .DS_Store
+/image.png
 node_modules/
 dist/
 /data/chat.db
