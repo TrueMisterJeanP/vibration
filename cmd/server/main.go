@@ -96,6 +96,7 @@ func main() {
 	mux.Handle("POST /api/conversations/{id}/members", authHandler.Middleware(http.HandlerFunc(conversationHandler.AddMember)))
 	mux.Handle("DELETE /api/conversations/{id}/members/{user_id}", authHandler.Middleware(http.HandlerFunc(conversationHandler.RemoveMember)))
 	mux.Handle("GET /api/conversations/{id}/messages", authHandler.Middleware(http.HandlerFunc(messageHandler.List)))
+	mux.Handle("GET /api/conversations/{id}/pinned-messages", authHandler.Middleware(http.HandlerFunc(messageHandler.ListPinned)))
 	mux.Handle("POST /api/conversations/{id}/messages", authHandler.Middleware(http.HandlerFunc(messageHandler.Create)))
 	mux.Handle("POST /api/conversations/{id}/polls", authHandler.Middleware(http.HandlerFunc(messageHandler.CreatePoll)))
 	mux.Handle("POST /api/conversations/{id}/events", authHandler.Middleware(http.HandlerFunc(messageHandler.CreateEvent)))

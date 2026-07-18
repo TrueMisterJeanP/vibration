@@ -1,4 +1,4 @@
-import { decryptBytes, decryptEnvelope, importShareKey } from "./crypto.js?v=modal-pdf-isolation-v163";
+import { decryptBytes, decryptEnvelope, importShareKey } from "./crypto.js?v=pinned-header-v165";
 
 const RETURN_STORAGE_KEY = "vibration.file_share_return";
 const elements = {

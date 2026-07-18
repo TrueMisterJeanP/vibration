@@ -25,7 +25,7 @@ function browserPushSupported() {
 export async function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return null;
   if (!["http:", "https:"].includes(location.protocol)) return null;
-  const registration = await navigator.serviceWorker.register("/sw.js?v=modal-pdf-isolation-v163");
+  const registration = await navigator.serviceWorker.register("/sw.js?v=pinned-header-v165");
   // Demande immédiatement au navigateur de vérifier le nouveau shell PWA.
   // Sans cela, certains clients conservent plusieurs heures l'ancien app.js,
   // où le bouton de sondage n'est pas encore câblé.

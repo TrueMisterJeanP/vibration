@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0f766e">
-  <meta name="vibration-build" content="modal-pdf-isolation-v163">
+  <meta name="vibration-build" content="pinned-header-v165">
   <script src="/js/theme.js"></script>
   <title>Vibration</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=modal-pdf-isolation-v163">
+  <link rel="stylesheet" href="/css/style.css?v=pinned-header-v165">
 </head>
 <body>
   <main id="app-shell" class="sidebar-open" hidden>
@@ -40,14 +40,25 @@
           title="Afficher les contacts et groupes" aria-label="Afficher les contacts, groupes et conversations"
           aria-controls="sidebar" aria-expanded="false"><img class="header-avatar" alt="" hidden><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4.5 21a7.5 7.5 0 0 1 15 0"></path></svg><span class="menu-mark" aria-hidden="true">☰</span></button>
         <div><strong id="chat-title">Sélectionnez une conversation</strong><small id="chat-description"></small><small id="typing-label"></small></div>
-        <div class="call-buttons" aria-label="Fichiers, calendrier et appels">
+        <div class="call-buttons" aria-label="Fichiers, calendrier, appels et messages épinglés">
           <button id="global-files-button" class="icon-button" type="button" title="Afficher tous les fichiers" aria-label="Afficher les fichiers de toutes les discussions"><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h7l2 2h9v11H3Z"></path><path d="M3 6V4h7l2 2"></path></svg></button>
           <button id="calendar-button" class="icon-button" type="button" title="Afficher le calendrier" aria-label="Afficher tous les évènements"><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v16H3Z"></path><path d="M7 3v4M17 3v4M3 10h18"></path></svg></button>
           <button id="audio-call-button" class="icon-button" type="button" title="Appel audio" aria-label="Appel audio" disabled><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.11 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.95.34 1.88.64 2.77a2 2 0 0 1-.45 2.11L8.03 9.87a16 16 0 0 0 6.1 6.1l1.27-1.27a2 2 0 0 1 2.11-.45c.89.3 1.82.52 2.77.64A2 2 0 0 1 22 16.92Z"></path></svg></button>
           <button id="video-call-button" class="icon-button" type="button" title="Appel vidéo" aria-label="Appel vidéo" disabled><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 10.5V6.8A2.8 2.8 0 0 0 12.2 4H5.8A2.8 2.8 0 0 0 3 6.8v10.4A2.8 2.8 0 0 0 5.8 20h6.4a2.8 2.8 0 0 0 2.8-2.8v-3.7l4.15 3.05A1.15 1.15 0 0 0 21 15.62V8.38a1.15 1.15 0 0 0-1.85-.93L15 10.5Z"></path></svg></button>
+          <button id="pinned-window-button" class="icon-button" type="button" title="Afficher vos messages épinglés"
+            aria-label="Afficher vos messages épinglés" aria-controls="pinned-panel" aria-expanded="false" disabled><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v16H3Z"></path><path d="M15 4v16"></path><path d="m9 9 3 3-3 3"></path></svg></button>
         </div>
       </header>
-      <div id="message-list"><div id="empty-chat">Ajoutez un contact ou créez un groupe pour commencer.</div></div>
+      <div id="chat-workspace">
+        <div id="message-list"><div id="empty-chat">Ajoutez un contact ou créez un groupe pour commencer.</div></div>
+        <aside id="pinned-panel" aria-labelledby="pinned-panel-title" hidden>
+          <header>
+            <div><strong id="pinned-panel-title">Messages épinglés</strong><small>Votre sélection personnelle</small></div>
+            <button id="close-pinned-panel" class="icon-button" type="button" title="Fermer la fenêtre" aria-label="Fermer la fenêtre des messages épinglés">×</button>
+          </header>
+          <div id="pinned-message-list"></div>
+        </aside>
+      </div>
       <div id="thread-typing-label" aria-live="polite" hidden></div>
       <div id="call-banner" class="call-banner" hidden>
         <span id="call-banner-label"></span>
@@ -356,6 +367,6 @@
     </form>
   </dialog>
   <div id="toasts" aria-live="polite"></div>
-  <script type="module" src="/js/app.js?v=modal-pdf-isolation-v163"></script>
+  <script type="module" src="/js/app.js?v=pinned-header-v165"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js?v=modal-pdf-isolation-v163";
+import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js?v=pinned-header-v165";
 import {
   decryptBytes,
   decryptEnvelope,
@@ -32,15 +32,15 @@ import {
   syncBrowserSubscription,
   testNotification,
 } from "./notifications.js";
-import { ChatSocket } from "./websocket.js?v=modal-pdf-isolation-v163";
-import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=modal-pdf-isolation-v163";
+import { ChatSocket } from "./websocket.js?v=pinned-header-v165";
+import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=pinned-header-v165";
 
 const CALL_INVITE_TIMEOUT_MS = 45000;
 const CALL_SIGNAL_LOSS_GRACE_MS = 15000;
 const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
 const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "modal-pdf-isolation-v163";
+const APP_BUILD = "pinned-header-v165";
 
 window.VIBRATION_BUILD = APP_BUILD;
 console.info(`Vibration build ${APP_BUILD}`);
@@ -92,6 +92,11 @@ const elements = {
   shell: document.querySelector("#app-shell"),
   conversations: document.querySelector("#conversation-list"),
   messages: document.querySelector("#message-list"),
+  chatWorkspace: document.querySelector("#chat-workspace"),
+  pinnedPanel: document.querySelector("#pinned-panel"),
+  pinnedMessages: document.querySelector("#pinned-message-list"),
+  pinnedWindowButton: document.querySelector("#pinned-window-button"),
+  closePinnedPanel: document.querySelector("#close-pinned-panel"),
   title: document.querySelector("#chat-title"),
   description: document.querySelector("#chat-description"),
   typing: document.querySelector("#typing-label"),
@@ -726,6 +731,8 @@ function bindUI() {
     }
   };
   elements.eventButton.addEventListener("click", () => openEventDialog());
+  elements.pinnedWindowButton.addEventListener("click", () => setPinnedPanelOpen(elements.pinnedPanel.hidden));
+  elements.closePinnedPanel.addEventListener("click", () => setPinnedPanelOpen(false));
   elements.calendarButton.addEventListener("click", () => openCalendar());
   elements.globalFilesButton.addEventListener("click", () => openGlobalFiles());
   document.querySelector("#event-form").addEventListener("submit", submitEvent);
@@ -1597,6 +1604,8 @@ function closeCurrentConversation(conversationID) {
   elements.emojiButton.disabled = true;
   elements.pollButton.disabled = true;
   elements.eventButton.disabled = true;
+  elements.pinnedWindowButton.disabled = true;
+  setPinnedPanelOpen(false);
   updateCallUI();
   closeEmojiPicker();
   elements.title.textContent = "Sélectionnez une conversation";
@@ -1851,6 +1860,7 @@ async function selectConversation(conversation, targetMessageID = null) {
   elements.voiceButton.disabled = false;
   elements.pollButton.disabled = false;
   elements.eventButton.disabled = false;
+  elements.pinnedWindowButton.disabled = false;
   updateCallButtons();
   const selectedID = conversation.id;
   const display = await resolveConversationDisplay(conversation);
@@ -1863,6 +1873,7 @@ async function selectConversation(conversation, targetMessageID = null) {
   elements.threadTyping.hidden = !typing;
   await renderConversations();
   await loadMessages(targetMessageID);
+  if (!elements.pinnedPanel.hidden) await loadPinnedMessages();
   updateCallUI();
   elements.input.focus({ preventScroll: true });
   if (targetMessageID) await revealMessage(targetMessageID);
@@ -3723,10 +3734,97 @@ async function togglePinnedMessage(message) {
       body: { pinned: !message.is_pinned },
     });
     await loadMessages();
+    if (!elements.pinnedPanel.hidden) await loadPinnedMessages();
     toast(message.is_pinned ? "Message désépinglé." : "Message épinglé.", "success");
   } catch (error) {
     toast(frenchErrorMessage(error, "Impossible de modifier l’épinglage."), "error");
   }
+}
+
+async function setPinnedPanelOpen(open) {
+  if (open && !state.current) return;
+  elements.pinnedPanel.hidden = !open;
+  elements.chatWorkspace.classList.toggle("pinned-open", open);
+  elements.pinnedWindowButton.setAttribute("aria-expanded", String(open));
+  elements.pinnedWindowButton.title = open ? "Masquer vos messages épinglés" : "Afficher vos messages épinglés";
+  elements.pinnedWindowButton.setAttribute("aria-label", elements.pinnedWindowButton.title);
+  if (!open) return;
+  await loadPinnedMessages();
+}
+
+async function loadPinnedMessages() {
+  if (!state.current || elements.pinnedPanel.hidden) return;
+  const conversation = state.current;
+  const loading = document.createElement("p");
+  loading.className = "pinned-message-empty";
+  loading.textContent = "Chargement…";
+  elements.pinnedMessages.replaceChildren(loading);
+  try {
+    const [messages, key] = await Promise.all([
+      api(`/api/conversations/${conversation.id}/pinned-messages`),
+      getConversationKey(conversation),
+    ]);
+    if (!sameID(state.current?.id, conversation.id) || elements.pinnedPanel.hidden) return;
+    if (!messages.length) {
+      const empty = document.createElement("p");
+      empty.className = "pinned-message-empty";
+      empty.textContent = "Vous n’avez épinglé aucun message dans cette conversation.";
+      elements.pinnedMessages.replaceChildren(empty);
+      return;
+    }
+    const decrypted = await Promise.all(messages.map(async (message) => ({
+      message: messageWithCurrentUserProfile(message),
+      clear: await decryptMessageContent(message, key),
+    })));
+    const fragment = document.createDocumentFragment();
+    for (const { message, clear } of decrypted) {
+      const card = document.createElement("article");
+      card.className = "pinned-message-card";
+      const meta = document.createElement("div");
+      meta.className = "pinned-message-meta";
+      const author = document.createElement("strong");
+      author.textContent = sameID(message.sender_id, state.me.id) ? "Vous" : message.sender_username;
+      const date = document.createElement("time");
+      date.dateTime = message.created_at;
+      date.textContent = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(message.created_at));
+      meta.append(author, date);
+      const preview = document.createElement("p");
+      preview.className = "pinned-message-preview";
+      preview.textContent = pinnedMessagePreview(message, clear);
+      const actions = document.createElement("div");
+      actions.className = "pinned-message-actions";
+      const show = document.createElement("button");
+      show.type = "button";
+      show.textContent = "Afficher";
+      show.addEventListener("click", async () => {
+        await loadMessages(message.id);
+        await revealMessage(message.id);
+        if (window.matchMedia("(max-width: 720px)").matches) await setPinnedPanelOpen(false);
+      });
+      const unpin = document.createElement("button");
+      unpin.type = "button";
+      unpin.className = "unpin-button";
+      unpin.textContent = "Désépingler";
+      unpin.addEventListener("click", () => togglePinnedMessage(message));
+      actions.append(show, unpin);
+      card.append(meta, preview, actions);
+      fragment.append(card);
+    }
+    elements.pinnedMessages.replaceChildren(fragment);
+  } catch (error) {
+    if (!sameID(state.current?.id, conversation.id) || elements.pinnedPanel.hidden) return;
+    const failure = document.createElement("p");
+    failure.className = "pinned-message-empty";
+    failure.textContent = frenchErrorMessage(error, "Impossible de charger les messages épinglés.");
+    elements.pinnedMessages.replaceChildren(failure);
+  }
+}
+
+function pinnedMessagePreview(message, clear) {
+  if (message.file) return `Fichier : ${clear.name}`;
+  if (message.poll) return `Sondage : ${clear.question}`;
+  if (message.event) return `Évènement : ${clear.name}`;
+  return compactPreviewText(clear) || "Message vide";
 }
 
 async function appendMessage(message, scroll = true) {
@@ -4844,10 +4942,10 @@ function scheduleReplyFilePreview(replyPreview, container, key) {
 
 async function pdfJS() {
   if (!pdfJSModule) {
-    pdfJSModule = import("/vendor/pdfjs/pdf.compat.mjs?v=modal-pdf-isolation-v163")
-      .then(() => import("/vendor/pdfjs/pdf.min.mjs?v=modal-pdf-isolation-v163"))
+    pdfJSModule = import("/vendor/pdfjs/pdf.compat.mjs?v=pinned-header-v165")
+      .then(() => import("/vendor/pdfjs/pdf.min.mjs?v=pinned-header-v165"))
       .then((module) => {
-        module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.compat.mjs?v=modal-pdf-isolation-v163";
+        module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.compat.mjs?v=pinned-header-v165";
         return module;
       })
       .catch((error) => {
@@ -5441,6 +5539,7 @@ async function handleSocketEvent(event) {
     await renderConversations();
     if ((event.deleted_message_id || event.updated_message_id || event.reaction_message_id || event.pinned_message_id || event.poll_message_id || event.profile_updated) && currentID === event.conversation_id) {
       await loadMessages();
+      if (event.pinned_message_id && !elements.pinnedPanel.hidden) await loadPinnedMessages();
     }
   } else if (event.type === "typing") {
     await setTypingUser(event.conversation_id, event.user_id, event.typing);

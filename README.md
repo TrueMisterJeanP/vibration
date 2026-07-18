@@ -166,7 +166,7 @@ Placer ensuite Vibration derrière un reverse proxy HTTPS, par exemple Nginx ou 
 - conversations privées avec clé AES dérivée par ECDH + HKDF ;
 - groupes avec clé AES aléatoire enveloppée par ECDH pour chaque membre ;
 - messages texte AES-GCM, IV unique, historique paginé à 50 messages ;
-- réponses, réactions, messages épinglés et messages éphémères configurables par appui long sur **Envoyer** ;
+- réponses, réactions, messages épinglés personnels avec fenêtre latérale dédiée, et messages éphémères configurables par appui long sur **Envoyer** ;
 - messages vocaux enregistrés dans le navigateur puis envoyés comme fichiers audio chiffrés ;
 - fichiers, nom de fichier et type MIME chiffrés avant envoi, limite 10 Mo ;
 - sondages à choix unique avec plusieurs réponses possibles, date d’expiration et modification réservée au créateur ;
@@ -304,6 +304,7 @@ Conversations :
 Messages et fichiers :
 
 - `GET /api/conversations/{id}/messages?limit=50&before=`
+- `GET /api/conversations/{id}/pinned-messages`
 - `POST /api/conversations/{id}/messages`
 - `POST /api/messages/{id}/read`
 - `POST /api/messages/{id}/reactions`

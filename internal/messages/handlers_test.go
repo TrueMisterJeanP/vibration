@@ -270,9 +270,9 @@ func TestAuthorCanDeleteMessage(t *testing.T) {
 	if pinResponse.Code != http.StatusOK {
 		t.Fatalf("pin status=%d body=%s", pinResponse.Code, pinResponse.Body.String())
 	}
-	var pinnedBy sql.NullInt64
-	if err := db.QueryRow(`SELECT pinned_by FROM messages WHERE id=?`, messageID).Scan(&pinnedBy); err != nil || !pinnedBy.Valid || pinnedBy.Int64 != 1 {
-		t.Fatalf("pinned_by=%v err=%v", pinnedBy, err)
+	var pinCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM message_pins WHERE message_id=? AND user_id=1`, messageID).Scan(&pinCount); err != nil || pinCount != 1 {
+		t.Fatalf("personal pin count=%d err=%v", pinCount, err)
 	}
 	request := httptest.NewRequest(http.MethodDelete, "/api/messages/"+formatMessageID(messageID), nil)
 	request.AddCookie(cookie)
@@ -285,8 +285,8 @@ func TestAuthorCanDeleteMessage(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM messages WHERE id=?`, messageID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("message count=%d err=%v", count, err)
 	}
-	if len(hub.sent) != 8 {
-		t.Fatalf("broadcast count=%d, want 8 (update, reaction, pin, delete events)", len(hub.sent))
+	if len(hub.sent) != 7 {
+		t.Fatalf("broadcast count=%d, want 7 (update, reaction, personal pin, delete events)", len(hub.sent))
 	}
 	deleteRecipients := map[int64]bool{}
 	for _, sent := range hub.sent {
@@ -301,6 +301,96 @@ func TestAuthorCanDeleteMessage(t *testing.T) {
 	}
 	if !deleteRecipients[1] || !deleteRecipients[2] || len(deleteRecipients) != 2 {
 		t.Fatalf("delete recipients=%v, want users 1 and 2", deleteRecipients)
+	}
+}
+
+func TestMessagePinsArePersonalToEachMember(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	first := registerMessageUserNamed(t, authHandler, "first_pinner", "First Pinner")
+	second := registerMessageUserNamed(t, authHandler, "second_pinner", "Second Pinner")
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	conversation, err := db.Exec(`INSERT INTO conversations(type,created_by,created_at) VALUES('private',1,?)`, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationID, _ := conversation.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
+		VALUES(?,1,'first-key','owner',?),(?,2,'second-key','member',?)`, conversationID, now, conversationID, now); err != nil {
+		t.Fatal(err)
+	}
+	message, err := db.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,created_at)
+		VALUES(?,1,'encrypted','message-iv',?)`, conversationID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messageID, _ := message.LastInsertId()
+
+	handler := &Handler{DB: db, Hub: &testHub{}}
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/conversations/{id}/messages", authHandler.Middleware(http.HandlerFunc(handler.List)))
+	mux.Handle("GET /api/conversations/{id}/pinned-messages", authHandler.Middleware(http.HandlerFunc(handler.ListPinned)))
+	mux.Handle("POST /api/messages/{id}/pin", authHandler.Middleware(http.HandlerFunc(handler.Pin)))
+
+	setPin := func(cookie *http.Cookie, pinned bool) {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPost, "/api/messages/"+formatMessageID(messageID)+"/pin", bytes.NewBufferString(`{"pinned":`+strconv.FormatBool(pinned)+`}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.AddCookie(cookie)
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("set pin=%t status=%d body=%s", pinned, response.Code, response.Body.String())
+		}
+	}
+	list := func(cookie *http.Cookie, path string) []Message {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.AddCookie(cookie)
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("list %s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+		var result []Message
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+
+	setPin(first, true)
+	conversationPath := "/api/conversations/" + formatMessageID(conversationID)
+	firstMessages := list(first, conversationPath+"/messages")
+	secondMessages := list(second, conversationPath+"/messages")
+	if len(firstMessages) != 1 || !firstMessages[0].IsPinned {
+		t.Fatalf("first member messages=%+v, want personal pin", firstMessages)
+	}
+	if len(secondMessages) != 1 || secondMessages[0].IsPinned {
+		t.Fatalf("second member messages=%+v, pin must remain private", secondMessages)
+	}
+	if pins := list(first, conversationPath+"/pinned-messages"); len(pins) != 1 || pins[0].ID != messageID {
+		t.Fatalf("first member pins=%+v", pins)
+	}
+	if pins := list(second, conversationPath+"/pinned-messages"); len(pins) != 0 {
+		t.Fatalf("second member pins=%+v, want none", pins)
+	}
+
+	setPin(second, true)
+	setPin(first, false)
+	var firstCount, secondCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM message_pins WHERE message_id=? AND user_id=1`, messageID).Scan(&firstCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM message_pins WHERE message_id=? AND user_id=2`, messageID).Scan(&secondCount); err != nil {
+		t.Fatal(err)
+	}
+	if firstCount != 0 || secondCount != 1 {
+		t.Fatalf("personal pin counts first=%d second=%d", firstCount, secondCount)
 	}
 }
 

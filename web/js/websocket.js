@@ -1,4 +1,4 @@
-import { websocketProtocols, websocketURL } from "./api.js?v=modal-pdf-isolation-v163";
+import { websocketProtocols, websocketURL } from "./api.js?v=pinned-header-v165";
 
 export class ChatSocket extends EventTarget {
   constructor() {

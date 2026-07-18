@@ -90,6 +90,12 @@ var migrations = []string{
 		created_at TEXT NOT NULL,
 		UNIQUE(message_id, user_id, emoji)
 	)`,
+	`CREATE TABLE IF NOT EXISTS message_pins (
+		message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		created_at TEXT NOT NULL,
+		PRIMARY KEY(message_id, user_id)
+	)`,
 	`CREATE TABLE IF NOT EXISTS message_events (
 		message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
 		starts_at TEXT NOT NULL,
@@ -218,6 +224,7 @@ var migrations = []string{
 	`CREATE INDEX IF NOT EXISTS idx_members_user ON conversation_members(user_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, id DESC)`,
 	`CREATE INDEX IF NOT EXISTS idx_message_reactions_message ON message_reactions(message_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_message_pins_user ON message_pins(user_id, created_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS idx_message_events_dates ON message_events(starts_at, ends_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_poll_options_message ON poll_options(message_id, position)`,
 	`CREATE INDEX IF NOT EXISTS idx_poll_votes_message ON poll_votes(message_id)`,
@@ -351,6 +358,12 @@ func Migrate(database *sql.DB) error {
 			created_at TEXT NOT NULL,
 			UNIQUE(message_id, user_id, emoji)
 		)`,
+		`CREATE TABLE IF NOT EXISTS message_pins (
+			message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY(message_id, user_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS message_events (
 			message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
 			starts_at TEXT NOT NULL,
@@ -376,6 +389,7 @@ func Migrate(database *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_federation_outbox_ready ON federation_outbox(sent_at, next_attempt_at, locked_until_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages(expires_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_message_reactions_message ON message_reactions(message_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_message_pins_user ON message_pins(user_id, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_message_events_dates ON message_events(starts_at, ends_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_poll_options_message ON poll_options(message_id, position)`,
 		`CREATE INDEX IF NOT EXISTS idx_poll_votes_message ON poll_votes(message_id)`,
@@ -383,6 +397,11 @@ func Migrate(database *sql.DB) error {
 		if _, err := tx.Exec(statement); err != nil {
 			return fmt.Errorf("create federation index: %w", err)
 		}
+	}
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO message_pins(message_id,user_id,created_at)
+		SELECT id,pinned_by,pinned_at FROM messages
+		WHERE pinned_by IS NOT NULL AND pinned_at IS NOT NULL`); err != nil {
+		return fmt.Errorf("backfill personal message pins: %w", err)
 	}
 	if _, err := tx.Exec(`UPDATE users SET is_admin=1
 		WHERE id=(SELECT id FROM users ORDER BY id LIMIT 1)

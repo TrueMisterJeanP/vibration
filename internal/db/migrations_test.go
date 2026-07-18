@@ -17,7 +17,7 @@ func TestOpenCreatesRequiredTables(t *testing.T) {
 
 	required := []string{
 		"users", "sessions", "contacts", "conversations", "conversation_members",
-		"messages", "message_events", "message_reactions", "poll_options", "poll_votes", "message_receipts", "files", "push_subscriptions", "admin_actions", "app_settings", "user_terms_acceptances",
+		"messages", "message_events", "message_reactions", "message_pins", "poll_options", "poll_votes", "message_receipts", "files", "push_subscriptions", "admin_actions", "app_settings", "user_terms_acceptances",
 		"federated_instances", "federated_conversations", "federated_message_map", "federation_outbox",
 	}
 	for _, table := range required {
@@ -203,6 +203,36 @@ func TestMigrateAddsMessageFeatureColumnsToLegacyMessages(t *testing.T) {
 	}
 	if indexCount != 1 {
 		t.Fatal("idx_messages_expires was not created")
+	}
+}
+
+func TestMigratePreservesLegacyPinForItsOwner(t *testing.T) {
+	database, err := Open(filepath.Join(t.TempDir(), "legacy-pin.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	now := "2026-07-18T12:00:00Z"
+	if _, err := database.Exec(`INSERT INTO users(id,username,display_name,password_hash,public_key,encrypted_private_key,crypto_salt,created_at)
+		VALUES(1,'pin_owner','Pin Owner','hash','public','private','salt',?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO conversations(id,type,created_by,created_at) VALUES(1,'private',1,?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO messages(id,conversation_id,sender_id,encrypted_content,iv,pinned_by,pinned_at,created_at)
+		VALUES(1,1,1,'encrypted','iv',1,?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM message_pins WHERE message_id=1 AND user_id=1 AND created_at=?`, now).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("migrated personal pin count=%d, want 1", count)
 	}
 }
 

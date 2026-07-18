@@ -130,7 +130,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	h.deleteExpired(conversationID)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	query := `SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,m.encrypted_content,m.iv,m.reply_to,m.expires_at,m.pinned_by,m.pinned_at,m.created_at,m.updated_at,
+	query := `SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,m.encrypted_content,m.iv,m.reply_to,m.expires_at,mp.user_id,mp.created_at,m.created_at,m.updated_at,
 		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,
 		CASE
 			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status<>'read') THEN 'read'
@@ -138,9 +138,10 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 			ELSE 'sent'
 		END
 		FROM messages m JOIN users u ON u.id=m.sender_id LEFT JOIN files f ON f.message_id=m.id
+		LEFT JOIN message_pins mp ON mp.message_id=m.id AND mp.user_id=?
 		JOIN conversation_members cm ON cm.conversation_id=m.conversation_id AND cm.user_id=? AND cm.role<>'pending'
 		WHERE m.conversation_id=? AND m.id` + comparison + `? AND m.created_at>=cm.created_at AND (m.expires_at IS NULL OR m.expires_at>?) ORDER BY m.id ` + order + ` LIMIT ?`
-	rows, err := h.DB.Query(query, auth.UserID(r), conversationID, boundary, now, limit)
+	rows, err := h.DB.Query(query, auth.UserID(r), auth.UserID(r), conversationID, boundary, now, limit)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "message lookup failed")
 		return
@@ -176,6 +177,63 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 			result[left], result[right] = result[right], result[left]
 		}
 	}
+	httpx.JSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) ListPinned(w http.ResponseWriter, r *http.Request) {
+	conversationID, err := httpx.PathID(r, "id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	userID := auth.UserID(r)
+	if !h.isMember(conversationID, userID) {
+		httpx.Error(w, http.StatusNotFound, "conversation not found")
+		return
+	}
+	h.deleteExpired(conversationID)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	rows, err := h.DB.Query(`SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,m.encrypted_content,m.iv,m.reply_to,m.expires_at,mp.user_id,mp.created_at,m.created_at,m.updated_at,
+		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,
+		CASE
+			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status<>'read') THEN 'read'
+			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status='sent') THEN 'delivered'
+			ELSE 'sent'
+		END
+		FROM message_pins mp JOIN messages m ON m.id=mp.message_id
+		JOIN users u ON u.id=m.sender_id LEFT JOIN files f ON f.message_id=m.id
+		JOIN conversation_members cm ON cm.conversation_id=m.conversation_id AND cm.user_id=mp.user_id AND cm.role<>'pending'
+		WHERE mp.user_id=? AND m.conversation_id=? AND m.created_at>=cm.created_at
+		AND (m.expires_at IS NULL OR m.expires_at>?)
+		ORDER BY mp.created_at DESC`, userID, conversationID, now)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "message lookup failed")
+		return
+	}
+	defer rows.Close()
+	result := make([]Message, 0)
+	for rows.Next() {
+		var item Message
+		var fileID, pinnedBy sql.NullInt64
+		var fileName, fileMIME, fileIV, expiresAt, pinnedAt sql.NullString
+		var fileSize sql.NullInt64
+		if rows.Scan(&item.ID, &item.ConversationID, &item.SenderID, &item.SenderUsername, &item.SenderAvatar, &item.EncryptedContent, &item.IV,
+			&item.ReplyTo, &expiresAt, &pinnedBy, &pinnedAt, &item.CreatedAt, &item.UpdatedAt, &fileID, &fileName, &fileMIME, &fileIV, &fileSize, &item.Status) == nil {
+			if expiresAt.Valid {
+				item.ExpiresAt = &expiresAt.String
+			}
+			item.IsPinned = true
+			item.PinnedBy = &pinnedBy.Int64
+			item.PinnedAt = &pinnedAt.String
+			if fileID.Valid {
+				item.File = &File{ID: fileID.Int64, EncryptedName: fileName.String, EncryptedMIME: fileMIME.String, IV: fileIV.String, Size: fileSize.Int64}
+			}
+			result = append(result, item)
+		}
+	}
+	h.attachReactions(result, userID)
+	h.attachPolls(result, userID)
+	h.attachEvents(result)
 	httpx.JSON(w, http.StatusOK, result)
 }
 
@@ -501,19 +559,22 @@ func (h *Handler) Pin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if input.Pinned {
-		_, err = h.DB.Exec(`UPDATE messages SET pinned_by=?,pinned_at=? WHERE id=?`, userID, now, messageID)
+		var existing int
+		err = h.DB.QueryRow(`SELECT COUNT(*) FROM message_pins WHERE message_id=? AND user_id=?`, messageID, userID).Scan(&existing)
+		if err == nil && existing == 0 {
+			_, err = h.DB.Exec(`INSERT INTO message_pins(message_id,user_id,created_at) VALUES(?,?,?)`, messageID, userID, now)
+		}
 	} else {
-		_, err = h.DB.Exec(`UPDATE messages SET pinned_by=NULL,pinned_at=NULL WHERE id=?`, messageID)
+		_, err = h.DB.Exec(`DELETE FROM message_pins WHERE message_id=? AND user_id=?`, messageID, userID)
 	}
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "message pin update failed")
 		return
 	}
-	h.broadcastEvent(conversationID, map[string]any{
-		"type": "conversation_updated", "conversation_id": conversationID, "pinned_message_id": messageID,
-	})
-	if h.Federation != nil {
-		h.Federation.QueuePin(messageID, userID, input.Pinned, now)
+	if h.Hub != nil {
+		h.Hub.SendToUser(userID, map[string]any{
+			"type": "conversation_updated", "conversation_id": conversationID, "pinned_message_id": messageID,
+		})
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
