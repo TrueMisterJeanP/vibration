@@ -71,6 +71,8 @@ Pour un test auto-hébergé proche de la production :
 - limitez les permissions du dossier `data/` ;
 - sauvegardez ensemble `data/chat.db`, `data/app_secret` et les clefs VAPID ;
 - maintenez à jour l’outil Go et le système d’exploitation ;
+- utilisez Go 1.26.5 ou une version corrective ultérieure ; les versions plus
+  anciennes sont refusées par le module ;
 - relisez `DEPENDENCIES.md` et `THIRD_PARTY_NOTICES.md` avant redistribution ;
 - ne publiez pas `.env`, certificats, clefs privées, bases de données ou
   binaires locaux.

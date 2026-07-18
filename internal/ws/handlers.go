@@ -87,7 +87,7 @@ func allowOrigin(origin, host string, allowed []string) bool {
 	}
 	for _, value := range allowed {
 		value = strings.TrimRight(strings.TrimSpace(value), "/")
-		if value == "*" || value == origin {
+		if value != "*" && value == origin {
 			return true
 		}
 	}

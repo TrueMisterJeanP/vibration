@@ -113,6 +113,7 @@ func main() {
 	mux.Handle("GET /api/files/{id}", authHandler.Middleware(http.HandlerFunc(fileHandler.Download)))
 	mux.Handle("POST /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(fileHandler.CreateShare)))
 	mux.Handle("GET /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(fileHandler.ListShares)))
+	mux.Handle("DELETE /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(fileHandler.DeleteFileShares)))
 	mux.HandleFunc("GET /api/file-shares/{token}", fileHandler.PublicShare)
 	mux.HandleFunc("GET /api/file-shares/{token}/download", fileHandler.DownloadShare)
 	mux.Handle("DELETE /api/file-shares/{id}", authHandler.Middleware(http.HandlerFunc(fileHandler.DeleteShare)))
@@ -149,6 +150,7 @@ func main() {
 	server := &http.Server{
 		Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 90 * time.Second,
+		MaxHeaderBytes: 64 << 10,
 	}
 	log.Printf("chat-pwa-go listening on http://localhost%s", cfg.Addr)
 	startFederationWorkers(routeDeps, federationWorkerConfig{
@@ -205,25 +207,23 @@ func originGuard(next http.Handler, policy originPolicy) http.Handler {
 }
 
 type originPolicy struct {
-	any     bool
 	allowed map[string]bool
 }
 
 func newOriginPolicy(origins []string) originPolicy {
 	policy := originPolicy{allowed: make(map[string]bool, len(origins))}
 	for _, origin := range origins {
-		if origin == "*" {
-			policy.any = true
-			continue
+		origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+		if origin != "" && origin != "*" {
+			policy.allowed[origin] = true
 		}
-		policy.allowed[strings.TrimRight(origin, "/")] = true
 	}
 	return policy
 }
 
 func (p originPolicy) allow(origin, host string) bool {
 	origin = strings.TrimRight(origin, "/")
-	return origin == "" || origin == "http://"+host || origin == "https://"+host || p.any || p.allowed[origin]
+	return origin == "" || origin == "http://"+host || origin == "https://"+host || p.allowed[origin]
 }
 
 func cors(next http.Handler, policy originPolicy) http.Handler {
@@ -261,6 +261,10 @@ func sameSiteMode(value string) http.SameSite {
 
 func securityHeaders(next http.Handler, strictTransport bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Pragma", "no-cache")
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")

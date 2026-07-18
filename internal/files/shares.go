@@ -212,6 +212,30 @@ func (h *Handler) DeleteShare(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"revoked": true, "revoked_at": now})
 }
 
+func (h *Handler) DeleteFileShares(w http.ResponseWriter, r *http.Request) {
+	fileID, err := httpx.PathID(r, "id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := h.DB.Exec(`UPDATE file_shares SET revoked_at=?
+		WHERE file_id=? AND created_by=? AND revoked_at IS NULL AND expires_at>?`,
+		now, fileID, auth.UserID(r), now)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "file share revocation failed")
+		return
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		httpx.Error(w, http.StatusNotFound, "file share not found")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"revoked": true, "revoked_count": affected, "revoked_at": now,
+	})
+}
+
 func (h *Handler) publicShare(token string, includeData bool) (publicShare, int, error) {
 	if !validShareToken(token) {
 		return publicShare{}, http.StatusNotFound, shareError("file share not found")

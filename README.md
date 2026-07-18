@@ -75,7 +75,7 @@ Offre Enterprise : https://vibration-shop.appbox.fr
 
 Prérequis :
 
-- Go 1.25 ou supérieur ;
+- Go 1.26.5 ou supérieur ;
 - un navigateur récent ;
 - `localhost` ou HTTPS pour la PWA et les notifications Push.
 
@@ -343,7 +343,7 @@ Variables d’environnement :
 | `SESSION_SAME_SITE` | `lax` | mode SameSite du cookie de session : `lax`, `strict` ou `none` |
 | `VAPID_SUBJECT` | `admin@example.com` | adresse de contact VAPID, sans préfixe `mailto:` |
 | `AUTH_RATE_LIMIT_PER_MINUTE` | `20` | nombre maximal de tentatives de connexion ou inscription par minute, par IP et nom d’utilisateur |
-| `CLIENT_ORIGINS` | vide | origines web autorisées à appeler l’API et le WebSocket, séparées par des virgules |
+| `CLIENT_ORIGINS` | vide | origines web explicites autorisées à appeler l’API et le WebSocket, séparées par des virgules ; le joker `*` est refusé |
 
 Exemple production derrière un reverse proxy HTTPS :
 

@@ -22,7 +22,7 @@ de licence amont lorsque les licences concernées l’exigent.
 | `github.com/SherClockHolmes/webpush-go` | `v1.4.0` | MIT | Copyright Ethan Holmes. |
 | `github.com/dustin/go-humanize` | `v1.0.1` | MIT | Copyright Dustin Sallings. |
 | `github.com/go-sql-driver/mysql` | `v1.10.0` | MPL-2.0 | Copyright The Go-MySQL-Driver Authors. Présent pour la compatibilité d’erreurs du code partagé ; le déploiement MySQL n’est pas une fonction Community. |
-| `github.com/golang-jwt/jwt/v5` | `v5.2.1` | MIT | Copyright Dave Grijalva et les mainteneurs golang-jwt. |
+| `github.com/golang-jwt/jwt/v5` | `v5.2.2` | MIT | Copyright Dave Grijalva et les mainteneurs golang-jwt. |
 | `github.com/google/uuid` | `v1.6.0` | BSD-3-Clause | Copyright Google Inc. |
 | `github.com/gorilla/websocket` | `v1.5.3` | BSD-2-Clause | Copyright The Gorilla WebSocket Authors. |
 | `github.com/jackc/pgpassfile` | `v1.0.0` | MIT | Copyright Jack Christensen. |
@@ -32,10 +32,10 @@ de licence amont lorsque les licences concernées l’exigent.
 | `github.com/mattn/go-isatty` | `v0.0.20` | MIT | Copyright Yasuhiro Matsumoto. |
 | `github.com/ncruces/go-strftime` | `v0.1.9` | MIT | Copyright Nuno Cruces. |
 | `github.com/remyoudompheng/bigfft` | `v0.0.0-20230129092748-24d4a6f8daec` | BSD-3-Clause | Copyright The Go Authors. |
-| `golang.org/x/crypto` | `v0.31.0` | BSD-3-Clause | Copyright The Go Authors. |
-| `golang.org/x/sync` | `v0.17.0` | BSD-3-Clause | Copyright The Go Authors. |
-| `golang.org/x/sys` | `v0.28.0` | BSD-3-Clause | Copyright The Go Authors. |
-| `golang.org/x/text` | `v0.29.0` | BSD-3-Clause | Copyright The Go Authors. |
+| `golang.org/x/crypto` | `v0.52.0` | BSD-3-Clause | Copyright The Go Authors. |
+| `golang.org/x/sync` | `v0.20.0` | BSD-3-Clause | Copyright The Go Authors. |
+| `golang.org/x/sys` | `v0.45.0` | BSD-3-Clause | Copyright The Go Authors. |
+| `golang.org/x/text` | `v0.37.0` | BSD-3-Clause | Copyright The Go Authors. |
 | `modernc.org/libc` | `v1.55.3` | BSD-3-Clause | Copyright The Libc Authors. |
 | `modernc.org/mathutil` | `v1.6.0` | BSD-3-Clause | Copyright The mathutil Authors. |
 | `modernc.org/memory` | `v1.8.0` | BSD-3-Clause | Copyright The Memory Authors. |

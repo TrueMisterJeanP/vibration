@@ -32,11 +32,12 @@ type Handler struct {
 }
 
 type listedFile struct {
-	ID            int64  `json:"id"`
-	EncryptedName string `json:"encrypted_name"`
-	EncryptedMIME string `json:"encrypted_mime"`
-	IV            string `json:"iv"`
-	Size          int64  `json:"size"`
+	ID               int64  `json:"id"`
+	EncryptedName    string `json:"encrypted_name"`
+	EncryptedMIME    string `json:"encrypted_mime"`
+	IV               string `json:"iv"`
+	Size             int64  `json:"size"`
+	ActiveShareCount int64  `json:"active_share_count"`
 }
 
 type listedFileMessage struct {
@@ -55,13 +56,16 @@ type listedFileMessage struct {
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	userID := auth.UserID(r)
 	rows, err := h.DB.Query(`SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,
 		m.encrypted_content,m.iv,m.expires_at,m.created_at,m.updated_at,
-		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size
+		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,
+		(SELECT COUNT(*) FROM file_shares fs WHERE fs.file_id=f.id AND fs.created_by=?
+			AND fs.revoked_at IS NULL AND fs.expires_at>?)
 		FROM files f JOIN messages m ON m.id=f.message_id JOIN users u ON u.id=m.sender_id
 		JOIN conversation_members cm ON cm.conversation_id=m.conversation_id AND cm.user_id=? AND cm.role<>'pending'
 		WHERE m.created_at>=cm.created_at AND (m.expires_at IS NULL OR m.expires_at>?)
-		ORDER BY m.created_at DESC,m.id DESC`, auth.UserID(r), now)
+		ORDER BY m.created_at DESC,m.id DESC`, userID, now, userID, now)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "file lookup failed")
 		return
@@ -73,7 +77,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		var file listedFile
 		if rows.Scan(&message.ID, &message.ConversationID, &message.SenderID, &message.SenderUsername, &message.SenderAvatar,
 			&message.EncryptedContent, &message.IV, &message.ExpiresAt, &message.CreatedAt, &message.UpdatedAt,
-			&file.ID, &file.EncryptedName, &file.EncryptedMIME, &file.IV, &file.Size) == nil {
+			&file.ID, &file.EncryptedName, &file.EncryptedMIME, &file.IV, &file.Size, &file.ActiveShareCount) == nil {
 			message.File = &file
 			result = append(result, message)
 		}

@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js";
+import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js?v=modal-pdf-isolation-v163";
 import {
   decryptBytes,
   decryptEnvelope,
@@ -32,15 +32,15 @@ import {
   syncBrowserSubscription,
   testNotification,
 } from "./notifications.js";
-import { ChatSocket } from "./websocket.js";
-import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=calendar-focus-v160";
+import { ChatSocket } from "./websocket.js?v=modal-pdf-isolation-v163";
+import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=modal-pdf-isolation-v163";
 
 const CALL_INVITE_TIMEOUT_MS = 45000;
 const CALL_SIGNAL_LOSS_GRACE_MS = 15000;
 const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
 const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "calendar-focus-v160";
+const APP_BUILD = "modal-pdf-isolation-v163";
 
 window.VIBRATION_BUILD = APP_BUILD;
 console.info(`Vibration build ${APP_BUILD}`);
@@ -620,6 +620,7 @@ async function unlock() {
 
 function bindUI() {
   bindEmojiPicker();
+  bindDialogMediaIsolation();
   const profileDialog = document.querySelector("#profile-dialog");
   const profileForm = document.querySelector("#profile-form");
   document.querySelector("#profile-button").onclick = async () => {
@@ -827,6 +828,18 @@ function bindUI() {
       toast(frenchErrorMessage(error), "error");
     }
   };
+}
+
+function bindDialogMediaIsolation() {
+  const dialogs = [...document.querySelectorAll("dialog")];
+  const sync = () => {
+    elements.shell.classList.toggle("modal-open", dialogs.some((dialog) => dialog.open));
+  };
+  const observer = new MutationObserver(sync);
+  for (const dialog of dialogs) {
+    observer.observe(dialog, { attributes: true, attributeFilter: ["open"] });
+  }
+  sync();
 }
 
 function bindExpirationDialog() {
@@ -4041,7 +4054,14 @@ function renderGlobalFiles(items) {
     name.textContent = item.clear.name;
     const meta = document.createElement("span");
     meta.className = "global-file-meta";
-    meta.textContent = `${formatFileSize(item.message.file.size)} · ${dateFormatter.format(new Date(item.message.created_at))}`;
+    const updateMeta = () => {
+      const shareCount = Number(item.message.file.active_share_count || 0);
+      const shared = shareCount > 0
+        ? ` · Partagé (${shareCount} lien${shareCount === 1 ? "" : "s"})`
+        : "";
+      meta.textContent = `${formatFileSize(item.message.file.size)} · ${dateFormatter.format(new Date(item.message.created_at))}${shared}`;
+    };
+    updateMeta();
     const source = document.createElement("span");
     source.className = "global-file-conversation";
     const avatar = createConversationBadge(item.conversationAvatar, item.conversationInitial, "global-file-conversation-avatar");
@@ -4063,7 +4083,37 @@ function renderGlobalFiles(items) {
       elements.globalFilesDialog.close();
       openFileShareDialog(item.message, item.clear, item.conversation);
     });
-    row.append(open, share);
+    const actions = document.createElement("div");
+    actions.className = "global-file-actions";
+    actions.append(share);
+    if (Number(item.message.file.active_share_count || 0) > 0) {
+      const cancelShare = document.createElement("button");
+      cancelShare.type = "button";
+      cancelShare.className = "file-share-button global-file-unshare";
+      cancelShare.title = `Annuler le partage de ${item.clear.name}`;
+      cancelShare.setAttribute("aria-label", cancelShare.title);
+      cancelShare.innerHTML = '<svg class="file-share-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 7h2a5 5 0 0 1 0 10h-2"></path><path d="M8 17H6A5 5 0 0 1 6 7h2"></path><path d="M9 12h6"></path><path d="m3 3 18 18"></path></svg>';
+      cancelShare.addEventListener("click", async () => {
+        const count = Number(item.message.file.active_share_count || 0);
+        const label = count === 1 ? "ce lien de partage" : `ces ${count} liens de partage`;
+        if (!confirm(`Désactiver ${label} ? Les personnes qui les possèdent ne pourront plus télécharger le fichier.`)) return;
+        cancelShare.disabled = true;
+        cancelShare.setAttribute("aria-busy", "true");
+        try {
+          await api(`/api/files/${item.message.file.id}/shares`, { method: "DELETE" });
+          item.message.file.active_share_count = 0;
+          cancelShare.remove();
+          updateMeta();
+          toast(count === 1 ? "Partage du fichier annulé." : "Partages du fichier annulés.", "success");
+        } catch (error) {
+          cancelShare.disabled = false;
+          cancelShare.removeAttribute("aria-busy");
+          toast(frenchErrorMessage(error, "Impossible d’annuler le partage du fichier."), "error");
+        }
+      });
+      actions.append(cancelShare);
+    }
+    row.append(open, actions);
     elements.globalFilesList.append(row);
   }
 }
@@ -4794,10 +4844,10 @@ function scheduleReplyFilePreview(replyPreview, container, key) {
 
 async function pdfJS() {
   if (!pdfJSModule) {
-    pdfJSModule = import("/vendor/pdfjs/pdf.compat.mjs?v=calendar-focus-v160")
-      .then(() => import("/vendor/pdfjs/pdf.min.mjs?v=calendar-focus-v160"))
+    pdfJSModule = import("/vendor/pdfjs/pdf.compat.mjs?v=modal-pdf-isolation-v163")
+      .then(() => import("/vendor/pdfjs/pdf.min.mjs?v=modal-pdf-isolation-v163"))
       .then((module) => {
-        module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.compat.mjs?v=calendar-focus-v160";
+        module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.compat.mjs?v=modal-pdf-isolation-v163";
         return module;
       })
       .catch((error) => {

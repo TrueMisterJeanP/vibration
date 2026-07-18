@@ -1,4 +1,4 @@
-import { decryptBytes, decryptEnvelope, importShareKey } from "./crypto.js?v=calendar-focus-v160";
+import { decryptBytes, decryptEnvelope, importShareKey } from "./crypto.js?v=modal-pdf-isolation-v163";
 
 const RETURN_STORAGE_KEY = "vibration.file_share_return";
 const elements = {

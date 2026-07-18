@@ -66,9 +66,12 @@ export function apiURL(path) {
 export function websocketURL(path = "/api/ws") {
   const url = new URL(apiURL(path));
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  const token = getSessionToken();
-  if (token) url.searchParams.set("session_token", token);
   return url.toString();
+}
+
+export function websocketProtocols() {
+  const token = getSessionToken();
+  return token ? [`vibration-auth.${token}`] : [];
 }
 
 export async function api(path, options = {}) {

@@ -258,6 +258,10 @@ small { color: var(--muted); }
 .file-preview .pdf-page-preview { display: block; max-width: 100%; height: auto !important; background: #ffffff; }
 .file-preview.pdf-native-fallback { display: grid; width: 100%; }
 .file-preview .pdf-native-preview { min-height: 28rem; }
+#app-shell.modal-open .pdf-native-preview { visibility: hidden; pointer-events: none; }
+@supports selector(body:has(dialog[open])) {
+  body:has(dialog[open]) #app-shell .pdf-native-preview { visibility: hidden; pointer-events: none; }
+}
 .pdf-native-actions { display: flex; align-items: center; justify-content: space-between; gap: .65rem; width: 100%; padding: .55rem .7rem; color: var(--muted); font-size: .78rem; }
 .pdf-native-open { flex: 0 0 auto; padding: .38rem .65rem; border-radius: .5rem; background: var(--accent); color: #072724; font-weight: 700; text-decoration: none; }
 .file-preview .text-document-preview { margin: 0; padding: clamp(.7rem, 3vw, 1.4rem); overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; color: #172124; font: clamp(.55rem, 1.5vw, .76rem)/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -362,7 +366,9 @@ small { color: var(--muted); }
 .global-file-row:hover { border-color: var(--accent); }
 .global-file-open { display: grid; grid-template-columns: 2.35rem minmax(0, 1fr); align-items: center; gap: .7rem; min-width: 0; padding: .35rem; background: transparent; color: var(--text); text-align: left; }
 .global-file-open:hover { filter: none; }
-.global-file-share { margin-right: .25rem; }
+.global-file-actions { display: flex; align-items: center; gap: .3rem; margin-right: .25rem; }
+.global-file-unshare { border-color: rgb(255 107 122 / .4); color: var(--danger); }
+.global-file-unshare:hover { border-color: var(--danger); background: rgb(255 107 122 / .12); }
 .global-file-kind { display: grid; place-items: center; width: 2.35rem; height: 2.35rem; border-radius: .55rem; background: rgb(32 199 181 / .14); color: var(--accent); }
 .global-file-kind .file-kind-icon { width: 1.5rem; height: 1.5rem; }
 .global-file-content { display: grid; gap: .22rem; min-width: 0; }

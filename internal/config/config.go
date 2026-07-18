@@ -47,6 +47,12 @@ func Load() (Config, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return Config{}, err
 	}
+	clientOrigins := envList("CLIENT_ORIGINS")
+	for _, origin := range clientOrigins {
+		if origin == "*" {
+			return Config{}, errors.New("CLIENT_ORIGINS must contain explicit origins; wildcard is not allowed")
+		}
+	}
 	secret := os.Getenv("APP_SECRET")
 	if secret == "" {
 		var err error
@@ -67,7 +73,7 @@ func Load() (Config, error) {
 		VAPIDSubject:                  env("VAPID_SUBJECT", "admin@example.com"),
 		DisableRegistration:           os.Getenv("DISABLE_REGISTRATION") == "true",
 		AuthRateLimitPerMinute:        envInt("AUTH_RATE_LIMIT_PER_MINUTE", 20),
-		ClientOrigins:                 envList("CLIENT_ORIGINS"),
+		ClientOrigins:                 clientOrigins,
 		ServiceRestartCommand:         envFields("SERVICE_RESTART_COMMAND"),
 		WebRTCICEServers:              webRTCICEServers(),
 		WebRTCPublicFallbacks:         webRTCPublicFallbackURLs(),

@@ -18,6 +18,7 @@ const userIDKey contextKey = "user_id"
 const adminKey contextKey = "is_admin"
 const managerKey contextKey = "is_manager"
 const sessionCookie = "chat_session"
+const websocketSessionProtocolPrefix = "vibration-auth."
 const shortSessionDuration = 12 * time.Hour
 const longSessionDuration = 30 * 24 * time.Hour
 
@@ -90,8 +91,16 @@ func requestSessionID(r *http.Request) (string, bool) {
 		token = strings.TrimSpace(token)
 		return token, token != ""
 	}
-	token = strings.TrimSpace(r.URL.Query().Get("session_token"))
-	return token, token != ""
+	if r.Method == http.MethodGet && r.URL.Path == "/api/ws" {
+		for protocol := range strings.SplitSeq(r.Header.Get("Sec-WebSocket-Protocol"), ",") {
+			token, ok = strings.CutPrefix(strings.TrimSpace(protocol), websocketSessionProtocolPrefix)
+			if ok {
+				token = strings.TrimSpace(token)
+				return token, token != ""
+			}
+		}
+	}
+	return "", false
 }
 
 func (h *Handler) Middleware(next http.Handler) http.Handler {

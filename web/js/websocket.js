@@ -1,4 +1,4 @@
-import { websocketURL } from "./api.js";
+import { websocketProtocols, websocketURL } from "./api.js?v=modal-pdf-isolation-v163";
 
 export class ChatSocket extends EventTarget {
   constructor() {
@@ -9,7 +9,10 @@ export class ChatSocket extends EventTarget {
   }
 
   connect() {
-    this.socket = new WebSocket(websocketURL("/api/ws"));
+    const protocols = websocketProtocols();
+    this.socket = protocols.length
+      ? new WebSocket(websocketURL("/api/ws"), protocols)
+      : new WebSocket(websocketURL("/api/ws"));
     this.socket.addEventListener("open", () => {
       this.retry = 1000;
       this.dispatchEvent(new CustomEvent("status", { detail: true }));

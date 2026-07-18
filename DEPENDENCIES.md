@@ -34,16 +34,16 @@ Les modules Go sont déclarés dans `go.mod` et vérifiés par `go.sum`.
 | --- | --- | --- | --- |
 | `github.com/SherClockHolmes/webpush-go` | `v1.4.0` | chiffrement et envoi Web Push | MIT |
 | `github.com/gorilla/websocket` | `v1.5.3` | transport WebSocket côté serveur | BSD-2-Clause |
-| `golang.org/x/crypto` | `v0.31.0` | primitives cryptographiques utilisées par les dépendances serveur | BSD-3-Clause |
+| `golang.org/x/crypto` | `v0.52.0` | primitives cryptographiques utilisées par les dépendances serveur | BSD-3-Clause |
 | `modernc.org/sqlite` | `v1.34.5` | pilote SQLite pur Go | BSD-3-Clause |
 | `github.com/google/uuid` | `v1.6.0` | génération d’UUID | BSD-3-Clause |
-| `github.com/golang-jwt/jwt/v5` | `v5.2.1` | gestion JWT utilisée par la chaîne Web Push | MIT |
+| `github.com/golang-jwt/jwt/v5` | `v5.2.2` | gestion JWT utilisée par la chaîne Web Push | MIT |
 | `filippo.io/edwards25519` | `v1.2.0` | implémentation Ed25519 utilisée par la chaîne crypto | BSD-3-Clause |
 | `github.com/dustin/go-humanize` | `v1.0.1` | utilitaire de la chaîne SQLite | MIT |
 | `github.com/ncruces/go-strftime` | `v0.1.9` | utilitaire de la chaîne SQLite | MIT |
 | `github.com/remyoudompheng/bigfft` | `v0.0.0-20230129092748-24d4a6f8daec` | utilitaire de la chaîne SQLite | BSD-3-Clause |
-| `golang.org/x/sys` | `v0.28.0` | appels système utilisés par les dépendances Go | BSD-3-Clause |
-| `golang.org/x/text` | `v0.29.0` | traitement de texte utilisé par la chaîne de dépendances | BSD-3-Clause |
+| `golang.org/x/sys` | `v0.45.0` | appels système utilisés par les dépendances Go | BSD-3-Clause |
+| `golang.org/x/text` | `v0.37.0` | traitement de texte utilisé par la chaîne de dépendances | BSD-3-Clause |
 | `modernc.org/libc` | `v1.55.3` | couche libc pur Go pour SQLite | BSD-3-Clause |
 | `modernc.org/mathutil` | `v1.6.0` | utilitaire de la chaîne SQLite | BSD-3-Clause |
 | `modernc.org/memory` | `v1.8.0` | couche de gestion mémoire pour SQLite | BSD-3-Clause |

@@ -3,12 +3,59 @@ package ws
 import (
 	"database/sql"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"chat-pwa-go/internal/auth"
 	database "chat-pwa-go/internal/db"
+	"github.com/gorilla/websocket"
 )
+
+func TestWebSocketUsesProtocolAuthenticationWithoutURLToken(t *testing.T) {
+	db := callSignalTestDB(t)
+	expires := time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano)
+	if _, err := db.Exec(`INSERT INTO sessions(id,user_id,expires_at,created_at) VALUES(?,?,?,?)`,
+		"desktop-session-token", 1, expires, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{DB: db, Hub: NewHub()}
+	authHandler := &auth.Handler{DB: db}
+	server := httptest.NewServer(authHandler.Middleware(handler))
+	t.Cleanup(server.Close)
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/ws"
+
+	connection, response, err := (&websocket.Dialer{Subprotocols: []string{"vibration-auth.desktop-session-token"}}).Dial(websocketURL, nil)
+	if err != nil {
+		t.Fatalf("protocol-authenticated websocket: %v (response=%v)", err, response)
+	}
+	if response.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("websocket status=%d", response.StatusCode)
+	}
+	response.Body.Close()
+	_ = connection.Close()
+
+	_, response, err = websocket.DefaultDialer.Dial(websocketURL+"?session_token=desktop-session-token", nil)
+	if err == nil {
+		t.Fatal("query-string websocket authentication unexpectedly succeeded")
+	}
+	if response == nil || response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("query-string websocket response=%v err=%v", response, err)
+	}
+	response.Body.Close()
+}
+
+func TestAllowOriginRejectsWildcard(t *testing.T) {
+	if allowOrigin("https://attacker.example", "server.example", []string{"*"}) {
+		t.Fatal("wildcard websocket origin unexpectedly allowed")
+	}
+	if !allowOrigin("https://client.example", "server.example", []string{"https://client.example/"}) {
+		t.Fatal("explicit websocket origin unexpectedly rejected")
+	}
+}
 
 func TestHandleCallSignalRelaysPrivateConversationEvent(t *testing.T) {
 	db := callSignalTestDB(t)

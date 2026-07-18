@@ -271,6 +271,68 @@ func TestFileShareRequiresConversationMembershipAndValidExpiration(t *testing.T)
 	}
 }
 
+func TestFileFolderListsAndCancelsCurrentUsersActiveShares(t *testing.T) {
+	db, conversationID, sender, recipient := setupFileConversation(t)
+	defer db.Close()
+
+	handler := &Handler{DB: db, Hub: &testHub{}}
+	mux := fileMux(authHandlerForTest(db), handler)
+	uploaded := fileRequest(t, mux, http.MethodPost, "/api/files", uploadBody(conversationID), sender)
+	var uploadedFile struct {
+		File struct {
+			ID int64 `json:"id"`
+		} `json:"file"`
+	}
+	if uploaded.Code != http.StatusCreated || json.Unmarshal(uploaded.Body.Bytes(), &uploadedFile) != nil {
+		t.Fatalf("upload status=%d body=%s", uploaded.Code, uploaded.Body.String())
+	}
+	shareBody := map[string]any{
+		"encrypted_name":     `{"iv":"share-name-iv","data":"share-name-data"}`,
+		"encrypted_mime":     `{"iv":"share-mime-iv","data":"share-mime-data"}`,
+		"encrypted_data":     base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 20)),
+		"iv":                 "share-data-iv",
+		"size":               4,
+		"expires_in_seconds": 3600,
+	}
+	created := fileRequest(t, mux, http.MethodPost, "/api/files/"+formatID(uploadedFile.File.ID)+"/shares", shareBody, recipient)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("share create status=%d body=%s", created.Code, created.Body.String())
+	}
+	var share struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &share); err != nil {
+		t.Fatal(err)
+	}
+
+	listed := fileRequest(t, mux, http.MethodGet, "/api/files", nil, recipient)
+	var files []listedFileMessage
+	if listed.Code != http.StatusOK || json.Unmarshal(listed.Body.Bytes(), &files) != nil || len(files) != 1 ||
+		files[0].File == nil || files[0].File.ActiveShareCount != 1 {
+		t.Fatalf("listed shared files status=%d files=%+v body=%s", listed.Code, files, listed.Body.String())
+	}
+
+	denied := fileRequest(t, mux, http.MethodDelete, "/api/files/"+formatID(uploadedFile.File.ID)+"/shares", nil, sender)
+	if denied.Code != http.StatusNotFound {
+		t.Fatalf("other member cancel status=%d body=%s", denied.Code, denied.Body.String())
+	}
+	cancelled := fileRequest(t, mux, http.MethodDelete, "/api/files/"+formatID(uploadedFile.File.ID)+"/shares", nil, recipient)
+	if cancelled.Code != http.StatusOK || !bytes.Contains(cancelled.Body.Bytes(), []byte(`"revoked_count":1`)) {
+		t.Fatalf("creator cancel status=%d body=%s", cancelled.Code, cancelled.Body.String())
+	}
+	unavailable := publicFileRequest(t, mux, "/api/file-shares/"+share.Token)
+	if unavailable.Code != http.StatusGone {
+		t.Fatalf("cancelled share status=%d body=%s", unavailable.Code, unavailable.Body.String())
+	}
+
+	listed = fileRequest(t, mux, http.MethodGet, "/api/files", nil, recipient)
+	files = nil
+	if listed.Code != http.StatusOK || json.Unmarshal(listed.Body.Bytes(), &files) != nil || len(files) != 1 ||
+		files[0].File == nil || files[0].File.ActiveShareCount != 0 {
+		t.Fatalf("listed cancelled files status=%d files=%+v body=%s", listed.Code, files, listed.Body.String())
+	}
+}
+
 func setupFileConversation(t *testing.T) (*sql.DB, int64, *http.Cookie, *http.Cookie) {
 	t.Helper()
 	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
@@ -307,6 +369,7 @@ func fileMux(authHandler *auth.Handler, handler *Handler) *http.ServeMux {
 	mux.Handle("GET /api/files/{id}", authHandler.Middleware(http.HandlerFunc(handler.Download)))
 	mux.Handle("POST /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(handler.CreateShare)))
 	mux.Handle("GET /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(handler.ListShares)))
+	mux.Handle("DELETE /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(handler.DeleteFileShares)))
 	mux.HandleFunc("GET /api/file-shares/{token}", handler.PublicShare)
 	mux.HandleFunc("GET /api/file-shares/{token}/download", handler.DownloadShare)
 	mux.Handle("DELETE /api/file-shares/{id}", authHandler.Middleware(http.HandlerFunc(handler.DeleteShare)))
