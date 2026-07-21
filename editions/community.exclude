@@ -19,7 +19,7 @@ docker-compose.override.yml
 src-tauri/
 editions/community.package.json
 editions/community.package-lock.json
-SiteWeb/modèles/
+SiteWeb/
 editions/enterprise.private.md
 cmd/server/edition_enterprise.go
 internal/admin/
