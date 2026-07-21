@@ -6,6 +6,7 @@ import {
   requestNotificationPermissionOnSignIn,
 } from "./notifications.js";
 import { frenchErrorMessage } from "./ui.js";
+import { t } from "./i18n.js";
 
 const loginForm = document.querySelector("#login-form");
 const instanceForm = ensureInstanceForm();
@@ -46,7 +47,7 @@ async function ensureTermsAccepted() {
     const checkbox = document.querySelector("#terms-accepted");
     const error = document.querySelector("#terms-error");
     document.querySelector("#terms-content").textContent = status.content || "";
-    document.querySelector("#terms-version-label").textContent = `Version ${status.version}`;
+    document.querySelector("#terms-version-label").textContent = t("Version {version}", { version: status.version });
     checkbox.checked = false;
     error.textContent = "";
     dialog.oncancel = (event) => event.preventDefault();
@@ -64,7 +65,7 @@ async function ensureTermsAccepted() {
           dialog.close();
           resolve(true);
         } catch (exception) {
-          error.textContent = frenchErrorMessage(exception, "Acceptation impossible.");
+          error.textContent = frenchErrorMessage(exception, t("Acceptation impossible."));
           button.disabled = false;
         }
       };
@@ -89,7 +90,7 @@ function ensureInstanceForm() {
   form.id = "instance-form";
   form.hidden = true;
   const label = document.createElement("label");
-  label.textContent = "Instance serveur";
+  label.textContent = t("Instance serveur");
   const input = document.createElement("input");
   input.name = "instance_url";
   input.type = "url";
@@ -98,10 +99,10 @@ function ensureInstanceForm() {
   input.autocomplete = "url";
   label.append(input);
   const hint = document.createElement("small");
-  hint.textContent = "L’instance enregistrée est inaccessible. Saisissez l’URL correcte pour continuer.";
+  hint.textContent = t("L’instance enregistrée est inaccessible. Saisissez l’URL correcte pour continuer.");
   const button = document.createElement("button");
   button.type = "submit";
-  button.textContent = "Utiliser cette instance";
+  button.textContent = t("Utiliser cette instance");
   form.append(label, hint, button);
   document.querySelector("#register-form")?.before(form);
   return form;
@@ -175,7 +176,7 @@ function showRecoveryCode(code) {
   const dialog = document.querySelector("#recovery-code-dialog");
   document.querySelector("#recovery-code-output").textContent = code;
   if (!dialog?.showModal) {
-    alert(`Code de récupération : ${code}`);
+    alert(t("Code de récupération : {code}", { code }));
     return Promise.resolve();
   }
   dialog.showModal();
@@ -240,7 +241,7 @@ loginForm.addEventListener("submit", async (event) => {
     });
     if (!await ensureTermsAccepted()) {
       button.disabled = false;
-      errorRegion.textContent = "Vous devez accepter les conditions d’utilisation pour accéder au service.";
+      errorRegion.textContent = t("Vous devez accepter les conditions d’utilisation pour accéder au service.");
       return;
     }
     const user = await api("/api/me");
@@ -257,7 +258,7 @@ loginForm.addEventListener("submit", async (event) => {
   } catch (error) {
     button.disabled = false;
     if (isInstanceConnectionError(error)) {
-      showInstanceForm("Instance serveur inaccessible. Corrigez l’URL de l’instance pour continuer.", true);
+      showInstanceForm(t("Instance serveur inaccessible. Corrigez l’URL de l’instance pour continuer."), true);
       return;
     }
     errorRegion.textContent = frenchErrorMessage(error);
@@ -290,7 +291,7 @@ recoveryForm.addEventListener("submit", async (event) => {
   errorRegion.textContent = "";
   const data = Object.fromEntries(new FormData(recoveryForm));
   if (data.new_password !== data.confirm_password) {
-    errorRegion.textContent = "Les nouveaux mots de passe diffèrent.";
+    errorRegion.textContent = t("Les nouveaux mots de passe diffèrent.");
     return;
   }
   const button = recoveryForm.querySelector('button[type="submit"]');
@@ -309,10 +310,10 @@ recoveryForm.addEventListener("submit", async (event) => {
     loginForm.elements.password.value = "";
     recoveryForm.reset();
     showTab(false);
-    errorRegion.textContent = "Mot de passe réinitialisé. Vous pouvez vous connecter.";
+    errorRegion.textContent = t("Mot de passe réinitialisé. Vous pouvez vous connecter.");
   } catch (error) {
     if (isInstanceConnectionError(error)) {
-      showInstanceForm("Instance serveur inaccessible. Corrigez l’URL de l’instance pour continuer.");
+      showInstanceForm(t("Instance serveur inaccessible. Corrigez l’URL de l’instance pour continuer."));
       return;
     }
     errorRegion.textContent = frenchErrorMessage(error);
@@ -329,11 +330,11 @@ registerForm.addEventListener("submit", async (event) => {
   const originalLabel = button.textContent;
   const data = Object.fromEntries(new FormData(registerForm));
   if (data.phrase !== data.phrase_confirm) {
-    errorRegion.textContent = "Les phrases secrètes diffèrent.";
+    errorRegion.textContent = t("Les phrases secrètes diffèrent.");
     return;
   }
   button.disabled = true;
-  button.textContent = "Génération des clés…";
+  button.textContent = t("Génération des clés…");
   try {
     setInstanceURL(data.instance_url);
     const identity = await createIdentity(data.phrase);
@@ -354,7 +355,7 @@ registerForm.addEventListener("submit", async (event) => {
       button.disabled = false;
       button.textContent = originalLabel;
       showTab(false);
-      errorRegion.textContent = "Compte créé. Vous devrez accepter les conditions d’utilisation lors de votre prochaine connexion.";
+      errorRegion.textContent = t("Compte créé. Vous devrez accepter les conditions d’utilisation lors de votre prochaine connexion.");
       return;
     }
     sessionStorage.setItem("crypto_phrase", data.phrase);

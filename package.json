@@ -6,7 +6,7 @@
   "scripts": {
     "test": "GOCACHE=/tmp/webtchat-go-cache go test -tags community ./...",
     "test:community": "GOCACHE=/tmp/webtchat-go-cache go test -tags community ./...",
-    "check:js": "for f in web/js/*.js; do node --check --input-type=module < \"$f\" || exit 1; done"
+    "check:js": "for f in web/js/*.js; do node --check --input-type=module < \"$f\" || exit 1; done && node tests/i18n.test.cjs"
   },
   "keywords": [],
   "author": "Jean-Pierre",

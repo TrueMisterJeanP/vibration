@@ -34,6 +34,7 @@ import {
 } from "./notifications.js";
 import { ChatSocket } from "./websocket.js?v=responsive-pinned-v166";
 import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=responsive-pinned-v166";
+import { locale, t } from "./i18n.js";
 
 const CALL_INVITE_TIMEOUT_MS = 45000;
 const CALL_SIGNAL_LOSS_GRACE_MS = 15000;
@@ -210,8 +211,8 @@ function ensureCallScreenShareButton() {
   button.id = "call-screen-share-button";
   button.className = "outline call-action-button";
   button.type = "button";
-  button.title = "Partager l’écran";
-  button.setAttribute("aria-label", "Partager l’écran");
+  button.title = t("Partager l’écran");
+  button.setAttribute("aria-label", t("Partager l’écran"));
   button.innerHTML = '<svg class="call-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v12H3Z"></path><path d="M8 21h8"></path><path d="M12 17v4"></path><path d="m9 10 3-3 3 3"></path><path d="M12 7v7"></path></svg>';
   const actions = document.querySelector(".call-actions");
   const switchCamera = document.querySelector("#call-switch-camera-button");
@@ -276,18 +277,18 @@ function actionDialog({
   const input = singleLine ? singleInput : textarea;
   const secondaryRow = document.querySelector("#action-secondary-label");
   const secondaryInput = document.querySelector("#action-secondary-input");
-  document.querySelector("#action-title").textContent = title;
-  document.querySelector("#action-message").textContent = message;
-  document.querySelector("#action-confirm").textContent = confirmLabel;
+  document.querySelector("#action-title").textContent = t(title);
+  document.querySelector("#action-message").textContent = t(message);
+  document.querySelector("#action-confirm").textContent = t(confirmLabel);
   document.querySelector("#action-confirm").classList.toggle("danger-button", danger);
   inputRow.hidden = !inputLabel;
-  inputRow.querySelector("span").textContent = inputLabel;
+  inputRow.querySelector("span").textContent = t(inputLabel);
   textarea.hidden = singleLine;
   singleInput.hidden = !singleLine;
   input.value = value;
   input.maxLength = maxLength;
   secondaryRow.hidden = !secondaryLabel;
-  secondaryRow.querySelector("span").textContent = secondaryLabel;
+  secondaryRow.querySelector("span").textContent = t(secondaryLabel);
   secondaryInput.value = secondaryValue;
   secondaryInput.maxLength = secondaryMaxLength;
   dialog.showModal();
@@ -376,7 +377,7 @@ function groupEditDialog({ name, description, avatar, contacts, members }) {
       if (!userResults.children.length) {
         const empty = document.createElement("p");
         empty.className = "picker-empty";
-        empty.textContent = "Aucun nouveau membre trouvé.";
+        empty.textContent = t("Aucun nouveau membre trouvé.");
         userResults.append(empty);
       }
     } catch (error) {
@@ -496,7 +497,7 @@ async function expireRenderedMessage(conversationID, messageID) {
     if (!elements.messages.querySelector(".message")) {
       const empty = document.createElement("div");
       empty.id = "empty-chat";
-      empty.textContent = "Aucun message. Écrivez le premier message chiffré.";
+      empty.textContent = t("Aucun message. Écrivez le premier message chiffré.");
       elements.messages.append(empty);
     }
   }
@@ -541,7 +542,7 @@ async function boot() {
   const adminLink = document.querySelector("#admin-link");
   const canOpenAdmin = state.edition.admin_panel && (state.me.is_admin || state.me.is_manager);
   adminLink.hidden = !canOpenAdmin;
-  adminLink.textContent = state.me.is_manager && !state.me.is_admin ? "Gestion" : "Administration";
+  adminLink.textContent = t(state.me.is_manager && !state.me.is_admin ? "Gestion" : "Administration");
   await registerServiceWorker();
   await unlock();
   bindUI();
@@ -706,10 +707,10 @@ function bindUI() {
   const setSidebarOpen = (open) => {
     elements.shell.classList.toggle("sidebar-open", open);
     sidebarButton.setAttribute("aria-expanded", String(open));
-    sidebarButton.setAttribute("aria-label", open
+    sidebarButton.setAttribute("aria-label", t(open
       ? "Masquer les contacts, groupes et conversations"
-      : "Afficher les contacts, groupes et conversations");
-    sidebarButton.title = open ? "Masquer les contacts et groupes" : "Afficher les contacts et groupes";
+      : "Afficher les contacts, groupes et conversations"));
+    sidebarButton.title = t(open ? "Masquer les contacts et groupes" : "Afficher les contacts et groupes");
   };
   const mobileLayout = window.matchMedia("(max-width: 720px)");
   const showContactsOnMobile = ({ matches }) => {
@@ -910,7 +911,7 @@ function updateSendButtonLabel() {
     [604800, "expiration 7 jours"],
   ]);
   const detail = labels.get(state.messageExpirationSeconds) || "message permanent";
-  elements.send.textContent = "Envoyer";
+  elements.send.textContent = t("Envoyer");
   elements.send.classList.toggle("has-expiration", state.messageExpirationSeconds > 0);
   elements.send.title = `Appui long : ${detail}`;
   elements.send.setAttribute("aria-label", `Envoyer, ${detail}. Appui long pour modifier l’expiration.`);
@@ -1136,50 +1137,50 @@ async function refreshNotificationStatus() {
     }
     const status = await notificationStatus();
     if (status.supportIssue === "insecure_context") {
-      label.textContent = "Notifications Push Android indisponibles hors HTTPS";
-      button.textContent = "HTTPS requis";
+      label.textContent = t("Notifications Push Android indisponibles hors HTTPS");
+      button.textContent = t("HTTPS requis");
       button.disabled = true;
     } else if (status.mode === "native" && status.nativeGranted && !status.pushSupported) {
-      label.textContent = "Notifications natives seulement, indisponibles si l’application est arrêtée";
-      button.textContent = "Web Push indisponible";
+      label.textContent = t("Notifications natives seulement, indisponibles si l’application est arrêtée");
+      button.textContent = t("Web Push indisponible");
       button.disabled = true;
     } else if (status.permission === "unsupported") {
-      label.textContent = "Notifications non prises en charge par ce navigateur";
-      button.textContent = "Notifications indisponibles";
+      label.textContent = t("Notifications non prises en charge par ce navigateur");
+      button.textContent = t("Notifications indisponibles");
       button.disabled = true;
     } else if (status.permission === "denied") {
-      label.textContent = "Notifications bloquées par le navigateur";
-      button.textContent = "Notifications bloquées";
+      label.textContent = t("Notifications bloquées par le navigateur");
+      button.textContent = t("Notifications bloquées");
       button.disabled = false;
     } else if (status.browserSubscription && status.currentDeviceServerSubscription) {
-      label.textContent = "Notifications activées";
-      button.textContent = "Réactiver les notifications";
+      label.textContent = t("Notifications activées");
+      button.textContent = t("Réactiver les notifications");
       button.disabled = false;
     } else if (status.browserSubscription && status.serverSubscriptions > 0) {
-      label.textContent = "Abonnement de cet appareil non enregistré sur le serveur";
-      button.textContent = "Réactiver les notifications";
+      label.textContent = t("Abonnement de cet appareil non enregistré sur le serveur");
+      button.textContent = t("Réactiver les notifications");
       button.disabled = false;
     } else if (status.permission === "granted") {
-      label.textContent = "Permission accordée, abonnement incomplet";
-      button.textContent = "Réactiver les notifications";
+      label.textContent = t("Permission accordée, abonnement incomplet");
+      button.textContent = t("Réactiver les notifications");
       button.disabled = false;
     } else {
-      label.textContent = "Notifications désactivées";
-      button.textContent = "Activer les notifications";
+      label.textContent = t("Notifications désactivées");
+      button.textContent = t("Activer les notifications");
       button.disabled = false;
     }
   } catch {
-    label.textContent = "État des notifications indisponible";
+    label.textContent = t("État des notifications indisponible");
   }
 }
 
 function connectSocket() {
   state.socket = new ChatSocket();
   document.querySelector("#ws-dot").classList.remove("online");
-  document.querySelector("#ws-label").textContent = "Connexion…";
+  document.querySelector("#ws-label").textContent = t("Connexion…");
   state.socket.addEventListener("status", ({ detail }) => {
     document.querySelector("#ws-dot").classList.toggle("online", detail);
-    document.querySelector("#ws-label").textContent = detail ? "Connecté" : "Reconnexion…";
+    document.querySelector("#ws-label").textContent = t(detail ? "Connecté" : "Reconnexion…");
     if (detail) {
       clearCallSignalLossTimer();
       resumePendingCallIceRestarts();
@@ -1239,7 +1240,7 @@ async function renderConversations() {
   if (!state.conversations.length && !pendingContacts.length) {
     const empty = document.createElement("p");
     empty.className = "muted sidebar-empty";
-    empty.textContent = "Aucune conversation";
+    empty.textContent = t("Aucune conversation");
     elements.conversations.append(empty);
     return;
   }
@@ -1268,7 +1269,7 @@ async function renderConversations() {
     const titleRow = document.createElement("span");
     titleRow.className = "conversation-title-row";
     const title = document.createElement("strong");
-    title.textContent = conversation.type === "group" ? "Groupe chiffré" : "Conversation privée";
+    title.textContent = t(conversation.type === "group" ? "Groupe chiffré" : "Conversation privée");
     const presence = document.createElement("span");
     presence.className = "presence-indicator";
     presence.hidden = true;
@@ -1288,7 +1289,7 @@ async function renderConversations() {
         : "Appel en cours";
     const subtitle = document.createElement("small");
     subtitle.className = "conversation-description";
-    subtitle.textContent = conversation.type === "group" ? "Groupe" : "Contact";
+    subtitle.textContent = t(conversation.type === "group" ? "Groupe" : "Contact");
     titleRow.append(title, callBadge, unread);
     copy.append(titleRow, subtitle);
     button.append(avatar, copy);
@@ -1299,7 +1300,7 @@ async function renderConversations() {
       edit.type = "button";
       edit.className = "swipe-edit";
       edit.append(actionIcon("edit"));
-      edit.title = "Modifier le groupe";
+      edit.title = t("Modifier le groupe");
       edit.setAttribute("aria-label", edit.title);
       edit.onclick = () => editConversation(conversation, row);
       actions.append(edit);
@@ -1308,11 +1309,11 @@ async function renderConversations() {
     remove.type = "button";
     remove.className = "swipe-delete";
     remove.append(actionIcon("delete"));
-    remove.title = conversation.type === "group" && conversation.created_by !== state.me.id
+    remove.title = t(conversation.type === "group" && conversation.created_by !== state.me.id
       ? "Quitter le groupe"
       : conversation.type === "private"
         ? "Supprimer le contact"
-        : "Supprimer la discussion";
+        : "Supprimer la discussion");
     remove.setAttribute("aria-label", remove.title);
     remove.onclick = () => deleteConversation(conversation, row);
     actions.append(remove);
@@ -1322,7 +1323,7 @@ async function renderConversations() {
     toggle.type = "button";
     toggle.className = "conversation-actions-toggle";
     toggle.textContent = "•••";
-    toggle.title = "Afficher les actions";
+    toggle.title = t("Afficher les actions");
     toggle.setAttribute("aria-label", toggle.title);
     toggle.onclick = (event) => {
       event.stopPropagation();
@@ -1360,7 +1361,7 @@ async function renderConversations() {
       } else {
         avatar.replaceChildren(document.createTextNode(display.title.slice(0, 1).toUpperCase()), presence);
       }
-    }).catch(() => { title.textContent = "Conversation verrouillée"; });
+    }).catch(() => { title.textContent = t("Conversation verrouillée"); });
   }
 }
 
@@ -1372,26 +1373,26 @@ function renderGroupInvitation(conversation) {
   avatar.textContent = "G";
   const copy = document.createElement("span");
   const title = document.createElement("strong");
-  title.textContent = "Invitation de groupe";
+  title.textContent = t("Invitation de groupe");
   const subtitle = document.createElement("small");
-  subtitle.textContent = "En attente de votre acceptation";
+  subtitle.textContent = t("En attente de votre acceptation");
   copy.append(title, subtitle);
   const actions = document.createElement("span");
   actions.className = "contact-request-actions";
   const accept = document.createElement("button");
   accept.type = "button";
-  accept.textContent = "Accepter";
+  accept.textContent = t("Accepter");
   accept.onclick = () => acceptGroupInvitation(conversation, accept);
   const refuse = document.createElement("button");
   refuse.type = "button";
   refuse.className = "outline";
-  refuse.textContent = "Refuser";
+  refuse.textContent = t("Refuser");
   refuse.onclick = () => refuseGroupInvitation(conversation, refuse);
   actions.append(accept, refuse);
   row.append(avatar, copy, actions);
   resolveConversationDisplay(conversation).then((display) => {
     title.textContent = display.title;
-    subtitle.textContent = "Invitation de groupe";
+    subtitle.textContent = t("Invitation de groupe");
     if (display.avatar) {
       const image = document.createElement("img");
       image.src = display.avatar;
@@ -1449,7 +1450,7 @@ function renderContactRequest(contact) {
   const title = document.createElement("strong");
   title.textContent = contact.display_name || contact.username;
   const subtitle = document.createElement("small");
-  subtitle.textContent = contact.direction === "incoming" ? "Demande de contact" : "En attente d’acceptation";
+  subtitle.textContent = t(contact.direction === "incoming" ? "Demande de contact" : "En attente d’acceptation");
   copy.append(title, subtitle);
   row.append(avatar, copy);
   const actions = document.createElement("span");
@@ -1457,14 +1458,14 @@ function renderContactRequest(contact) {
   if (contact.direction === "incoming") {
     const accept = document.createElement("button");
     accept.type = "button";
-    accept.textContent = "Accepter";
+    accept.textContent = t("Accepter");
     accept.onclick = () => acceptContact(contact, accept);
     actions.append(accept);
   }
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "outline";
-  remove.textContent = contact.direction === "incoming" ? "Refuser" : "Annuler";
+  remove.textContent = t(contact.direction === "incoming" ? "Refuser" : "Annuler");
   remove.onclick = () => deleteContactRequest(contact, remove);
   actions.append(remove);
   row.append(actions);
@@ -1580,7 +1581,7 @@ async function editConversation(conversation, row) {
     state.members.delete(conversation.id);
     if (state.current?.id === conversation.id) {
       elements.title.textContent = result.name;
-      elements.description.textContent = result.description || "Groupe";
+      elements.description.textContent = result.description || t("Groupe");
     }
     await refreshAll();
     await renderConversations();
@@ -1608,7 +1609,7 @@ function closeCurrentConversation(conversationID) {
   setPinnedPanelOpen(false);
   updateCallUI();
   closeEmojiPicker();
-  elements.title.textContent = "Sélectionnez une conversation";
+  elements.title.textContent = t("Sélectionnez une conversation");
   elements.description.textContent = "";
   renderTypingIndicator(elements.typing, null);
   renderTypingIndicator(elements.threadTyping, null);
@@ -1616,7 +1617,7 @@ function closeCurrentConversation(conversationID) {
   elements.messages.replaceChildren();
   const empty = document.createElement("div");
   empty.id = "empty-chat";
-  empty.textContent = "Sélectionnez une conversation ou créez-en une nouvelle.";
+  empty.textContent = t("Sélectionnez une conversation ou créez-en une nouvelle.");
   elements.messages.append(empty);
 }
 
@@ -1676,8 +1677,8 @@ async function conversationOnline(conversation) {
 function applyConversationPresence(dot, online) {
   dot.hidden = !online;
   dot.classList.toggle("online", online);
-  dot.title = online ? "En ligne" : "";
-  dot.setAttribute("aria-label", online ? "Contact en ligne" : "Contact hors ligne");
+  dot.title = online ? t("En ligne") : "";
+  dot.setAttribute("aria-label", t(online ? "Contact en ligne" : "Contact hors ligne"));
 }
 
 function activeTypingUsers(conversationID) {
@@ -1852,8 +1853,8 @@ async function selectConversation(conversation, targetMessageID = null) {
   elements.shell.classList.remove("sidebar-open");
   const sidebarButton = document.querySelector("#open-sidebar-logo");
   sidebarButton.setAttribute("aria-expanded", "false");
-  sidebarButton.setAttribute("aria-label", "Afficher les contacts, groupes et conversations");
-  sidebarButton.title = "Afficher les contacts et groupes";
+  sidebarButton.setAttribute("aria-label", t("Afficher les contacts, groupes et conversations"));
+  sidebarButton.title = t("Afficher les contacts et groupes");
   elements.input.disabled = false;
   elements.send.disabled = false;
   elements.emojiButton.disabled = false;
@@ -1866,7 +1867,7 @@ async function selectConversation(conversation, targetMessageID = null) {
   const display = await resolveConversationDisplay(conversation);
   if (!sameID(state.current?.id, selectedID)) return;
   elements.title.textContent = display.title;
-  elements.description.textContent = display.description || (conversation.type === "group" ? "Groupe" : "Contact");
+  elements.description.textContent = display.description || t(conversation.type === "group" ? "Groupe" : "Contact");
   const typing = await typingIndicator(conversation);
   renderTypingIndicator(elements.typing, typing);
   renderTypingIndicator(elements.threadTyping, typing);
@@ -1891,8 +1892,8 @@ function updateCallButtons() {
   const enabled = canSignalCall() && !state.call;
   elements.audioCallButton.disabled = !enabled;
   elements.videoCallButton.disabled = !enabled;
-  elements.audioCallButton.title = state.current?.type === "group" ? "Appel audio de groupe" : "Appel audio";
-  elements.videoCallButton.title = state.current?.type === "group" ? "Appel vidéo de groupe" : "Appel vidéo";
+  elements.audioCallButton.title = t(state.current?.type === "group" ? "Appel audio de groupe" : "Appel audio");
+  elements.videoCallButton.title = t(state.current?.type === "group" ? "Appel vidéo de groupe" : "Appel vidéo");
 }
 
 function callLabel(media) {
@@ -2536,8 +2537,8 @@ function syncWhiteboardToolbar() {
   elements.whiteboardColor.value = board.color;
   elements.whiteboardSize.value = String(board.size);
   elements.whiteboardFullscreen.classList.toggle("selected", Boolean(board.fullscreen));
-  elements.whiteboardFullscreen.title = board.fullscreen ? "Quitter le plein écran" : "Plein écran";
-  elements.whiteboardFullscreen.setAttribute("aria-label", board.fullscreen ? "Quitter le plein écran" : "Plein écran");
+  elements.whiteboardFullscreen.title = t(board.fullscreen ? "Quitter le plein écran" : "Plein écran");
+  elements.whiteboardFullscreen.setAttribute("aria-label", t(board.fullscreen ? "Quitter le plein écran" : "Plein écran"));
   elements.callWhiteboard.querySelectorAll("[data-whiteboard-tool]").forEach((button) => {
     button.classList.toggle("selected", button.dataset.whiteboardTool === board.tool);
   });
@@ -3572,7 +3573,7 @@ async function loadMessages(targetMessageID = null) {
     state.messageClears.set(state.current.id, new Map());
     const empty = document.createElement("div");
     empty.id = "empty-chat";
-    empty.textContent = "Aucun message. Écrivez le premier message chiffré.";
+    empty.textContent = t("Aucun message. Écrivez le premier message chiffré.");
     elements.messages.replaceChildren(empty);
     return;
   }
@@ -3746,7 +3747,7 @@ async function setPinnedPanelOpen(open) {
   elements.pinnedPanel.hidden = !open;
   elements.chatWorkspace.classList.toggle("pinned-open", open);
   elements.pinnedWindowButton.setAttribute("aria-expanded", String(open));
-  elements.pinnedWindowButton.title = open ? "Masquer vos messages épinglés" : "Afficher vos messages épinglés";
+  elements.pinnedWindowButton.title = t(open ? "Masquer vos messages épinglés" : "Afficher vos messages épinglés");
   elements.pinnedWindowButton.setAttribute("aria-label", elements.pinnedWindowButton.title);
   if (!open) return;
   await loadPinnedMessages();
@@ -3757,7 +3758,7 @@ async function loadPinnedMessages() {
   const conversation = state.current;
   const loading = document.createElement("p");
   loading.className = "pinned-message-empty";
-  loading.textContent = "Chargement…";
+  loading.textContent = t("Chargement…");
   elements.pinnedMessages.replaceChildren(loading);
   try {
     const [messages, key] = await Promise.all([
@@ -3768,7 +3769,7 @@ async function loadPinnedMessages() {
     if (!messages.length) {
       const empty = document.createElement("p");
       empty.className = "pinned-message-empty";
-      empty.textContent = "Vous n’avez épinglé aucun message dans cette conversation.";
+      empty.textContent = t("Vous n’avez épinglé aucun message dans cette conversation.");
       elements.pinnedMessages.replaceChildren(empty);
       return;
     }
@@ -3783,10 +3784,10 @@ async function loadPinnedMessages() {
       const meta = document.createElement("div");
       meta.className = "pinned-message-meta";
       const author = document.createElement("strong");
-      author.textContent = sameID(message.sender_id, state.me.id) ? "Vous" : message.sender_username;
+      author.textContent = sameID(message.sender_id, state.me.id) ? t("Vous") : message.sender_username;
       const date = document.createElement("time");
       date.dateTime = message.created_at;
-      date.textContent = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(message.created_at));
+      date.textContent = new Intl.DateTimeFormat(locale, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(message.created_at));
       meta.append(author, date);
       const preview = document.createElement("p");
       preview.className = "pinned-message-preview";
@@ -3795,7 +3796,7 @@ async function loadPinnedMessages() {
       actions.className = "pinned-message-actions";
       const show = document.createElement("button");
       show.type = "button";
-      show.textContent = "Afficher";
+      show.textContent = t("Afficher");
       show.addEventListener("click", async () => {
         await loadMessages(message.id);
         await revealMessage(message.id);
@@ -3804,7 +3805,7 @@ async function loadPinnedMessages() {
       const unpin = document.createElement("button");
       unpin.type = "button";
       unpin.className = "unpin-button";
-      unpin.textContent = "Désépingler";
+      unpin.textContent = t("Désépingler");
       unpin.addEventListener("click", () => togglePinnedMessage(message));
       actions.append(show, unpin);
       card.append(meta, preview, actions);
@@ -3884,7 +3885,7 @@ function renderPollOptionInputs(values) {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.textContent = "×";
-    remove.title = "Supprimer cette réponse";
+    remove.title = t("Supprimer cette réponse");
     remove.setAttribute("aria-label", remove.title);
     remove.disabled = values.length <= 2;
     remove.onclick = () => {
@@ -3912,8 +3913,8 @@ function openPollDialog(message = null, clear = null) {
     return;
   }
   state.editingPoll = message ? { message, clear } : null;
-  document.querySelector("#poll-dialog-title").textContent = message ? "Modifier le sondage" : "Nouveau sondage";
-  elements.pollSubmit.textContent = message ? "Enregistrer" : "Publier";
+  document.querySelector("#poll-dialog-title").textContent = t(message ? "Modifier le sondage" : "Nouveau sondage");
+  elements.pollSubmit.textContent = t(message ? "Enregistrer" : "Publier");
   const help = document.querySelector(".poll-editor-help");
   help.textContent = message
     ? "La modification des réponses remet tous les votes à zéro."
@@ -4018,8 +4019,8 @@ function openEventDialog(message = null, clear = null) {
     return;
   }
   state.editingEvent = message ? { message, clear } : null;
-  document.querySelector("#event-dialog-title").textContent = message ? "Modifier l’évènement" : "Nouvel évènement";
-  elements.eventSubmit.textContent = message ? "Enregistrer" : "Publier";
+  document.querySelector("#event-dialog-title").textContent = t(message ? "Modifier l’évènement" : "Nouvel évènement");
+  elements.eventSubmit.textContent = t(message ? "Enregistrer" : "Publier");
   const defaultStart = new Date(Math.ceil((Date.now() + 30 * 60 * 1000) / 3600000) * 3600000);
   const defaultEnd = new Date(defaultStart.getTime() + 3600000);
   elements.eventName.value = clear?.name || "";
@@ -4087,7 +4088,7 @@ function datetimeLocalValue(value) {
 }
 
 async function openGlobalFiles() {
-  elements.globalFilesStatus.textContent = "Chargement des fichiers…";
+  elements.globalFilesStatus.textContent = t("Chargement des fichiers…");
   elements.globalFilesList.replaceChildren();
   if (!elements.globalFilesDialog.open) elements.globalFilesDialog.showModal();
   try {
@@ -4132,11 +4133,11 @@ function renderGlobalFiles(items) {
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "global-files-empty";
-    empty.textContent = "Les pièces jointes envoyées dans vos discussions apparaîtront ici.";
+    empty.textContent = t("Les pièces jointes envoyées dans vos discussions apparaîtront ici.");
     elements.globalFilesList.append(empty);
     return;
   }
-  const dateFormatter = new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" });
+  const dateFormatter = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
   for (const item of items) {
     const row = document.createElement("div");
     row.className = "global-file-row";
@@ -4234,12 +4235,12 @@ function fileKindIcon(mime = "") {
 function formatFileSize(bytes) {
   if (bytes < 1024) return `${bytes} o`;
   if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} Ko`;
-  return `${(bytes / (1024 * 1024)).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Mo`;
+  return `${(bytes / (1024 * 1024)).toLocaleString(locale, { maximumFractionDigits: 1 })} MB`;
 }
 
 async function openCalendar() {
   showCurrentCalendarMonth();
-  elements.calendarStatus.textContent = "Chargement des évènements…";
+  elements.calendarStatus.textContent = t("Chargement des évènements…");
   elements.calendarGrid.setAttribute("aria-busy", "true");
   if (!elements.calendarDialog.open) elements.calendarDialog.showModal();
   try {
@@ -4287,7 +4288,7 @@ function renderCalendarMonth(updateStatus = true) {
   const month = state.calendarMonth;
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
-  const monthName = new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric" }).format(month);
+  const monthName = new Intl.DateTimeFormat(locale, { month: "long", year: "numeric" }).format(month);
   elements.calendarMonthLabel.textContent = monthName.charAt(0).toLocaleUpperCase("fr") + monthName.slice(1);
   const firstWeekday = (new Date(year, monthIndex, 1).getDay() + 6) % 7;
   const firstCellDate = new Date(year, monthIndex, 1 - firstWeekday);
@@ -4306,7 +4307,7 @@ function renderCalendarMonth(updateStatus = true) {
     const cell = document.createElement("section");
     cell.className = "calendar-day";
     cell.setAttribute("role", "gridcell");
-    cell.setAttribute("aria-label", new Intl.DateTimeFormat("fr-FR", { dateStyle: "full" }).format(date));
+    cell.setAttribute("aria-label", new Intl.DateTimeFormat(locale, { dateStyle: "full" }).format(date));
     if (date.getMonth() !== monthIndex) cell.classList.add("outside-month");
     if (key === todayKey) cell.classList.add("today");
     const number = document.createElement("time");
@@ -4344,7 +4345,7 @@ function calendarEventButton(item, date) {
   // Une fin à minuit appartient visuellement à la journée précédente.
   const effectiveEnd = new Date(end.getTime() - 1);
   const endsToday = calendarDayKey(effectiveEnd) === calendarDayKey(date);
-  const timeFormatter = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const timeFormatter = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" });
   const startTime = timeFormatter.format(start);
   const endTime = timeFormatter.format(end);
   const time = startsToday && endsToday
@@ -4362,7 +4363,7 @@ function calendarEventButton(item, date) {
   name.textContent = item.clear.name;
   const conversationIcon = createConversationBadge(item.conversationAvatar, item.conversationInitial, "calendar-day-event-avatar");
   button.append(conversationIcon, name, timeLabel);
-  const fullDate = new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" });
+  const fullDate = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
   button.title = `${item.clear.name}\n${fullDate.format(start)} → ${fullDate.format(end)}${item.clear.location ? `\n${item.clear.location}` : ""}\n${item.conversationTitle}`;
   button.setAttribute("aria-label", `${item.clear.name}, dans ${item.conversationTitle}`);
   button.addEventListener("click", () => openCalendarEvent(item));
@@ -4617,14 +4618,14 @@ async function loadExistingFileShares(fileID) {
       row.className = "file-share-existing-row";
       const details = document.createElement("span");
       const label = document.createElement("strong");
-      label.textContent = `Valable jusqu’au ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(share.expires_at))}`;
+      label.textContent = t("Valable jusqu’au {date}", { date: new Intl.DateTimeFormat(locale, { dateStyle: "short", timeStyle: "short" }).format(new Date(share.expires_at)) });
       const downloads = document.createElement("small");
       downloads.textContent = `${share.download_count} téléchargement${share.download_count === 1 ? "" : "s"}`;
       details.append(label, downloads);
       const revoke = document.createElement("button");
       revoke.type = "button";
       revoke.className = "outline danger-text";
-      revoke.textContent = "Désactiver";
+      revoke.textContent = t("Désactiver");
       revoke.addEventListener("click", async () => {
         setBusy(revoke, true, "…");
         try {
@@ -4682,7 +4683,7 @@ async function createFileShare(event) {
     publicURL.searchParams.set("token", share.token);
     publicURL.hash = new URLSearchParams({ key: exportedKey }).toString();
     elements.fileShareURL.value = publicURL.toString();
-    elements.fileShareValidity.textContent = `Valable jusqu’au ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "long", timeStyle: "short" }).format(new Date(share.expires_at))}.`;
+    elements.fileShareValidity.textContent = t("Valable jusqu’au {date}.", { date: new Intl.DateTimeFormat(locale, { dateStyle: "long", timeStyle: "short" }).format(new Date(share.expires_at)) });
     elements.fileShareResult.hidden = false;
     elements.fileShareCreateActions.hidden = true;
     elements.fileShareExpiration.disabled = true;
@@ -4719,7 +4720,7 @@ async function revokeFileShare() {
     await api(`/api/file-shares/${state.activeFileShareID}`, { method: "DELETE" });
     state.activeFileShareID = null;
     elements.fileShareURL.value = "";
-    elements.fileShareValidity.textContent = "Ce lien a été désactivé.";
+    elements.fileShareValidity.textContent = t("Ce lien a été désactivé.");
     elements.fileShareCopy.disabled = true;
     toast("Lien de partage désactivé.", "success");
     if (state.pendingFileShare?.message?.file?.id) loadExistingFileShares(state.pendingFileShare.message.file.id);
@@ -4823,7 +4824,7 @@ async function deleteMessage(message, row) {
     if (!elements.messages.querySelector(".message")) {
       const empty = document.createElement("div");
       empty.id = "empty-chat";
-      empty.textContent = "Aucun message. Écrivez le premier message chiffré.";
+      empty.textContent = t("Aucun message. Écrivez le premier message chiffré.");
       elements.messages.append(empty);
     }
     toast("Message supprimé.", "success");
@@ -4968,13 +4969,13 @@ function renderNativePDFPreview(file, container) {
   const actions = document.createElement("div");
   actions.className = "pdf-native-actions";
   const label = document.createElement("span");
-  label.textContent = "Aperçu PDF fourni par le navigateur.";
+  label.textContent = t("Aperçu PDF fourni par le navigateur.");
   const open = document.createElement("a");
   open.className = "pdf-native-open";
   open.href = file.url;
   open.target = "_blank";
   open.rel = "noopener";
-  open.textContent = "Ouvrir le PDF";
+  open.textContent = t("Ouvrir le PDF");
   actions.append(label, open);
   container.classList.add("pdf-native-fallback");
   container.replaceChildren(frame, actions);
@@ -5156,7 +5157,7 @@ async function renderFilePreview(message, container, key) {
       container.append(pre);
       if (file.data.length > 12000) {
         const note = document.createElement("small");
-        note.textContent = "Aperçu limité à la première page.";
+        note.textContent = t("Aperçu limité à la première page.");
         container.append(note);
       }
       return;
@@ -5166,7 +5167,7 @@ async function renderFilePreview(message, container, key) {
     const icon = document.createElement("span");
     icon.append(materialFileIcon("file"));
     const label = document.createElement("span");
-    label.textContent = "Aperçu non disponible pour ce format";
+    label.textContent = t("Aperçu non disponible pour ce format");
     unavailable.append(icon, label);
     container.append(unavailable);
   } catch (error) {

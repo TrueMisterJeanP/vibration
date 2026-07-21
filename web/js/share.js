@@ -1,4 +1,7 @@
 import { decryptBytes, decryptEnvelope, importShareKey } from "./crypto.js?v=responsive-pinned-v166";
+import { locale, localizeDocument, t } from "./i18n.js";
+
+localizeDocument();
 
 const RETURN_STORAGE_KEY = "vibration.file_share_return";
 const elements = {
@@ -19,9 +22,9 @@ let fileMIME = "application/octet-stream";
 let downloading = false;
 
 function formatSize(bytes) {
-  if (bytes < 1024) return `${bytes} o`;
-  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} Ko`;
-  return `${(bytes / (1024 * 1024)).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Mo`;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toLocaleString(locale, { maximumFractionDigits: 1 })} MB`;
 }
 
 function safeMIME(value) {
@@ -31,7 +34,7 @@ function safeMIME(value) {
 
 async function responseJSON(response) {
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "Ce fichier partagé n’est pas disponible.");
+  if (!response.ok) throw new Error(data.error || t("Ce fichier partagé n’est pas disponible."));
   return data;
 }
 
@@ -39,7 +42,7 @@ async function downloadSharedFile(automatic = false) {
   if (downloading || !shareKey || !token) return;
   downloading = true;
   elements.download.disabled = true;
-  elements.status.textContent = automatic ? "Téléchargement automatique…" : "Préparation du téléchargement…";
+  elements.status.textContent = t(automatic ? "Téléchargement automatique…" : "Préparation du téléchargement…");
   try {
     const response = await fetch(`/api/file-shares/${encodeURIComponent(token)}/download`, {
       credentials: "include",
@@ -55,10 +58,10 @@ async function downloadSharedFile(automatic = false) {
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 30000);
-    elements.status.textContent = "Téléchargement démarré.";
+    elements.status.textContent = t("Téléchargement démarré.");
   } catch (error) {
     elements.status.textContent = "";
-    elements.error.textContent = error.message || "Téléchargement impossible.";
+    elements.error.textContent = error.message || t("Téléchargement impossible.");
   } finally {
     downloading = false;
     elements.download.disabled = false;
@@ -69,7 +72,7 @@ async function init() {
   try { sessionStorage.setItem(RETURN_STORAGE_KEY, location.href); } catch {}
   token = new URLSearchParams(location.search).get("token") || "";
   const exportedKey = new URLSearchParams(location.hash.slice(1)).get("key") || "";
-  if (!token || !exportedKey) throw new Error("Ce lien de partage est incomplet.");
+  if (!token || !exportedKey) throw new Error(t("Ce lien de partage est incomplet."));
   shareKey = await importShareKey(exportedKey);
   const response = await fetch(`/api/file-shares/${encodeURIComponent(token)}`, {
     credentials: "include",
@@ -83,24 +86,24 @@ async function init() {
   fileMIME = safeMIME(fileMIME);
   elements.name.textContent = fileName;
   elements.meta.textContent = `${formatSize(metadata.size)} · ${fileMIME}`;
-  elements.expiry.textContent = `Lien valable jusqu’au ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "long", timeStyle: "short" }).format(new Date(metadata.expires_at))}.`;
-  elements.download.setAttribute("aria-label", `Télécharger ${fileName}`);
+  elements.expiry.textContent = t("Lien valable jusqu’au {date}.", { date: new Intl.DateTimeFormat(locale, { dateStyle: "long", timeStyle: "short" }).format(new Date(metadata.expires_at)) });
+  elements.download.setAttribute("aria-label", t("Télécharger {name}", { name: fileName }));
   elements.download.disabled = false;
   elements.download.addEventListener("click", () => downloadSharedFile(false));
 
   const session = await fetch("/api/me", { credentials: "include", cache: "no-store" }).catch(() => null);
   if (session?.ok) {
     document.querySelector(".share-auth-actions").hidden = true;
-    elements.status.textContent = "Session reconnue. Le téléchargement va démarrer.";
+    elements.status.textContent = t("Session reconnue. Le téléchargement va démarrer.");
     await downloadSharedFile(true);
   }
 }
 
 init().catch((error) => {
-  elements.name.textContent = "Fichier indisponible";
+  elements.name.textContent = t("Fichier indisponible");
   elements.meta.textContent = "";
   elements.expiry.textContent = "";
   elements.status.textContent = "";
-  elements.error.textContent = error.message || "Impossible d’ouvrir ce lien de partage.";
+  elements.error.textContent = error.message || t("Impossible d’ouvrir ce lien de partage.");
   elements.download.disabled = true;
 });

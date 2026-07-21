@@ -1,7 +1,8 @@
 {
   "name": "Vibration",
   "short_name": "Vibration",
-  "description": "Messagerie web chiffrée de bout en bout",
+  "description": "End-to-end encrypted web messaging",
+  "lang": "en",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

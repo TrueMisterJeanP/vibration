@@ -1,3 +1,7 @@
+import { locale, localizeDocument, t } from "./i18n.js";
+
+localizeDocument();
+
 export function escapeHTML(value) {
   const element = document.createElement("div");
   element.textContent = value ?? "";
@@ -26,24 +30,24 @@ export function toast(message, kind = "info") {
 
 export function frenchErrorMessage(error, fallback = "Une erreur inattendue est survenue.") {
   const message = typeof error === "string" ? error.trim() : error?.message?.trim();
-  if (!message) return fallback;
+  if (!message) return t(fallback);
   if (
     /[àâçéèêëîïôùûüÿœ’]/i.test(message)
     || /\b(aucun|authentification|ce|cette|dans|de|des|du|erreur|est|fichier|groupe|impossible|introuvable|la|le|les|mot|pour|requise|requête|serveur|un|une|utilisateur|votre|vous)\b/i.test(message)
   ) {
-    return message;
+    return t(message);
   }
   if (/load failed|failed to fetch|network(?: request)? failed/i.test(message)) {
-    return "Serveur inaccessible";
+    return t("Serveur inaccessible");
   }
   if (/abort|cancel/i.test(message)) {
-    return "L’opération a été annulée.";
+    return t("L’opération a été annulée.");
   }
-  return fallback;
+  return t(fallback);
 }
 
 export function formatTime(value) {
-  return new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
 export function actionIcon(kind) {
@@ -113,12 +117,12 @@ export function renderMessage(
   }
   const author = document.createElement("small");
   author.className = "message-author";
-  author.textContent = mine ? "Vous" : message.sender_username;
+  author.textContent = mine ? t("Vous") : message.sender_username;
   authorRow.append(avatar, author);
   if (message.is_pinned) {
     const pinned = document.createElement("small");
     pinned.className = "message-pin-badge";
-    pinned.textContent = "Épinglé";
+    pinned.textContent = t("Épinglé");
     authorRow.append(pinned);
   }
   const quickActions = document.createElement("span");
@@ -126,19 +130,19 @@ export function renderMessage(
   const replyButton = document.createElement("button");
   replyButton.type = "button";
   replyButton.textContent = "↩";
-  replyButton.title = "Répondre";
+  replyButton.title = t("Répondre");
   replyButton.setAttribute("aria-label", replyButton.title);
   replyButton.onclick = () => onMessageReply(message, clear);
   const reactButton = document.createElement("button");
   reactButton.type = "button";
   reactButton.textContent = "♡";
-  reactButton.title = "Réagir";
+  reactButton.title = t("Réagir");
   reactButton.setAttribute("aria-label", reactButton.title);
   reactButton.onclick = () => onMessageReact(message);
   const pinButton = document.createElement("button");
   pinButton.type = "button";
   pinButton.textContent = message.is_pinned ? "⌖" : "⌑";
-  pinButton.title = message.is_pinned ? "Désépingler" : "Épingler";
+  pinButton.title = t(message.is_pinned ? "Désépingler" : "Épingler");
   pinButton.setAttribute("aria-label", pinButton.title);
   pinButton.onclick = () => onMessagePin(message);
   quickActions.append(replyButton, reactButton, pinButton);
@@ -148,8 +152,8 @@ export function renderMessage(
     download.type = "button";
     download.className = "file-download-button";
     download.textContent = "↓";
-    download.title = "Télécharger le fichier";
-    download.setAttribute("aria-label", `Télécharger ${clear.name}`);
+    download.title = t("Télécharger le fichier");
+    download.setAttribute("aria-label", t("Télécharger {name}", { name: clear.name }));
     download.addEventListener("click", () => onFileDownload(message, clear.name, download));
     authorRow.append(download);
   }
@@ -162,10 +166,10 @@ export function renderMessage(
     if (message.reply_preview.type === "file") {
       const thumb = document.createElement("span");
       thumb.className = "message-reply-file-thumb";
-      thumb.textContent = "Aperçu";
+      thumb.textContent = t("Aperçu");
       const label = document.createElement("span");
       label.className = "message-reply-file-label";
-      label.textContent = message.reply_preview.name || "Fichier";
+      label.textContent = message.reply_preview.name || t("Fichier");
       reply.append(thumb, label);
       onReplyFilePreview(message.reply_preview, thumb);
     } else {
@@ -191,8 +195,8 @@ export function renderMessage(
     const share = document.createElement("button");
     share.type = "button";
     share.className = "file-share-button";
-    share.title = "Partager le fichier";
-    share.setAttribute("aria-label", `Partager ${clear.name}`);
+    share.title = t("Partager le fichier");
+    share.setAttribute("aria-label", t("Partager {name}", { name: clear.name }));
     const shareIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     shareIcon.setAttribute("viewBox", "0 0 24 24");
     shareIcon.setAttribute("aria-hidden", "true");
@@ -277,7 +281,7 @@ export function renderMessage(
     const validity = closed
       ? " · Terminé"
       : Number.isFinite(deadline)
-        ? ` · Clôture le ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date(deadline))}`
+        ? ` · ${t("Clôture le {date}", { date: new Intl.DateTimeFormat(locale, { dateStyle: "short", timeStyle: "short" }).format(new Date(deadline)) })}`
         : " · Sans limite";
     summary.textContent = `${message.poll.total_votes} vote${message.poll.total_votes === 1 ? "" : "s"}${message.poll.has_voted ? " · Vous avez voté" : ""}${validity}`;
     poll.append(question, options, summary);
@@ -314,7 +318,7 @@ export function renderMessage(
       edit.type = "button";
       edit.className = "swipe-edit";
       edit.append(actionIcon("edit"));
-      edit.title = "Modifier le message";
+      edit.title = t("Modifier le message");
       edit.setAttribute("aria-label", edit.title);
       edit.onclick = () => onMessageEdit(message, clear, row);
       actions.append(edit);
@@ -323,7 +327,7 @@ export function renderMessage(
     remove.type = "button";
     remove.className = "swipe-delete";
     remove.append(actionIcon("delete"));
-    remove.title = "Supprimer le message";
+    remove.title = t("Supprimer le message");
     remove.setAttribute("aria-label", remove.title);
     remove.onclick = () => onMessageDelete(message, row);
     actions.append(remove);
@@ -333,7 +337,7 @@ export function renderMessage(
     toggle.type = "button";
     toggle.className = "swipe-toggle";
     toggle.textContent = "•••";
-    toggle.title = "Afficher les actions";
+    toggle.title = t("Afficher les actions");
     toggle.setAttribute("aria-label", toggle.title);
     toggle.onclick = (event) => {
       event.stopPropagation();
@@ -348,7 +352,7 @@ export function renderMessage(
 }
 
 function eventDateRange(startsAt, endsAt) {
-  const formatter = new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" });
+  const formatter = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
   const start = new Date(startsAt);
   const end = new Date(endsAt);
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return "Date inconnue";

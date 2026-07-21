@@ -1,8 +1,8 @@
-const CACHE = "chat-pwa-go-v166";
+const CACHE = "chat-pwa-go-v167";
 const SHELL = [
   "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=responsive-pinned-v166",
   "/js/app.js?v=responsive-pinned-v166", "/js/api.js?v=responsive-pinned-v166", "/js/crypto.js", "/js/websocket.js?v=responsive-pinned-v166", "/js/theme.js",
-  "/js/notifications.js", "/js/device-vault.js", "/js/ui.js?v=responsive-pinned-v166", "/js/share.js?v=responsive-pinned-v166", "/js/login.js", "/manifest.json",
+  "/js/notifications.js", "/js/device-vault.js", "/js/i18n.js", "/js/ui.js?v=responsive-pinned-v166", "/js/share.js?v=responsive-pinned-v166", "/js/login.js", "/manifest.json",
   "/vendor/pdfjs/pdf.compat.mjs?v=responsive-pinned-v166",
   "/vendor/pdfjs/pdf.min.mjs?v=responsive-pinned-v166",
   "/vendor/pdfjs/pdf.worker.compat.mjs?v=responsive-pinned-v166",

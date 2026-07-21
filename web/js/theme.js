@@ -12,7 +12,7 @@
     document.documentElement.dataset.theme = resolved;
     document.documentElement.style.colorScheme = resolved;
     const themeColor = document.querySelector('meta[name="theme-color"]');
-    if (themeColor) themeColor.content = resolved === "light" ? "#f3f7f7" : "#0f766e";
+    if (themeColor) themeColor.content = resolved === "light" ? "#c9e7e4" : "#0f766e";
   }
 
   window.ChatTheme = {
