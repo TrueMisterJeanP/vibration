@@ -4111,9 +4111,9 @@ async function openGlobalFiles() {
       } catch {
         return {
           message,
-          clear: { name: "Fichier impossible à déchiffrer", mime: "application/octet-stream" },
+          clear: { name: t("Fichier impossible à déchiffrer"), mime: "application/octet-stream" },
           conversation,
-          conversationTitle: "Conversation",
+          conversationTitle: t("Conversation"),
           conversationAvatar: null,
           conversationInitial: conversation.type === "group" ? "G" : "@",
         };
@@ -4128,8 +4128,8 @@ async function openGlobalFiles() {
 function renderGlobalFiles(items) {
   elements.globalFilesList.replaceChildren();
   elements.globalFilesStatus.textContent = items.length
-    ? `${items.length} fichier${items.length === 1 ? "" : "s"} dans vos discussions.`
-    : "Aucun fichier dans vos discussions.";
+    ? t(items.length === 1 ? "{count} fichier dans vos discussions." : "{count} fichiers dans vos discussions.", { count: items.length })
+    : t("Aucun fichier dans vos discussions.");
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "global-files-empty";
@@ -4156,7 +4156,7 @@ function renderGlobalFiles(items) {
     const updateMeta = () => {
       const shareCount = Number(item.message.file.active_share_count || 0);
       const shared = shareCount > 0
-        ? ` · Partagé (${shareCount} lien${shareCount === 1 ? "" : "s"})`
+        ? ` · ${t(shareCount === 1 ? "Partagé ({count} lien)" : "Partagé ({count} liens)", { count: shareCount })}`
         : "";
       meta.textContent = `${formatFileSize(item.message.file.size)} · ${dateFormatter.format(new Date(item.message.created_at))}${shared}`;
     };
@@ -4170,12 +4170,12 @@ function renderGlobalFiles(items) {
     source.append(avatar, title);
     content.append(name, meta, source);
     open.append(kind, content);
-    open.title = `Ouvrir ${item.conversationTitle}`;
+    open.title = t("Ouvrir {conversation}", { conversation: item.conversationTitle });
     open.addEventListener("click", () => openGlobalFile(item));
     const share = document.createElement("button");
     share.type = "button";
     share.className = "file-share-button global-file-share";
-    share.title = `Partager ${item.clear.name}`;
+    share.title = t("Partager {name}", { name: item.clear.name });
     share.setAttribute("aria-label", share.title);
     share.innerHTML = '<svg class="file-share-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><path d="m8.6 10.7 6.8-4.4"></path><path d="m8.6 13.3 6.8 4.4"></path></svg>';
     share.addEventListener("click", () => {
@@ -4189,13 +4189,15 @@ function renderGlobalFiles(items) {
       const cancelShare = document.createElement("button");
       cancelShare.type = "button";
       cancelShare.className = "file-share-button global-file-unshare";
-      cancelShare.title = `Annuler le partage de ${item.clear.name}`;
+      cancelShare.title = t("Annuler le partage de {name}", { name: item.clear.name });
       cancelShare.setAttribute("aria-label", cancelShare.title);
       cancelShare.innerHTML = '<svg class="file-share-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 7h2a5 5 0 0 1 0 10h-2"></path><path d="M8 17H6A5 5 0 0 1 6 7h2"></path><path d="M9 12h6"></path><path d="m3 3 18 18"></path></svg>';
       cancelShare.addEventListener("click", async () => {
         const count = Number(item.message.file.active_share_count || 0);
-        const label = count === 1 ? "ce lien de partage" : `ces ${count} liens de partage`;
-        if (!confirm(`Désactiver ${label} ? Les personnes qui les possèdent ne pourront plus télécharger le fichier.`)) return;
+        const confirmation = count === 1
+          ? t("Désactiver ce lien de partage ? La personne qui le possède ne pourra plus télécharger le fichier.")
+          : t("Désactiver ces {count} liens de partage ? Les personnes qui les possèdent ne pourront plus télécharger le fichier.", { count });
+        if (!confirm(confirmation)) return;
         cancelShare.disabled = true;
         cancelShare.setAttribute("aria-busy", "true");
         try {
@@ -4203,7 +4205,7 @@ function renderGlobalFiles(items) {
           item.message.file.active_share_count = 0;
           cancelShare.remove();
           updateMeta();
-          toast(count === 1 ? "Partage du fichier annulé." : "Partages du fichier annulés.", "success");
+          toast(t(count === 1 ? "Partage du fichier annulé." : "Partages du fichier annulés."), "success");
         } catch (error) {
           cancelShare.disabled = false;
           cancelShare.removeAttribute("aria-busy");
@@ -4233,9 +4235,11 @@ function fileKindIcon(mime = "") {
 }
 
 function formatFileSize(bytes) {
-  if (bytes < 1024) return `${bytes} o`;
-  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} Ko`;
-  return `${(bytes / (1024 * 1024)).toLocaleString(locale, { maximumFractionDigits: 1 })} MB`;
+  if (bytes < 1024) return t("{count} o", { count: bytes });
+  if (bytes < 1024 * 1024) return t("{count} Ko", { count: Math.ceil(bytes / 1024) });
+  return t("{count} Mo", {
+    count: (bytes / (1024 * 1024)).toLocaleString(locale, { maximumFractionDigits: 1 }),
+  });
 }
 
 async function openCalendar() {
@@ -4263,9 +4267,9 @@ async function openCalendar() {
       } catch {
         return {
           message,
-          clear: { name: "Évènement impossible à déchiffrer", description: "", location: "" },
+          clear: { name: t("Évènement impossible à déchiffrer"), description: "", location: "" },
           conversation,
-          conversationTitle: "Conversation",
+          conversationTitle: t("Conversation"),
           conversationAvatar: null,
           conversationInitial: conversation.type === "group" ? "G" : "@",
         };
@@ -4289,7 +4293,7 @@ function renderCalendarMonth(updateStatus = true) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
   const monthName = new Intl.DateTimeFormat(locale, { month: "long", year: "numeric" }).format(month);
-  elements.calendarMonthLabel.textContent = monthName.charAt(0).toLocaleUpperCase("fr") + monthName.slice(1);
+  elements.calendarMonthLabel.textContent = monthName.charAt(0).toLocaleUpperCase(locale) + monthName.slice(1);
   const firstWeekday = (new Date(year, monthIndex, 1).getDay() + 6) % 7;
   const firstCellDate = new Date(year, monthIndex, 1 - firstWeekday);
   const todayKey = calendarDayKey(new Date());
@@ -4330,8 +4334,10 @@ function renderCalendarMonth(updateStatus = true) {
   if (updateStatus) {
     const total = state.calendarItems.length;
     elements.calendarStatus.textContent = total
-      ? `${visibleEvents} évènement${visibleEvents === 1 ? "" : "s"} ce mois · ${total} au total`
-      : "Aucun évènement dans vos conversations.";
+      ? t(visibleEvents === 1
+        ? "{visible} évènement ce mois · {total} au total"
+        : "{visible} évènements ce mois · {total} au total", { visible: visibleEvents, total })
+      : t("Aucun évènement dans vos conversations.");
   }
 }
 
@@ -4365,7 +4371,10 @@ function calendarEventButton(item, date) {
   button.append(conversationIcon, name, timeLabel);
   const fullDate = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
   button.title = `${item.clear.name}\n${fullDate.format(start)} → ${fullDate.format(end)}${item.clear.location ? `\n${item.clear.location}` : ""}\n${item.conversationTitle}`;
-  button.setAttribute("aria-label", `${item.clear.name}, dans ${item.conversationTitle}`);
+  button.setAttribute("aria-label", t("{name}, dans {conversation}", {
+    name: item.clear.name,
+    conversation: item.conversationTitle,
+  }));
   button.addEventListener("click", () => openCalendarEvent(item));
   return button;
 }
@@ -4392,7 +4401,7 @@ async function revealMessage(messageID) {
   const row = [...elements.messages.querySelectorAll(".message-row")]
     .find((candidate) => sameID(candidate.dataset.id, messageID));
   if (!row) {
-    toast("L’évènement n’est plus disponible dans cette discussion.", "error");
+    toast(t("L’évènement n’est plus disponible dans cette discussion."), "error");
     return;
   }
   row.classList.add("navigation-target");

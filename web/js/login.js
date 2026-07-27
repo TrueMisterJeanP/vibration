@@ -6,7 +6,7 @@ import {
   requestNotificationPermissionOnSignIn,
 } from "./notifications.js";
 import { frenchErrorMessage } from "./ui.js";
-import { t } from "./i18n.js";
+import { t, translateMultiline } from "./i18n.js";
 
 const loginForm = document.querySelector("#login-form");
 const instanceForm = ensureInstanceForm();
@@ -46,7 +46,7 @@ async function ensureTermsAccepted() {
     const form = document.querySelector("#terms-acceptance-form");
     const checkbox = document.querySelector("#terms-accepted");
     const error = document.querySelector("#terms-error");
-    document.querySelector("#terms-content").textContent = status.content || "";
+    document.querySelector("#terms-content").textContent = translateMultiline(status.content || "");
     document.querySelector("#terms-version-label").textContent = t("Version {version}", { version: status.version });
     checkbox.checked = false;
     error.textContent = "";
