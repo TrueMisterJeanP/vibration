@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"chat-pwa-go/internal/auth"
@@ -29,6 +30,7 @@ type Handler struct {
 	DB         *sql.DB
 	Hub        Broadcaster
 	Federation FederationRouter
+	personalMu sync.Mutex
 }
 
 type Conversation struct {
@@ -49,6 +51,7 @@ type Conversation struct {
 	LastMessageIV            *string `json:"last_message_iv"`
 	LastMessageHasFile       bool    `json:"last_message_has_file"`
 	UnreadCount              int     `json:"unread_count"`
+	IsPersonal               bool    `json:"is_personal"`
 }
 
 type Member struct {
@@ -74,7 +77,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		(SELECT iv FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
 		COALESCE((SELECT f.id IS NOT NULL FROM messages lm LEFT JOIN files f ON f.message_id=lm.id WHERE lm.conversation_id=c.id AND lm.created_at>=cm.created_at AND (lm.expires_at IS NULL OR lm.expires_at>?) ORDER BY lm.id DESC LIMIT 1),0),
 		(SELECT COUNT(*) FROM messages m JOIN message_receipts mr ON mr.message_id=m.id
-		WHERE m.conversation_id=c.id AND m.created_at>=cm.created_at AND mr.user_id=? AND mr.status<>'read' AND (m.expires_at IS NULL OR m.expires_at>?))
+		WHERE m.conversation_id=c.id AND m.created_at>=cm.created_at AND mr.user_id=? AND mr.status<>'read' AND (m.expires_at IS NULL OR m.expires_at>?)),
+		(SELECT COUNT(*) FROM conversation_members personal_cm WHERE personal_cm.conversation_id=c.id)
 		FROM conversations c JOIN conversation_members cm ON cm.conversation_id=c.id
 		LEFT JOIN federated_conversations fc ON fc.local_conversation_id=c.id
 		LEFT JOIN federated_instances fi ON fi.id=fc.instance_id
@@ -88,9 +92,11 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	result := make([]Conversation, 0)
 	for rows.Next() {
 		var item Conversation
+		var memberCount int
 		if rows.Scan(&item.ID, &item.Type, &item.EncryptedTitle, &item.EncryptedDescription, &item.EncryptedAvatar, &item.FederationKeyID,
 			&item.FederationInstanceURL, &item.RemoteUsername, &item.CreatedBy, &item.CreatedAt, &item.EncryptedConversationKey, &item.Role, &item.LastMessageAt,
-			&item.LastMessageEncrypted, &item.LastMessageIV, &item.LastMessageHasFile, &item.UnreadCount) == nil {
+			&item.LastMessageEncrypted, &item.LastMessageIV, &item.LastMessageHasFile, &item.UnreadCount, &memberCount) == nil {
+			item.IsPersonal = item.Type == "private" && item.CreatedBy == auth.UserID(r) && memberCount == 1
 			result = append(result, item)
 		}
 	}
@@ -131,6 +137,34 @@ func (h *Handler) CreatePrivate(w http.ResponseWriter, r *http.Request) {
 	id, err := h.createConversation("private", nil, nil, nil, ownerID, map[int64]string{ownerID: "ecdh-v1", input.UserID: "ecdh-v1"}, nil)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "conversation creation failed")
+		return
+	}
+	h.notifyMembers(id, "conversation_updated")
+	httpx.JSON(w, http.StatusCreated, map[string]any{"id": id})
+}
+
+func (h *Handler) CreatePersonal(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserID(r)
+	h.personalMu.Lock()
+	defer h.personalMu.Unlock()
+
+	var existing int64
+	err := h.DB.QueryRow(`SELECT c.id FROM conversations c
+		JOIN conversation_members cm ON cm.conversation_id=c.id AND cm.user_id=?
+		WHERE c.type='private' AND c.created_by=?
+		AND (SELECT COUNT(*) FROM conversation_members WHERE conversation_id=c.id)=1
+		ORDER BY c.id LIMIT 1`, userID, userID).Scan(&existing)
+	if err == nil {
+		httpx.JSON(w, http.StatusOK, map[string]any{"id": existing, "existing": true})
+		return
+	}
+	if err != sql.ErrNoRows {
+		httpx.Error(w, http.StatusInternalServerError, "personal conversation lookup failed")
+		return
+	}
+	id, err := h.createConversation("private", nil, nil, nil, userID, map[int64]string{userID: "self-ecdh-v1"}, nil)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "personal conversation creation failed")
 		return
 	}
 	h.notifyMembers(id, "conversation_updated")
@@ -259,6 +293,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var conversation Conversation
+	var memberCount int
 	err = h.DB.QueryRow(`SELECT c.id,c.type,c.encrypted_title,c.encrypted_description,c.encrypted_avatar,c.federation_key_id,fi.base_url,ru.remote_username,
 		c.created_by,c.created_at,cm.encrypted_conversation_key,cm.role,
 		(SELECT MAX(created_at) FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?)),
@@ -266,7 +301,8 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		(SELECT iv FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
 		COALESCE((SELECT f.id IS NOT NULL FROM messages lm LEFT JOIN files f ON f.message_id=lm.id WHERE lm.conversation_id=c.id AND lm.created_at>=cm.created_at AND (lm.expires_at IS NULL OR lm.expires_at>?) ORDER BY lm.id DESC LIMIT 1),0),
 		(SELECT COUNT(*) FROM messages m JOIN message_receipts mr ON mr.message_id=m.id
-			WHERE m.conversation_id=c.id AND m.created_at>=cm.created_at AND mr.user_id=? AND mr.status<>'read' AND (m.expires_at IS NULL OR m.expires_at>?))
+			WHERE m.conversation_id=c.id AND m.created_at>=cm.created_at AND mr.user_id=? AND mr.status<>'read' AND (m.expires_at IS NULL OR m.expires_at>?)),
+		(SELECT COUNT(*) FROM conversation_members personal_cm WHERE personal_cm.conversation_id=c.id)
 		FROM conversations c JOIN conversation_members cm ON cm.conversation_id=c.id
 		LEFT JOIN federated_conversations fc ON fc.local_conversation_id=c.id
 		LEFT JOIN federated_instances fi ON fi.id=fc.instance_id
@@ -275,11 +311,12 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		Scan(&conversation.ID, &conversation.Type, &conversation.EncryptedTitle, &conversation.EncryptedDescription, &conversation.EncryptedAvatar,
 			&conversation.FederationKeyID, &conversation.FederationInstanceURL, &conversation.RemoteUsername, &conversation.CreatedBy, &conversation.CreatedAt,
 			&conversation.EncryptedConversationKey, &conversation.Role, &conversation.LastMessageAt, &conversation.LastMessageEncrypted, &conversation.LastMessageIV,
-			&conversation.LastMessageHasFile, &conversation.UnreadCount)
+			&conversation.LastMessageHasFile, &conversation.UnreadCount, &memberCount)
 	if err != nil {
 		httpx.Error(w, http.StatusNotFound, "conversation not found")
 		return
 	}
+	conversation.IsPersonal = conversation.Type == "private" && conversation.CreatedBy == auth.UserID(r) && memberCount == 1
 	httpx.JSON(w, http.StatusOK, conversation)
 }
 
@@ -520,6 +557,10 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rows.Close()
+	if kind == "private" && len(memberIDs) == 1 && memberIDs[0] == userID {
+		httpx.Error(w, http.StatusForbidden, "personal conversation cannot be deleted")
+		return
+	}
 	if kind == "private" && len(memberIDs) == 2 {
 		if _, err := h.DB.Exec(`DELETE FROM contacts WHERE (owner_id=? AND contact_user_id=?) OR (owner_id=? AND contact_user_id=?)`,
 			memberIDs[0], memberIDs[1], memberIDs[1], memberIDs[0]); err != nil {

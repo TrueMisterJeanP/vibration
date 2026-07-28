@@ -167,6 +167,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	fileMeta := map[string]any{"id": fileID, "encrypted_name": input.EncryptedName, "encrypted_mime": input.EncryptedMIME, "iv": input.IV, "size": len(data)}
 	message := map[string]any{"id": messageID, "conversation_id": input.ConversationID, "sender_id": userID,
 		"sender_username": username, "sender_avatar": avatar, "encrypted_content": nil, "iv": input.IV, "expires_at": expiresAt, "created_at": now, "status": "sent", "file": fileMeta}
+	personalConversation := len(members) == 1 && members[0] == userID
 	for _, id := range members {
 		if id != userID {
 			online := h.Hub != nil && h.Hub.SendToUser(id, map[string]any{"type": "new_message", "message": message})
@@ -180,6 +181,8 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 			if h.Push != nil {
 				go h.Push.NotifyUser(id)
 			}
+		} else if personalConversation && h.Hub != nil {
+			h.Hub.SendToUser(id, map[string]any{"type": "new_message", "message": message})
 		}
 		if h.Hub != nil {
 			h.Hub.SendToUser(id, map[string]any{"type": "conversation_updated", "conversation_id": input.ConversationID})

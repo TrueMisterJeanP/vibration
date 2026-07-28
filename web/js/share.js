@@ -1,4 +1,4 @@
-import { decryptBytes, decryptEnvelope, importShareKey } from "./crypto.js?v=responsive-pinned-v166";
+import { decryptBytes, decryptEnvelope, importShareKey } from "./crypto.js?v=share-errors-v171";
 import { locale, localizeDocument, t } from "./i18n.js";
 
 localizeDocument();
@@ -21,6 +21,29 @@ let fileName = "Fichier partagé";
 let fileMIME = "application/octet-stream";
 let downloading = false;
 
+const serverShareErrors = new Map([
+  ["file share not found", "Ce fichier partagé n’est pas disponible."],
+  ["file share unavailable", "Ce fichier partagé n’est plus disponible."],
+  ["file share lookup failed", "Impossible de vérifier ce lien de partage."],
+  ["file share download failed", "Téléchargement impossible."],
+]);
+
+class SharePageError extends Error {
+  constructor(source) {
+    super(source);
+    this.source = source;
+  }
+}
+
+function localizedShareError(error, fallback) {
+  if (error instanceof SharePageError) return t(error.source);
+  if (error?.message === "Clé de partage invalide.") return t("Clé de partage invalide.");
+  if (["DataError", "InvalidCharacterError", "OperationError", "SyntaxError"].includes(error?.name)) {
+    return t("La clé de partage ne permet pas de déchiffrer ce fichier.");
+  }
+  return t(fallback);
+}
+
 function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`;
@@ -34,7 +57,9 @@ function safeMIME(value) {
 
 async function responseJSON(response) {
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || t("Ce fichier partagé n’est pas disponible."));
+  if (!response.ok) {
+    throw new SharePageError(serverShareErrors.get(data.error) || "Ce fichier partagé n’est pas disponible.");
+  }
   return data;
 }
 
@@ -61,7 +86,7 @@ async function downloadSharedFile(automatic = false) {
     elements.status.textContent = t("Téléchargement démarré.");
   } catch (error) {
     elements.status.textContent = "";
-    elements.error.textContent = error.message || t("Téléchargement impossible.");
+    elements.error.textContent = localizedShareError(error, "Téléchargement impossible.");
   } finally {
     downloading = false;
     elements.download.disabled = false;
@@ -72,7 +97,7 @@ async function init() {
   try { sessionStorage.setItem(RETURN_STORAGE_KEY, location.href); } catch {}
   token = new URLSearchParams(location.search).get("token") || "";
   const exportedKey = new URLSearchParams(location.hash.slice(1)).get("key") || "";
-  if (!token || !exportedKey) throw new Error(t("Ce lien de partage est incomplet."));
+  if (!token || !exportedKey) throw new SharePageError("Ce lien de partage est incomplet.");
   shareKey = await importShareKey(exportedKey);
   const response = await fetch(`/api/file-shares/${encodeURIComponent(token)}`, {
     credentials: "include",
@@ -104,6 +129,6 @@ init().catch((error) => {
   elements.meta.textContent = "";
   elements.expiry.textContent = "";
   elements.status.textContent = "";
-  elements.error.textContent = error.message || t("Impossible d’ouvrir ce lien de partage.");
+  elements.error.textContent = localizedShareError(error, "Impossible d’ouvrir ce lien de partage.");
   elements.download.disabled = true;
 });

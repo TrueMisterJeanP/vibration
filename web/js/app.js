@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js?v=responsive-pinned-v166";
+import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js?v=share-errors-v171";
 import {
   decryptBytes,
   decryptEnvelope,
@@ -32,8 +32,8 @@ import {
   syncBrowserSubscription,
   testNotification,
 } from "./notifications.js";
-import { ChatSocket } from "./websocket.js?v=responsive-pinned-v166";
-import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=responsive-pinned-v166";
+import { ChatSocket } from "./websocket.js?v=share-errors-v171";
+import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=share-errors-v171";
 import { locale, t } from "./i18n.js";
 
 const CALL_INVITE_TIMEOUT_MS = 45000;
@@ -41,7 +41,7 @@ const CALL_SIGNAL_LOSS_GRACE_MS = 15000;
 const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
 const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "responsive-pinned-v166";
+const APP_BUILD = "share-errors-v171";
 
 window.VIBRATION_BUILD = APP_BUILD;
 console.info(`Vibration build ${APP_BUILD}`);
@@ -92,6 +92,9 @@ let callVideoResumeTimer = null;
 const elements = {
   shell: document.querySelector("#app-shell"),
   conversations: document.querySelector("#conversation-list"),
+  personalConversationButton: document.querySelector("#personal-conversation-button"),
+  personalConversationPreview: document.querySelector("#personal-conversation-preview"),
+  personalConversationUnread: document.querySelector("#personal-conversation-unread"),
   messages: document.querySelector("#message-list"),
   chatWorkspace: document.querySelector("#chat-workspace"),
   pinnedPanel: document.querySelector("#pinned-panel"),
@@ -192,6 +195,8 @@ const emojis = [
   "❤️", "💔", "🔥", "✨", "🎉", "✅",
   "👋", "👌", "🤗", "😴", "🙈", "🚀",
 ];
+const reactionEmojis = emojis;
+let activeReactionPicker = null;
 
 function ensureThreadTypingLabel() {
   const existing = document.querySelector("#thread-typing-label");
@@ -543,10 +548,19 @@ async function boot() {
   const canOpenAdmin = state.edition.admin_panel && (state.me.is_admin || state.me.is_manager);
   adminLink.hidden = !canOpenAdmin;
   adminLink.textContent = t(state.me.is_manager && !state.me.is_admin ? "Gestion" : "Administration");
-  await registerServiceWorker();
   await unlock();
   bindUI();
   connectSocket();
+  await refreshAll();
+  initializeNotificationsAfterBoot();
+}
+
+async function initializeNotificationsAfterBoot() {
+  try {
+    await registerServiceWorker();
+  } catch (error) {
+    console.warn("Initialisation du Service Worker impossible", error);
+  }
   if ("Notification" in window && Notification.permission === "granted") {
     try {
       await enableNotifications();
@@ -555,7 +569,6 @@ async function boot() {
     }
   }
   await refreshNotificationStatus();
-  await refreshAll();
 }
 
 async function unlock() {
@@ -683,6 +696,10 @@ function bindUI() {
   document.querySelector("#contact-button").onclick = () => document.querySelector("#contact-dialog").showModal();
   document.querySelector("#group-button").onclick = () => {
     openGroupDialog().catch((error) => toast(frenchErrorMessage(error, "Impossible de charger les contacts."), "error"));
+  };
+  elements.personalConversationButton.onclick = () => {
+    const conversation = state.conversations.find((item) => item.is_personal);
+    if (conversation) selectConversation(conversation);
   };
   const groupDialog = document.querySelector("#group-dialog");
   const groupCloseButton = groupDialog.querySelector("#group-close, .dialog-close");
@@ -1196,7 +1213,13 @@ function connectSocket() {
 }
 
 async function refreshAll() {
-  [state.contacts, state.conversations] = await Promise.all([api("/api/contacts"), api("/api/conversations")]);
+  let [contacts, conversations] = await Promise.all([api("/api/contacts"), api("/api/conversations")]);
+  if (!conversations.some((conversation) => conversation.is_personal)) {
+    await api("/api/conversations/personal", { method: "POST" });
+    conversations = await api("/api/conversations");
+  }
+  state.contacts = contacts;
+  state.conversations = conversations;
   state.members.clear();
   await renderConversations();
 }
@@ -1231,20 +1254,43 @@ function refreshConversationCallIndicators() {
   });
 }
 
+async function renderPersonalConversation() {
+  const conversation = state.conversations.find((item) => item.is_personal);
+  elements.personalConversationButton.hidden = !conversation;
+  if (!conversation) return;
+  elements.personalConversationButton.classList.toggle("active", sameID(state.current?.id, conversation.id));
+  const unreadCount = Number(conversation.unread_count || 0);
+  elements.personalConversationUnread.hidden = unreadCount === 0;
+  elements.personalConversationUnread.textContent = unreadCount > 99 ? "99+" : String(unreadCount || "");
+  elements.personalConversationUnread.setAttribute("aria-label", t(
+    unreadCount === 1 ? "{count} message non lu" : "{count} messages non lus",
+    { count: unreadCount },
+  ));
+  try {
+    elements.personalConversationPreview.textContent = await conversationListPreview(conversation, {
+      description: t("Messages et fichiers personnels"),
+    });
+  } catch {
+    elements.personalConversationPreview.textContent = t("Messages et fichiers personnels");
+  }
+}
+
 async function renderConversations() {
   elements.conversations.replaceChildren();
+  await renderPersonalConversation();
   const pendingContacts = state.contacts.filter((contact) => contact.status === "pending");
   for (const contact of pendingContacts) {
     elements.conversations.append(renderContactRequest(contact));
   }
-  if (!state.conversations.length && !pendingContacts.length) {
+  const listedConversations = state.conversations.filter((conversation) => !conversation.is_personal);
+  if (!listedConversations.length && !pendingContacts.length && elements.personalConversationButton.hidden) {
     const empty = document.createElement("p");
     empty.className = "muted sidebar-empty";
     empty.textContent = t("Aucune conversation");
     elements.conversations.append(empty);
     return;
   }
-  for (const conversation of state.conversations) {
+  for (const conversation of listedConversations) {
     if (conversation.type === "group" && conversation.role === "pending") {
       elements.conversations.append(renderGroupInvitation(conversation));
       continue;
@@ -1594,6 +1640,7 @@ async function editConversation(conversation, row) {
 
 function closeCurrentConversation(conversationID) {
   if (state.current?.id !== conversationID) return;
+  closeReactionPicker();
   clearCallState(conversationID);
   state.current = null;
   clearFileCache();
@@ -1767,7 +1814,11 @@ async function getConversationKey(conversation) {
   if (state.keys.has(conversation.id)) return state.keys.get(conversation.id);
   const members = await getMembers(conversation.id);
   let key;
-  if (conversation.type === "private") {
+  if (conversation.is_personal) {
+    const ownMember = members.find((member) => member.user_id === state.me.id);
+    if (!ownMember) throw new Error("Identité personnelle introuvable.");
+    key = await privateConversationKey(state.privateKey, ownMember.public_key, conversation.id);
+  } else if (conversation.type === "private") {
     const peer = members.find((member) => member.user_id !== state.me.id);
     if (!peer) throw new Error("Participant introuvable.");
     key = await privateConversationKey(state.privateKey, peer.public_key, conversation.id, conversation.federation_key_id || "");
@@ -1787,6 +1838,14 @@ async function resolveConversationTitle(conversation) {
 
 async function resolveConversationDisplay(conversation) {
   const members = await getMembers(conversation.id);
+  if (conversation.is_personal) {
+    return {
+      title: t("Mes notes"),
+      description: t("Messages et fichiers personnels"),
+      avatar: null,
+      customAvatar: null,
+    };
+  }
   if (conversation.type === "private") {
     const peer = members.find((member) => member.user_id !== state.me.id);
     return {
@@ -1846,6 +1905,7 @@ async function selectConversation(conversation, targetMessageID = null) {
     return;
   }
   if (!sameID(state.current?.id, conversation.id)) clearVoiceDraft();
+  closeReactionPicker();
   state.current = conversation;
   conversation.unread_count = 0;
   const listed = state.conversations.find((item) => sameID(item.id, conversation.id));
@@ -1867,7 +1927,9 @@ async function selectConversation(conversation, targetMessageID = null) {
   const display = await resolveConversationDisplay(conversation);
   if (!sameID(state.current?.id, selectedID)) return;
   elements.title.textContent = display.title;
-  elements.description.textContent = display.description || t(conversation.type === "group" ? "Groupe" : "Contact");
+  elements.description.textContent = display.description || t(
+    conversation.is_personal ? "Messages et fichiers personnels" : conversation.type === "group" ? "Groupe" : "Contact",
+  );
   const typing = await typingIndicator(conversation);
   renderTypingIndicator(elements.typing, typing);
   renderTypingIndicator(elements.threadTyping, typing);
@@ -1881,7 +1943,7 @@ async function selectConversation(conversation, targetMessageID = null) {
 }
 
 function canSignalCall(conversation = state.current) {
-  return Boolean(conversation && ["private", "group"].includes(conversation.type) && state.socket?.socket?.readyState === WebSocket.OPEN);
+  return Boolean(conversation && !conversation.is_personal && ["private", "group"].includes(conversation.type) && state.socket?.socket?.readyState === WebSocket.OPEN);
 }
 
 function sameID(left, right) {
@@ -3555,6 +3617,7 @@ async function handleCallSignal(event) {
 }
 
 async function loadMessages(targetMessageID = null) {
+  closeReactionPicker();
   clearFileCache();
   clearConversationMessageExpirations(state.current.id);
   let messages;
@@ -3707,16 +3770,95 @@ function clearReplyTarget() {
   elements.replyTarget.querySelector("span").textContent = "";
 }
 
-async function reactToMessage(message, presetEmoji = "") {
-  const emoji = presetEmoji || await actionDialog({
-    title: "Réagir",
-    inputLabel: "Emoji",
-    value: "👍",
-    maxLength: 16,
-    singleLine: true,
-    confirmLabel: "Réagir",
-  });
-  if (!emoji) return;
+function closeReactionPicker({ restoreFocus = false } = {}) {
+  if (!activeReactionPicker) return;
+  const { picker, anchor, outsideTimer, onOutsideClick, onKeyDown, onViewportChange } = activeReactionPicker;
+  activeReactionPicker = null;
+  clearTimeout(outsideTimer);
+  document.removeEventListener("click", onOutsideClick);
+  document.removeEventListener("keydown", onKeyDown);
+  window.removeEventListener("resize", onViewportChange);
+  elements.messages.removeEventListener("scroll", onViewportChange);
+  anchor?.setAttribute("aria-expanded", "false");
+  picker.remove();
+  if (restoreFocus && anchor?.isConnected) anchor.focus({ preventScroll: true });
+}
+
+function positionReactionPicker(picker, anchor) {
+  if (!picker.isConnected || !anchor?.isConnected) {
+    closeReactionPicker();
+    return;
+  }
+  const margin = 8;
+  const anchorRect = anchor.getBoundingClientRect();
+  const pickerRect = picker.getBoundingClientRect();
+  let top = anchorRect.top - pickerRect.height - margin;
+  if (top < margin) top = anchorRect.bottom + margin;
+  top = Math.min(top, window.innerHeight - pickerRect.height - margin);
+  const centered = anchorRect.left + (anchorRect.width - pickerRect.width) / 2;
+  const left = Math.max(margin, Math.min(centered, window.innerWidth - pickerRect.width - margin));
+  picker.style.left = `${Math.round(left)}px`;
+  picker.style.top = `${Math.round(Math.max(margin, top))}px`;
+}
+
+function openReactionPicker(message, anchor) {
+  if (activeReactionPicker?.messageID === message.id && activeReactionPicker.anchor === anchor) {
+    closeReactionPicker({ restoreFocus: true });
+    return;
+  }
+  closeEmojiPicker();
+  closeReactionPicker();
+  const picker = document.createElement("section");
+  picker.id = "message-reaction-picker";
+  picker.className = "message-reaction-picker";
+  picker.setAttribute("role", "dialog");
+  picker.setAttribute("aria-label", t("Choisir une réaction"));
+  const header = document.createElement("header");
+  const title = document.createElement("strong");
+  title.textContent = t("Réagir");
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "reaction-picker-close";
+  close.textContent = "×";
+  close.title = t("Fermer");
+  close.setAttribute("aria-label", close.title);
+  close.onclick = () => closeReactionPicker({ restoreFocus: true });
+  header.append(title, close);
+  const grid = document.createElement("div");
+  grid.className = "reaction-picker-grid";
+  for (const emoji of reactionEmojis) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = emoji;
+    button.title = t("Réagir avec {emoji}", { emoji });
+    button.setAttribute("aria-label", button.title);
+    button.onclick = () => {
+      closeReactionPicker();
+      updateMessageReaction(message, emoji);
+    };
+    grid.append(button);
+  }
+  picker.append(header, grid);
+  document.body.append(picker);
+  anchor?.setAttribute("aria-controls", picker.id);
+  anchor?.setAttribute("aria-expanded", "true");
+  const onOutsideClick = (event) => {
+    if (!picker.contains(event.target) && event.target !== anchor) closeReactionPicker();
+  };
+  const onKeyDown = (event) => {
+    if (event.key === "Escape") closeReactionPicker({ restoreFocus: true });
+  };
+  const onViewportChange = () => positionReactionPicker(picker, anchor);
+  const outsideTimer = setTimeout(() => document.addEventListener("click", onOutsideClick), 0);
+  activeReactionPicker = { picker, anchor, messageID: message.id, outsideTimer, onOutsideClick, onKeyDown, onViewportChange };
+  document.addEventListener("keydown", onKeyDown);
+  window.addEventListener("resize", onViewportChange);
+  elements.messages.addEventListener("scroll", onViewportChange);
+  positionReactionPicker(picker, anchor);
+  grid.querySelector("button")?.focus({ preventScroll: true });
+}
+
+async function updateMessageReaction(message, emoji) {
   try {
     await api(`/api/messages/${message.id}/reactions`, {
       method: "POST",
@@ -3726,6 +3868,14 @@ async function reactToMessage(message, presetEmoji = "") {
   } catch (error) {
     toast(frenchErrorMessage(error, "Impossible d’ajouter la réaction."), "error");
   }
+}
+
+async function reactToMessage(message, presetEmoji = "", anchor = null) {
+  if (presetEmoji) {
+    await updateMessageReaction(message, presetEmoji);
+    return;
+  }
+  if (anchor) openReactionPicker(message, anchor);
 }
 
 async function togglePinnedMessage(message) {
@@ -4115,7 +4265,7 @@ async function openGlobalFiles() {
           conversation,
           conversationTitle: t("Conversation"),
           conversationAvatar: null,
-          conversationInitial: conversation.type === "group" ? "G" : "@",
+          conversationInitial: conversation.is_personal ? "N" : conversation.type === "group" ? "G" : "@",
         };
       }
     }));
@@ -4271,7 +4421,7 @@ async function openCalendar() {
           conversation,
           conversationTitle: t("Conversation"),
           conversationAvatar: null,
-          conversationInitial: conversation.type === "group" ? "G" : "@",
+          conversationInitial: conversation.is_personal ? "N" : conversation.type === "group" ? "G" : "@",
         };
       }
     }));
@@ -4952,10 +5102,10 @@ function scheduleReplyFilePreview(replyPreview, container, key) {
 
 async function pdfJS() {
   if (!pdfJSModule) {
-    pdfJSModule = import("/vendor/pdfjs/pdf.compat.mjs?v=responsive-pinned-v166")
-      .then(() => import("/vendor/pdfjs/pdf.min.mjs?v=responsive-pinned-v166"))
+    pdfJSModule = import("/vendor/pdfjs/pdf.compat.mjs?v=share-errors-v171")
+      .then(() => import("/vendor/pdfjs/pdf.min.mjs?v=share-errors-v171"))
       .then((module) => {
-        module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.compat.mjs?v=responsive-pinned-v166";
+        module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.compat.mjs?v=share-errors-v171";
         return module;
       })
       .catch((error) => {
@@ -5514,13 +5664,14 @@ async function handleSocketEvent(event) {
     location.href = "/login.html";
   } else if (event.type === "new_message") {
     const isCallHistory = await isIncomingCallHistoryMessage(event.message).catch(() => false);
-    if (!isCallHistory) await showIncomingMessageNotification().catch(() => {});
+    const sentFromOwnAccount = sameID(event.message.sender_id, state.me.id);
+    if (!isCallHistory && !sentFromOwnAccount) await showIncomingMessageNotification().catch(() => {});
     clearTypingUser(event.message.conversation_id, event.message.sender_id);
     if (state.current?.id === event.message.conversation_id) {
       await appendMessage(event.message);
       await refreshConversationList();
     } else {
-      if (!isCallHistory) toast("Nouveau message.");
+      if (!isCallHistory && !sentFromOwnAccount) toast("Nouveau message.");
       await refreshAll();
     }
     await refreshTypingIndicators(event.message.conversation_id);

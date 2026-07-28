@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0f766e">
-  <meta name="vibration-build" content="responsive-pinned-v166">
+  <meta name="vibration-build" content="share-errors-v171">
   <script src="/js/theme.js"></script>
   <title>Vibration</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=responsive-pinned-v166">
+  <link rel="stylesheet" href="/css/style.css?v=share-errors-v171">
 </head>
 <body>
   <main id="app-shell" class="sidebar-open" hidden>
@@ -32,6 +32,15 @@
         <button id="contact-button" class="outline">+ Contact</button>
         <button id="group-button" class="outline">+ Groupe</button>
       </div>
+      <button id="personal-conversation-button" class="conversation-item personal-conversation-item" type="button" hidden>
+        <span class="avatar personal-note-avatar" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6Z"></path><path d="M15 3v4h4"></path><path d="m9 16 6.7-6.7a1.4 1.4 0 0 1 2 2L11 18l-3 1Z"></path></svg>
+        </span>
+        <span>
+          <span class="conversation-title-row"><strong>Mes notes</strong><span id="personal-conversation-unread" class="unread-badge" hidden></span></span>
+          <small id="personal-conversation-preview" class="conversation-description">Messages et fichiers personnels</small>
+        </span>
+      </button>
       <nav id="conversation-list" aria-label="Conversations"></nav>
     </aside>
     <section id="chat-panel">
@@ -367,6 +376,6 @@
     </form>
   </dialog>
   <div id="toasts" aria-live="polite"></div>
-  <script type="module" src="/js/app.js?v=responsive-pinned-v166"></script>
+  <script type="module" src="/js/app.js?v=share-errors-v171"></script>
 </body>
 </html>

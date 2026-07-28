@@ -23,6 +23,22 @@ async function load(language) {
     pt: "Terminar sessão",
     de: "Abmelden",
   };
+  const expectedNotes = {
+    en: ["My notes", "Personal messages and files", "1 unread message", "3 unread messages", "Personal identity not found."],
+    fr: ["Mes notes", "Messages et fichiers personnels", "1 message non lu", "3 messages non lus", "Identité personnelle introuvable."],
+    es: ["Mis notas", "Mensajes y archivos personales", "1 mensaje no leído", "3 mensajes no leídos", "No se encontró la identidad personal."],
+    it: ["Le mie note", "Messaggi e file personali", "1 messaggio non letto", "3 messaggi non letti", "Identità personale non trovata."],
+    pt: ["As minhas notas", "Mensagens e ficheiros pessoais", "1 mensagem não lida", "3 mensagens não lidas", "Identidade pessoal não encontrada."],
+    de: ["Meine Notizen", "Persönliche Nachrichten und Dateien", "1 ungelesene Nachricht", "3 ungelesene Nachrichten", "Persönliche Identität nicht gefunden."],
+  };
+  const expectedShareErrors = {
+    en: ["This shared file is unavailable.", "This shared file is no longer available.", "Unable to verify this sharing link.", "Invalid sharing key.", "The sharing key cannot decrypt this file."],
+    fr: ["Ce fichier partagé n’est pas disponible.", "Ce fichier partagé n’est plus disponible.", "Impossible de vérifier ce lien de partage.", "Clé de partage invalide.", "La clé de partage ne permet pas de déchiffrer ce fichier."],
+    es: ["Este archivo compartido no está disponible.", "Este archivo compartido ya no está disponible.", "No se puede verificar este enlace compartido.", "Clave de uso compartido no válida.", "La clave de uso compartido no permite descifrar este archivo."],
+    it: ["Questo file condiviso non è disponibile.", "Questo file condiviso non è più disponibile.", "Impossibile verificare questo link condiviso.", "Chiave di condivisione non valida.", "La chiave di condivisione non consente di decifrare questo file."],
+    pt: ["Este ficheiro partilhado não está disponível.", "Este ficheiro partilhado já não está disponível.", "Não foi possível verificar esta ligação de partilha.", "Chave de partilha inválida.", "A chave de partilha não permite desencriptar este ficheiro."],
+    de: ["Diese geteilte Datei ist nicht verfügbar.", "Diese geteilte Datei ist nicht mehr verfügbar.", "Dieser Freigabelink kann nicht überprüft werden.", "Ungültiger Freigabeschlüssel.", "Der Freigabeschlüssel kann diese Datei nicht entschlüsseln."],
+  };
 
   for (const [language, label] of Object.entries(expected)) {
     const i18n = await load(`${language}-TEST`);
@@ -33,6 +49,20 @@ async function load(language) {
     assert.equal(i18n.t("{visible} évènements ce mois · {total} au total", { visible: 2, total: 8 }).includes("8"), true);
     assert.notEqual(i18n.t("Droits administrateur accordés"), "", true);
     assert.notEqual(i18n.translateMultiline("CONDITIONS D’UTILISATION DE VIBRATION"), "", true);
+    assert.deepEqual([
+      i18n.t("Mes notes"),
+      i18n.t("Messages et fichiers personnels"),
+      i18n.t("{count} message non lu", { count: 1 }),
+      i18n.t("{count} messages non lus", { count: 3 }),
+      i18n.t("Identité personnelle introuvable."),
+    ], expectedNotes[language]);
+    assert.deepEqual([
+      i18n.t("Ce fichier partagé n’est pas disponible."),
+      i18n.t("Ce fichier partagé n’est plus disponible."),
+      i18n.t("Impossible de vérifier ce lien de partage."),
+      i18n.t("Clé de partage invalide."),
+      i18n.t("La clé de partage ne permet pas de déchiffrer ce fichier."),
+    ], expectedShareErrors[language]);
   }
 
   const spanish = await load("es-ES");

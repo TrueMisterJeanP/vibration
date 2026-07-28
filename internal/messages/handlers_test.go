@@ -143,6 +143,43 @@ func TestBroadcastNotifiesPushEvenWhenRecipientOnline(t *testing.T) {
 	}
 }
 
+func TestBroadcastSynchronizesPersonalConversationWithoutPush(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	registerMessageUserNamed(t, authHandler, "personal_sender", "Personal Sender")
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	conversation, err := db.Exec(`INSERT INTO conversations(type,created_by,created_at) VALUES('private',1,?)`, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationID, _ := conversation.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
+		VALUES(?,1,'self-ecdh-v1','owner',?)`, conversationID, now); err != nil {
+		t.Fatal(err)
+	}
+	hub := &testHub{}
+	push := &testPush{users: make(chan int64, 1)}
+	handler := &Handler{DB: db, Hub: hub, Push: push}
+	content := "encrypted-personal-message"
+	handler.broadcast(Message{ID: 1, ConversationID: conversationID, SenderID: 1, EncryptedContent: &content, IV: "message-iv", CreatedAt: now})
+
+	if !hasMessageEvent(hub.sent, 1, "new_message") || !hasMessageEvent(hub.sent, 1, "conversation_updated") {
+		t.Fatalf("personal websocket events=%#v", hub.sent)
+	}
+	if hasMessageEvent(hub.sent, 1, "message_delivered") {
+		t.Fatalf("personal message should remain read by its sender: %#v", hub.sent)
+	}
+	select {
+	case userID := <-push.users:
+		t.Fatalf("unexpected personal push for user %d", userID)
+	default:
+	}
+}
+
 func TestDeleteMessageClearsReplies(t *testing.T) {
 	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
 	if err != nil {

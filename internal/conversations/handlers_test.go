@@ -142,6 +142,64 @@ func TestCreatePrivateConversationRequiresAcceptedContact(t *testing.T) {
 	}
 }
 
+func TestCreatePersonalConversationIsIdempotentAndCannotBeDeleted(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	handler := &Handler{DB: db, Hub: testHub{}}
+	user := registerUser(t, authHandler, "personal_notes_owner")
+	mux := conversationMux(authHandler, handler)
+
+	created := request(t, mux, http.MethodPost, "/api/conversations/personal", nil, user)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create personal status=%d body=%s", created.Code, created.Body.String())
+	}
+	var first map[string]any
+	if err := json.Unmarshal(created.Body.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+	conversationID := int64(first["id"].(float64))
+
+	existing := request(t, mux, http.MethodPost, "/api/conversations/personal", nil, user)
+	if existing.Code != http.StatusOK {
+		t.Fatalf("ensure personal status=%d body=%s", existing.Code, existing.Body.String())
+	}
+	var second map[string]any
+	if err := json.Unmarshal(existing.Body.Bytes(), &second); err != nil {
+		t.Fatal(err)
+	}
+	if int64(second["id"].(float64)) != conversationID || second["existing"] != true {
+		t.Fatalf("idempotent response=%v", second)
+	}
+
+	list := request(t, mux, http.MethodGet, "/api/conversations", nil, user)
+	if list.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", list.Code, list.Body.String())
+	}
+	var conversations []Conversation
+	if err := json.Unmarshal(list.Body.Bytes(), &conversations); err != nil {
+		t.Fatal(err)
+	}
+	if len(conversations) != 1 || !conversations[0].IsPersonal || conversations[0].ID != conversationID {
+		t.Fatalf("personal conversations=%+v", conversations)
+	}
+	var memberCount int
+	var encryptedKey string
+	if err := db.QueryRow(`SELECT COUNT(*),MIN(encrypted_conversation_key) FROM conversation_members WHERE conversation_id=?`, conversationID).
+		Scan(&memberCount, &encryptedKey); err != nil || memberCount != 1 || encryptedKey != "self-ecdh-v1" {
+		t.Fatalf("personal member count=%d key=%q err=%v", memberCount, encryptedKey, err)
+	}
+
+	deleted := request(t, mux, http.MethodDelete, "/api/conversations/"+formatID(conversationID), nil, user)
+	if deleted.Code != http.StatusForbidden {
+		t.Fatalf("delete personal status=%d body=%s", deleted.Code, deleted.Body.String())
+	}
+	assertConversationCount(t, db, formatID(conversationID), 1)
+}
+
 func TestGroupMemberLeavesAndOwnerDeletesGroup(t *testing.T) {
 	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
 	if err != nil {
@@ -262,6 +320,7 @@ func conversationMux(authHandler *auth.Handler, handler *Handler) *http.ServeMux
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/conversations", authHandler.Middleware(http.HandlerFunc(handler.List)))
 	mux.Handle("POST /api/conversations/private", authHandler.Middleware(http.HandlerFunc(handler.CreatePrivate)))
+	mux.Handle("POST /api/conversations/personal", authHandler.Middleware(http.HandlerFunc(handler.CreatePersonal)))
 	mux.Handle("POST /api/conversations/group", authHandler.Middleware(http.HandlerFunc(handler.CreateGroup)))
 	mux.Handle("POST /api/conversations/{id}/accept", authHandler.Middleware(http.HandlerFunc(handler.Accept)))
 	mux.Handle("PUT /api/conversations/{id}", authHandler.Middleware(http.HandlerFunc(handler.Update)))

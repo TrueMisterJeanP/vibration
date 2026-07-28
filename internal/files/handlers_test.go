@@ -114,6 +114,55 @@ func TestUploadDownloadFileAndMarkDeliveredWhenRecipientOnline(t *testing.T) {
 	}
 }
 
+func TestPersonalFileAppearsInFolderAndSynchronizesOwnDevices(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := authHandlerForTest(db)
+	owner := registerFileUser(t, authHandler, "personal_file_owner")
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := db.Exec(`INSERT INTO conversations(type,created_by,created_at) VALUES('private',1,?)`, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationID, _ := result.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
+		VALUES(?,1,'self-ecdh-v1','owner',?)`, conversationID, now); err != nil {
+		t.Fatal(err)
+	}
+	hub := &testHub{online: true}
+	push := &testPush{users: make(chan int64, 1)}
+	handler := &Handler{DB: db, Hub: hub, Push: push}
+	mux := fileMux(authHandler, handler)
+
+	uploaded := fileRequest(t, mux, http.MethodPost, "/api/files", uploadBody(conversationID), owner)
+	if uploaded.Code != http.StatusCreated {
+		t.Fatalf("personal upload status=%d body=%s", uploaded.Code, uploaded.Body.String())
+	}
+	if !hasEvent(hub.sent, 1, "new_message") || !hasEvent(hub.sent, 1, "conversation_updated") {
+		t.Fatalf("personal file websocket events=%#v", hub.sent)
+	}
+	select {
+	case userID := <-push.users:
+		t.Fatalf("unexpected personal file push for user %d", userID)
+	default:
+	}
+
+	listed := fileRequest(t, mux, http.MethodGet, "/api/files", nil, owner)
+	if listed.Code != http.StatusOK {
+		t.Fatalf("personal folder status=%d body=%s", listed.Code, listed.Body.String())
+	}
+	var files []listedFileMessage
+	if err := json.Unmarshal(listed.Body.Bytes(), &files); err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].ConversationID != conversationID || files[0].File == nil {
+		t.Fatalf("personal folder files=%+v", files)
+	}
+}
+
 func TestUploadFileNotifiesPushWhenRecipientOffline(t *testing.T) {
 	db, conversationID, sender, _ := setupFileConversation(t)
 	defer db.Close()

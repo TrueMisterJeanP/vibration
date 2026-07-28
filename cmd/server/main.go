@@ -87,6 +87,7 @@ func main() {
 	mux.Handle("DELETE /api/contacts/{id}", authHandler.Middleware(http.HandlerFunc(contactHandler.Delete)))
 	mux.Handle("GET /api/conversations", authHandler.Middleware(http.HandlerFunc(conversationHandler.List)))
 	mux.Handle("POST /api/conversations/private", authHandler.Middleware(http.HandlerFunc(conversationHandler.CreatePrivate)))
+	mux.Handle("POST /api/conversations/personal", authHandler.Middleware(http.HandlerFunc(conversationHandler.CreatePersonal)))
 	mux.Handle("POST /api/conversations/group", authHandler.Middleware(http.HandlerFunc(conversationHandler.CreateGroup)))
 	mux.Handle("GET /api/conversations/{id}", authHandler.Middleware(http.HandlerFunc(conversationHandler.Get)))
 	mux.Handle("POST /api/conversations/{id}/accept", authHandler.Middleware(http.HandlerFunc(conversationHandler.Accept)))

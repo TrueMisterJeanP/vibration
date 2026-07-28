@@ -669,14 +669,27 @@ func (h *Handler) broadcast(message Message) {
 	if err != nil {
 		return
 	}
-	var recipients []int64
+	var members []int64
 	for rows.Next() {
 		var userID int64
-		if rows.Scan(&userID) == nil && userID != message.SenderID {
-			recipients = append(recipients, userID)
+		if rows.Scan(&userID) == nil {
+			members = append(members, userID)
 		}
 	}
 	rows.Close()
+	if len(members) == 1 && members[0] == message.SenderID {
+		if h.Hub != nil {
+			h.Hub.SendToUser(message.SenderID, map[string]any{"type": "new_message", "message": message})
+		}
+		h.broadcastEvent(message.ConversationID, map[string]any{"type": "conversation_updated", "conversation_id": message.ConversationID})
+		return
+	}
+	var recipients []int64
+	for _, userID := range members {
+		if userID != message.SenderID {
+			recipients = append(recipients, userID)
+		}
+	}
 	for _, userID := range recipients {
 		online := h.Hub != nil && h.Hub.SendToUser(userID, map[string]any{"type": "new_message", "message": message})
 		if online {

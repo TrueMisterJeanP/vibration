@@ -1,4 +1,4 @@
-import { websocketProtocols, websocketURL } from "./api.js?v=responsive-pinned-v166";
+import { websocketProtocols, websocketURL } from "./api.js?v=share-errors-v171";
 
 export class ChatSocket extends EventTarget {
   constructor() {

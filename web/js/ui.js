@@ -138,7 +138,12 @@ export function renderMessage(
   reactButton.textContent = "♡";
   reactButton.title = t("Réagir");
   reactButton.setAttribute("aria-label", reactButton.title);
-  reactButton.onclick = () => onMessageReact(message);
+  reactButton.setAttribute("aria-haspopup", "dialog");
+  reactButton.setAttribute("aria-expanded", "false");
+  reactButton.onclick = (event) => {
+    event.stopPropagation();
+    onMessageReact(message, "", reactButton);
+  };
   const pinButton = document.createElement("button");
   pinButton.type = "button";
   pinButton.textContent = message.is_pinned ? "⌖" : "⌑";
@@ -305,7 +310,7 @@ export function renderMessage(
       button.type = "button";
       button.className = reaction.mine ? "mine" : "";
       button.textContent = `${reaction.emoji} ${reaction.count}`;
-      button.onclick = () => onMessageReact(message, reaction.emoji);
+      button.onclick = () => onMessageReact(message, reaction.emoji, button);
       reactions.append(button);
     }
     article.append(reactions);
