@@ -72,11 +72,16 @@ Le client navigateur s’appuie autant que possible sur les API standard :
 - API WebRTC pour les appels et le partage d’écran ;
 - Fetch, WebSocket et File APIs.
 
-La seule bibliothèque navigateur embarquée dans Community est :
+Les bibliothèques navigateur embarquées dans Community sont :
 
 | Dépendance | Version | Emplacement | Rôle | Licence |
 | --- | --- | --- | --- | --- |
 | PDF.js | `4.10.38` | `web/vendor/pdfjs/` | prévisualisation et rendu PDF | Apache-2.0 |
+| PDF.js, moteur iOS 17 | `3.11.174` | `web/vendor/pdfjs-ios17/` | rendu PDF classique sans module ES ni Web Worker sur iOS/iPadOS 17 | Apache-2.0 |
+| JSZip | `3.10.1` | `web/vendor/jszip/` | lecture locale des conteneurs Open XML | MIT |
+| docx-preview | `0.4.0` | `web/vendor/docx-preview/` | prévisualisation des documents Word `.docx` | Apache-2.0 |
+| ExcelJS | `4.4.0` | `web/vendor/exceljs/` | lecture et prévisualisation des classeurs Excel `.xlsx` | MIT |
+| pptx-preview | `1.0.7` | `web/vendor/pptx-preview/` | prévisualisation des présentations PowerPoint `.pptx` | ISC |
 
 ## Dépendances de développement
 

@@ -1,4 +1,4 @@
-import { websocketProtocols, websocketURL } from "./api.js?v=share-errors-v171";
+import { websocketProtocols, websocketURL } from "./api.js?v=ios17-pdf-v184";
 
 export class ChatSocket extends EventTarget {
   constructor() {

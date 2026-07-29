@@ -1,4 +1,4 @@
-import { decryptBytes, decryptEnvelope, importShareKey } from "./crypto.js?v=share-errors-v171";
+import { decryptBytes, decryptEnvelope, importShareKey } from "./crypto.js?v=ios17-pdf-v184";
 import { locale, localizeDocument, t } from "./i18n.js";
 
 localizeDocument();

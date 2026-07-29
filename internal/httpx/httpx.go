@@ -51,7 +51,7 @@ func frenchErrorMessage(status int, message string) string {
 		"database copy failed":                            "La recopie de la base de données a échoué.",
 		"delete failed":                                   "La suppression a échoué.",
 		"display name already exists":                     "Ce nom affiché existe déjà.",
-		"encrypted file exceeds 10 MB":                    "Le fichier chiffré dépasse la limite de 10 Mo.",
+		"encrypted file exceeds 25 MB":                    "Le fichier chiffré dépasse la limite de 25 Mo.",
 		"file not found":                                  "Fichier introuvable.",
 		"file share not found":                            "Lien de partage introuvable.",
 		"file share unavailable":                          "Ce lien de partage a expiré ou a été désactivé.",
@@ -184,7 +184,11 @@ func frenchErrorMessage(status int, message string) string {
 }
 
 func Decode(w http.ResponseWriter, r *http.Request, destination any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, 24<<20)
+	return DecodeWithLimit(w, r, destination, 24<<20)
+}
+
+func DecodeWithLimit(w http.ResponseWriter, r *http.Request, destination any, maxBytes int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {

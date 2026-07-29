@@ -37,3 +37,18 @@ func TestDecodeRejectsTrailingJSON(t *testing.T) {
 		t.Fatalf("status=%d", response.Code)
 	}
 }
+
+func TestDecodeWithLimitRejectsOversizedJSON(t *testing.T) {
+	var payload struct {
+		Name string `json:"name"`
+	}
+	request := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"name":"oversized"}`))
+	response := httptest.NewRecorder()
+
+	if DecodeWithLimit(response, request, &payload, 8) {
+		t.Fatal("DecodeWithLimit accepted an oversized body")
+	}
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d", response.Code)
+	}
+}

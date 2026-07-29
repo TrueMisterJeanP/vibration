@@ -39,6 +39,16 @@ func (p *testPush) NotifyUser(userID int64) {
 	p.users <- userID
 }
 
+func TestFileUploadLimitSupports25MiB(t *testing.T) {
+	if maxFileSize != 25<<20 {
+		t.Fatalf("maxFileSize=%d, want %d", maxFileSize, 25<<20)
+	}
+	minimumJSONBodySize := int64(base64.StdEncoding.EncodedLen(maxFileSize+64) + 8192)
+	if maxFileRequestBodySize < minimumJSONBodySize {
+		t.Fatalf("maxFileRequestBodySize=%d, need at least %d", maxFileRequestBodySize, minimumJSONBodySize)
+	}
+}
+
 func TestUploadDownloadFileAndMarkDeliveredWhenRecipientOnline(t *testing.T) {
 	db, conversationID, sender, recipient := setupFileConversation(t)
 	defer db.Close()

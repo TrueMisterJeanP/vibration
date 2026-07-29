@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -40,5 +41,8 @@ func TestSecurityHeadersKeepStaticAssetCachingAvailable(t *testing.T) {
 
 	if value := response.Header().Get("Cache-Control"); value != "" {
 		t.Fatalf("static Cache-Control=%q", value)
+	}
+	if value := response.Header().Get("Content-Security-Policy"); !strings.Contains(value, "object-src 'self' blob:") {
+		t.Fatalf("PDF object preview is blocked by CSP: %q", value)
 	}
 }

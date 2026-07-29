@@ -168,10 +168,10 @@ Placer ensuite Vibration derrière un reverse proxy HTTPS, par exemple Nginx ou 
 - messages texte AES-GCM, IV unique, historique paginé à 50 messages ;
 - réponses, réactions, messages épinglés personnels avec fenêtre latérale dédiée, et messages éphémères configurables par appui long sur **Envoyer** ;
 - messages vocaux enregistrés dans le navigateur puis envoyés comme fichiers audio chiffrés ;
-- fichiers, nom de fichier et type MIME chiffrés avant envoi, limite 10 Mo ;
+- fichiers, nom de fichier et type MIME chiffrés avant envoi, limite 25 Mo ;
 - sondages à choix unique avec plusieurs réponses possibles, date d’expiration et modification réservée au créateur ;
 - évènements avec nom, description, lieu, début et fin, réunis dans un calendrier qui ramène au message d’origine ;
-- dossier global recensant les fichiers de toutes les discussions accessibles à l’utilisateur, avec aperçu des PDF et médias compatibles ;
+- dossier global recensant les fichiers de toutes les discussions accessibles à l’utilisateur, avec aperçu des PDF, documents Word `.docx`, classeurs Excel `.xlsx`, présentations PowerPoint `.pptx` et médias compatibles ;
 - liens publics temporaires et révocables pour télécharger un fichier : la clé reste dans le fragment de l’URL et le serveur conserve uniquement une copie chiffrée ;
 - acceptation obligatoire des conditions d’utilisation après l’inscription ;
 - événements WebSocket : nouveaux messages, reçu, lu, saisie, présence et mise à jour ;
@@ -205,7 +205,7 @@ Cette récupération ne remplace pas la phrase secrète de chiffrement. Si cette
 6. La conversation privée s’ouvre. Envoyer un message.
 7. Vérifier chez Bob que le message arrive sans rechargement.
 8. Répondre chez Bob et vérifier les indicateurs envoyé/reçu/lu chez Alice.
-9. Utiliser le bouton trombone pour envoyer un fichier de moins de 10 Mo.
+9. Utiliser le bouton trombone pour envoyer un fichier de 25 Mo maximum.
 10. Chez Bob, cliquer sur la carte fichier : le navigateur télécharge le contenu chiffré, le déchiffre localement, puis propose le fichier clair.
 11. Ajouter au besoin un troisième compte comme contact, cliquer sur **+ Groupe**, choisir les membres et envoyer un message de groupe.
 

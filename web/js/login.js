@@ -324,15 +324,20 @@ recoveryForm.addEventListener("submit", async (event) => {
 
 registerForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const notificationPermission = requestNotificationPermissionOnSignIn().catch(() => "default");
   errorRegion.textContent = "";
   const button = registerForm.querySelector('button[type="submit"]');
   const originalLabel = button.textContent;
   const data = Object.fromEntries(new FormData(registerForm));
+  if (data.password !== data.password_confirm) {
+    errorRegion.textContent = t("Les mots de passe de connexion diffèrent.");
+    registerForm.elements.password_confirm.focus({ preventScroll: true });
+    return;
+  }
   if (data.phrase !== data.phrase_confirm) {
     errorRegion.textContent = t("Les phrases secrètes diffèrent.");
     return;
   }
+  const notificationPermission = requestNotificationPermissionOnSignIn().catch(() => "default");
   button.disabled = true;
   button.textContent = t("Génération des clés…");
   try {

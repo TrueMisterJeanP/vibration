@@ -1,12 +1,20 @@
-const CACHE = "chat-pwa-go-v171";
+const CACHE = "chat-pwa-go-v184";
 const SHELL = [
-  "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=share-errors-v171",
-  "/js/app.js?v=share-errors-v171", "/js/api.js?v=share-errors-v171", "/js/crypto.js", "/js/websocket.js?v=share-errors-v171", "/js/theme.js",
-  "/js/notifications.js", "/js/device-vault.js", "/js/i18n.js", "/js/ui.js?v=share-errors-v171", "/js/share.js?v=share-errors-v171", "/js/login.js", "/manifest.json",
-  "/vendor/pdfjs/pdf.compat.mjs?v=share-errors-v171",
-  "/vendor/pdfjs/pdf.min.mjs?v=share-errors-v171",
-  "/vendor/pdfjs/pdf.worker.compat.mjs?v=share-errors-v171",
+  "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=ios17-pdf-v184",
+  "/js/app.js?v=ios17-pdf-v184", "/js/api.js?v=ios17-pdf-v184", "/js/crypto.js", "/js/websocket.js?v=ios17-pdf-v184", "/js/keyed-task-guard.js?v=ios17-pdf-v184", "/js/theme.js",
+  "/js/notifications.js", "/js/device-vault.js", "/js/i18n.js", "/js/ui.js?v=ios17-pdf-v184", "/js/share.js?v=ios17-pdf-v184", "/js/login.js", "/manifest.json",
+  "/js/pdf-preview-compat.js?v=ios17-pdf-v184",
+  "/js/office-preview.js?v=ios17-pdf-v184",
+  "/vendor/pdfjs/pdf.compat.mjs?v=ios17-pdf-v184",
+  "/vendor/pdfjs/pdf.min.mjs?v=ios17-pdf-v184",
+  "/vendor/pdfjs/pdf.worker.compat.mjs?v=ios17-pdf-v184",
   "/vendor/pdfjs/pdf.worker.min.mjs",
+  "/vendor/pdfjs-ios17/pdf.min.js?v=ios17-pdf-v184",
+  "/vendor/pdfjs-ios17/pdf.worker.min.js?v=ios17-pdf-v184",
+  "/vendor/jszip/jszip.min.js?v=ios17-pdf-v184",
+  "/vendor/docx-preview/docx-preview.min.js?v=ios17-pdf-v184",
+  "/vendor/exceljs/exceljs.min.js?v=ios17-pdf-v184",
+  "/vendor/pptx-preview/pptx-preview.umd.js?v=ios17-pdf-v184",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/person.svg", "/icons/group.svg",
 ];
 const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js"];

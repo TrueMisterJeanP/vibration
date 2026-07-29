@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0f766e">
-  <meta name="vibration-build" content="share-errors-v171">
+  <meta name="vibration-build" content="ios17-pdf-v184">
   <script src="/js/theme.js"></script>
   <title>Vibration</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=share-errors-v171">
+  <link rel="stylesheet" href="/css/style.css?v=ios17-pdf-v184">
 </head>
 <body>
   <main id="app-shell" class="sidebar-open" hidden>
@@ -47,8 +47,9 @@
       <header class="chat-header">
         <button id="open-sidebar-logo" class="brand-logo-button mobile-navigation-button" type="button"
           title="Afficher les contacts et groupes" aria-label="Afficher les contacts, groupes et conversations"
-          aria-controls="sidebar" aria-expanded="false"><img class="header-avatar" alt="" hidden><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4.5 21a7.5 7.5 0 0 1 15 0"></path></svg><span class="menu-mark" aria-hidden="true">☰</span></button>
-        <div><strong id="chat-title">Sélectionnez une conversation</strong><small id="chat-description"></small><small id="typing-label"></small></div>
+          aria-controls="sidebar" aria-expanded="false"><img class="header-avatar" alt="" hidden><span class="header-conversation-initial" aria-hidden="true" hidden></span><span class="menu-mark" aria-hidden="true">☰</span></button>
+        <span id="chat-avatar" class="chat-conversation-avatar" aria-hidden="true" hidden></span>
+        <div class="chat-conversation-identity"><strong id="chat-title">Sélectionnez une conversation</strong><small id="chat-description"></small><small id="typing-label"></small></div>
         <div class="call-buttons" aria-label="Fichiers, calendrier, appels et messages épinglés">
           <button id="global-files-button" class="icon-button" type="button" title="Afficher tous les fichiers" aria-label="Afficher les fichiers de toutes les discussions"><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h7l2 2h9v11H3Z"></path><path d="M3 6V4h7l2 2"></path></svg></button>
           <button id="calendar-button" class="icon-button" type="button" title="Afficher le calendrier" aria-label="Afficher tous les évènements"><svg class="call-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v16H3Z"></path><path d="M7 3v4M17 3v4M3 10h18"></path></svg></button>
@@ -376,6 +377,6 @@
     </form>
   </dialog>
   <div id="toasts" aria-live="polite"></div>
-  <script type="module" src="/js/app.js?v=share-errors-v171"></script>
+  <script type="module" src="/js/app.js?v=ios17-pdf-v184"></script>
 </body>
 </html>

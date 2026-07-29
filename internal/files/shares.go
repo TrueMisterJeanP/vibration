@@ -43,7 +43,7 @@ func (h *Handler) CreateShare(w http.ResponseWriter, r *http.Request) {
 		Size             int64  `json:"size"`
 		ExpiresInSeconds int64  `json:"expires_in_seconds"`
 	}
-	if !httpx.Decode(w, r, &input) {
+	if !httpx.DecodeWithLimit(w, r, &input, maxFileRequestBodySize) {
 		return
 	}
 	if len(input.EncryptedName) < 10 || len(input.EncryptedName) > 4096 ||

@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js?v=share-errors-v171";
+import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js?v=ios17-pdf-v184";
 import {
   decryptBytes,
   decryptEnvelope,
@@ -32,16 +32,26 @@ import {
   syncBrowserSubscription,
   testNotification,
 } from "./notifications.js";
-import { ChatSocket } from "./websocket.js?v=share-errors-v171";
-import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=share-errors-v171";
+import { ChatSocket } from "./websocket.js?v=ios17-pdf-v184";
+import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios17-pdf-v184";
 import { locale, t } from "./i18n.js";
+import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v184";
+import {
+  needsInlinePDFWorker,
+  pdfDocumentCompatibilityOptions,
+} from "./pdf-preview-compat.js?v=ios17-pdf-v184";
+import {
+  clearOfficePreviewResources,
+  modernOfficeKind,
+  renderModernOfficePreview,
+} from "./office-preview.js?v=ios17-pdf-v184";
 
 const CALL_INVITE_TIMEOUT_MS = 45000;
 const CALL_SIGNAL_LOSS_GRACE_MS = 15000;
 const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
 const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "share-errors-v171";
+const APP_BUILD = "ios17-pdf-v184";
 
 window.VIBRATION_BUILD = APP_BUILD;
 console.info(`Vibration build ${APP_BUILD}`);
@@ -63,6 +73,7 @@ const state = {
   fileLoads: new Map(),
   messageClears: new Map(),
   messageExpiryTimers: new Map(),
+  messageAppendTasks: new Map(),
   filePreviewObservers: new Set(),
   previewURLs: new Set(),
   fileCacheGeneration: 0,
@@ -86,6 +97,8 @@ const state = {
 let profileAvatar = null;
 let groupAvatar = null;
 let pdfJSModule;
+let ios17PDFJSModule;
+const pdfScriptLoads = new Map();
 let callPageExitHandled = false;
 let callVideoResumeTimer = null;
 
@@ -101,6 +114,7 @@ const elements = {
   pinnedMessages: document.querySelector("#pinned-message-list"),
   pinnedWindowButton: document.querySelector("#pinned-window-button"),
   closePinnedPanel: document.querySelector("#close-pinned-panel"),
+  chatAvatar: document.querySelector("#chat-avatar"),
   title: document.querySelector("#chat-title"),
   description: document.querySelector("#chat-description"),
   typing: document.querySelector("#typing-label"),
@@ -463,6 +477,7 @@ function pushFailureMessage(failures = []) {
 
 function clearFileCache() {
   state.fileCacheGeneration++;
+  clearOfficePreviewResources();
   for (const observer of state.filePreviewObservers) observer.disconnect();
   state.filePreviewObservers.clear();
   for (const url of state.previewURLs) URL.revokeObjectURL(url);
@@ -730,12 +745,16 @@ function bindUI() {
     sidebarButton.title = t(open ? "Masquer les contacts et groupes" : "Afficher les contacts et groupes");
   };
   const mobileLayout = window.matchMedia("(max-width: 720px)");
-  const showContactsOnMobile = ({ matches }) => {
-    if (!matches) return;
-    setSidebarOpen(true);
+  const syncResponsiveLayout = ({ matches }) => {
+    if (matches) setSidebarOpen(true);
+    if (state.current) {
+      refreshCurrentConversationHeader(state.current.id).catch((error) => {
+        console.warn("Actualisation de l’avatar responsive impossible", error);
+      });
+    }
   };
-  mobileLayout.addEventListener("change", showContactsOnMobile);
-  showContactsOnMobile(mobileLayout);
+  mobileLayout.addEventListener("change", syncResponsiveLayout);
+  syncResponsiveLayout(mobileLayout);
   sidebarButton.onclick = () => setSidebarOpen(!elements.shell.classList.contains("sidebar-open"));
   elements.composer.addEventListener("submit", sendMessage);
   elements.file.addEventListener("change", sendFile);
@@ -947,7 +966,7 @@ function updateIdentityLabel() {
     ? `${state.me.display_name} · @${state.me.username}`
     : `@${state.me.username}`;
   document.querySelector("#identity-label").textContent = identity;
-  for (const button of document.querySelectorAll(".brand-logo-button")) {
+  for (const button of document.querySelectorAll(".brand-logo-button:not(#open-sidebar-logo)")) {
     const image = button.querySelector(".header-avatar");
     const mark = button.querySelector(".brand-mark");
     image.hidden = !state.me.avatar;
@@ -957,16 +976,103 @@ function updateIdentityLabel() {
   }
 }
 
-function replaceAvatarContent(container, avatar, fallback) {
+function conversationAvatarFallback(display, conversation = null) {
+  return (display?.title || (conversation?.type === "group" ? "G" : "?")).slice(0, 1).toUpperCase();
+}
+
+function renderPersonalNoteIcon(container) {
+  const icon = elements.personalConversationButton.querySelector(".personal-note-avatar svg");
+  container.replaceChildren(...(icon ? [icon.cloneNode(true)] : []));
+}
+
+function renderMobileNavigationAvatar(display = null, conversation = null) {
+  const button = document.querySelector("#open-sidebar-logo");
+  const image = button.querySelector(".header-avatar");
+  const initial = button.querySelector(".header-conversation-initial");
+  const fallback = display ? conversationAvatarFallback(display, conversation) : "";
+  const showPersonalNote = Boolean(display && conversation?.is_personal);
+  button.classList.toggle("has-conversation-avatar", Boolean(display));
+  button.classList.toggle("personal-note-avatar", showPersonalNote);
+  if (!display) {
+    image.onerror = null;
+    image.hidden = true;
+    image.removeAttribute("src");
+    initial.textContent = "";
+    initial.hidden = true;
+    return;
+  }
+  if (showPersonalNote) {
+    image.onerror = null;
+    image.hidden = true;
+    image.removeAttribute("src");
+    renderPersonalNoteIcon(initial);
+    initial.hidden = false;
+    return;
+  }
+  if (display.avatar) {
+    image.src = display.avatar;
+    image.hidden = false;
+    initial.hidden = true;
+    image.onerror = () => {
+      if (image.getAttribute("src") !== display.avatar) return;
+      image.hidden = true;
+      image.removeAttribute("src");
+      initial.textContent = fallback;
+      initial.hidden = false;
+    };
+    return;
+  }
+  image.onerror = null;
+  image.hidden = true;
+  image.removeAttribute("src");
+  initial.textContent = fallback;
+  initial.hidden = false;
+}
+
+function replaceAvatarContent(container, avatar, fallback, trailingElements = []) {
   container.replaceChildren();
   if (avatar) {
     const image = document.createElement("img");
     image.src = avatar;
     image.alt = "";
+    image.onerror = () => {
+      if (container.firstElementChild !== image) return;
+      replaceAvatarContent(container, null, fallback, trailingElements);
+    };
     container.append(image);
   } else {
     container.textContent = fallback;
   }
+  container.append(...trailingElements);
+}
+
+function renderConversationHeader(conversation, display) {
+  elements.title.textContent = display.title;
+  elements.description.textContent = display.description || t(
+    conversation.is_personal ? "Messages et fichiers personnels" : conversation.type === "group" ? "Groupe" : "Contact",
+  );
+  elements.chatAvatar.hidden = false;
+  elements.chatAvatar.classList.toggle("personal-note-avatar", Boolean(conversation.is_personal));
+  if (conversation.is_personal) {
+    renderPersonalNoteIcon(elements.chatAvatar);
+  } else {
+    replaceAvatarContent(
+      elements.chatAvatar,
+      display.avatar,
+      conversationAvatarFallback(display, conversation),
+    );
+  }
+  renderMobileNavigationAvatar(display, conversation);
+}
+
+async function refreshCurrentConversationHeader(expectedID = state.current?.id) {
+  if (expectedID == null || !sameID(state.current?.id, expectedID)) return;
+  const refreshed = state.conversations.find((conversation) => sameID(conversation.id, expectedID));
+  if (refreshed) state.current = refreshed;
+  const current = refreshed || state.current;
+  const display = await resolveConversationDisplay(current);
+  if (!sameID(state.current?.id, expectedID)) return;
+  renderConversationHeader(current, display);
 }
 
 function syncCurrentUserProfileDisplay() {
@@ -1399,14 +1505,12 @@ async function renderConversations() {
         subtitle.classList.remove("typing");
         subtitle.removeAttribute("aria-label");
       }
-      if (display.avatar) {
-        const image = document.createElement("img");
-        image.src = display.avatar;
-        image.alt = "";
-        avatar.replaceChildren(image, presence);
-      } else {
-        avatar.replaceChildren(document.createTextNode(display.title.slice(0, 1).toUpperCase()), presence);
-      }
+      replaceAvatarContent(
+        avatar,
+        display.avatar,
+        conversationAvatarFallback(display, conversation),
+        [presence],
+      );
     }).catch(() => { title.textContent = t("Conversation verrouillée"); });
   }
 }
@@ -1626,8 +1730,11 @@ async function editConversation(conversation, row) {
     conversation.encrypted_avatar = encryptedAvatar;
     state.members.delete(conversation.id);
     if (state.current?.id === conversation.id) {
-      elements.title.textContent = result.name;
-      elements.description.textContent = result.description || t("Groupe");
+      renderConversationHeader(conversation, {
+        title: result.name,
+        description: result.description,
+        avatar: result.avatar,
+      });
     }
     await refreshAll();
     await renderConversations();
@@ -1639,7 +1746,7 @@ async function editConversation(conversation, row) {
 }
 
 function closeCurrentConversation(conversationID) {
-  if (state.current?.id !== conversationID) return;
+  if (!sameID(state.current?.id, conversationID)) return;
   closeReactionPicker();
   clearCallState(conversationID);
   state.current = null;
@@ -1658,6 +1765,10 @@ function closeCurrentConversation(conversationID) {
   closeEmojiPicker();
   elements.title.textContent = t("Sélectionnez une conversation");
   elements.description.textContent = "";
+  elements.chatAvatar.hidden = true;
+  elements.chatAvatar.classList.remove("personal-note-avatar");
+  elements.chatAvatar.replaceChildren();
+  renderMobileNavigationAvatar();
   renderTypingIndicator(elements.typing, null);
   renderTypingIndicator(elements.threadTyping, null);
   elements.threadTyping.hidden = true;
@@ -1926,10 +2037,7 @@ async function selectConversation(conversation, targetMessageID = null) {
   const selectedID = conversation.id;
   const display = await resolveConversationDisplay(conversation);
   if (!sameID(state.current?.id, selectedID)) return;
-  elements.title.textContent = display.title;
-  elements.description.textContent = display.description || t(
-    conversation.is_personal ? "Messages et fichiers personnels" : conversation.type === "group" ? "Groupe" : "Contact",
-  );
+  renderConversationHeader(conversation, display);
   const typing = await typingIndicator(conversation);
   renderTypingIndicator(elements.typing, typing);
   renderTypingIndicator(elements.threadTyping, typing);
@@ -3980,41 +4088,49 @@ function pinnedMessagePreview(message, clear) {
 
 async function appendMessage(message, scroll = true) {
   if (elements.messages.querySelector(`[data-id="${message.id}"]`)) return;
-  if (!scheduleMessageExpiration(message)) return;
-  document.querySelector("#empty-chat")?.remove();
-  const key = await getConversationKey(state.current);
-  const clear = await decryptMessageContent(message, key);
-  const clearByID = messageClearCache(state.current.id);
-  clearByID.set(message.id, clear);
-  const fragment = document.createDocumentFragment();
-  const displayMessage = withReplyPreview(messageWithCurrentUserProfile(message), clearByID);
-  let filePreview;
-  renderMessage(
-    fragment,
-    displayMessage,
-    clear,
-    displayMessage.sender_id === state.me.id,
-    (fileMessage, preview) => { filePreview = [fileMessage, preview]; },
-    downloadFile,
-    editMessage,
-    deleteMessage,
-    setReplyTarget,
-    reactToMessage,
-    togglePinnedMessage,
-    (replyPreview, container) => scheduleReplyFilePreview(replyPreview, container, key),
-    votePoll,
-    openFileShareDialog,
-  );
-  elements.messages.prepend(fragment);
-  if (filePreview) scheduleFilePreview(filePreview[0], filePreview[1], key);
-  while (elements.messages.querySelectorAll(".message").length > 200) {
-    const renderedMessages = elements.messages.querySelectorAll(".message");
-    renderedMessages[renderedMessages.length - 1]?.closest(".message-row")?.remove();
-  }
-  if (message.sender_id !== state.me.id && !document.hidden) {
-    api(`/api/messages/${message.id}/read`, { method: "POST", body: {} }).catch(() => {});
-  }
-  if (scroll) scrollToBottom();
+  const conversation = state.current;
+  if (!conversation || !sameID(conversation.id, message.conversation_id)) return;
+  const appendKey = `${message.conversation_id}:${message.id}`;
+  return runKeyedTask(state.messageAppendTasks, appendKey, async () => {
+    if (elements.messages.querySelector(`[data-id="${message.id}"]`)) return;
+    if (!scheduleMessageExpiration(message)) return;
+    const key = await getConversationKey(conversation);
+    const clear = await decryptMessageContent(message, key);
+    if (!sameID(state.current?.id, conversation.id)) return;
+    if (elements.messages.querySelector(`[data-id="${message.id}"]`)) return;
+    document.querySelector("#empty-chat")?.remove();
+    const clearByID = messageClearCache(conversation.id);
+    clearByID.set(message.id, clear);
+    const fragment = document.createDocumentFragment();
+    const displayMessage = withReplyPreview(messageWithCurrentUserProfile(message), clearByID);
+    let filePreview;
+    renderMessage(
+      fragment,
+      displayMessage,
+      clear,
+      displayMessage.sender_id === state.me.id,
+      (fileMessage, preview) => { filePreview = [fileMessage, preview]; },
+      downloadFile,
+      editMessage,
+      deleteMessage,
+      setReplyTarget,
+      reactToMessage,
+      togglePinnedMessage,
+      (replyPreview, container) => scheduleReplyFilePreview(replyPreview, container, key),
+      votePoll,
+      openFileShareDialog,
+    );
+    elements.messages.prepend(fragment);
+    if (filePreview) scheduleFilePreview(filePreview[0], filePreview[1], key);
+    while (elements.messages.querySelectorAll(".message").length > 200) {
+      const renderedMessages = elements.messages.querySelectorAll(".message");
+      renderedMessages[renderedMessages.length - 1]?.closest(".message-row")?.remove();
+    }
+    if (message.sender_id !== state.me.id && !document.hidden) {
+      api(`/api/messages/${message.id}/read`, { method: "POST", body: {} }).catch(() => {});
+    }
+    if (scroll) scrollToBottom();
+  });
 }
 
 function pollOptionValues() {
@@ -4633,8 +4749,8 @@ async function sendFile(event) {
 }
 
 async function sendEncryptedFile(file, successMessage) {
-  if (file.size > 10 * 1024 * 1024) {
-    toast("Le fichier dépasse la limite de 10 Mo.", "error");
+  if (file.size > 25 * 1024 * 1024) {
+    toast("Le fichier dépasse la limite de 25 Mo.", "error");
     return false;
   }
   toast("Chiffrement et envoi du fichier…");
@@ -5052,6 +5168,9 @@ function normalizedFileMIME(mime, name) {
     ogg: "audio/ogg",
     wav: "audio/wav",
     pdf: "application/pdf",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     csv: "text/csv",
     json: "application/json",
     log: "text/plain",
@@ -5100,12 +5219,68 @@ function scheduleReplyFilePreview(replyPreview, container, key) {
   observer.observe(container);
 }
 
+function loadPDFScript(source, available) {
+  if (available()) return Promise.resolve();
+  if (pdfScriptLoads.has(source)) return pdfScriptLoads.get(source);
+  const load = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    const timeout = setTimeout(() => {
+      script.remove();
+      reject(new Error(`Le chargement du moteur PDF a expiré (${source}).`));
+    }, 12000);
+    script.src = source;
+    script.async = true;
+    script.onload = () => {
+      clearTimeout(timeout);
+      if (available()) resolve();
+      else reject(new Error(`Le moteur PDF ${source} n’est pas disponible.`));
+    };
+    script.onerror = () => {
+      clearTimeout(timeout);
+      script.remove();
+      reject(new Error(`Impossible de charger le moteur PDF ${source}.`));
+    };
+    document.head.append(script);
+  }).catch((error) => {
+    pdfScriptLoads.delete(source);
+    throw error;
+  });
+  pdfScriptLoads.set(source, load);
+  return load;
+}
+
+async function ios17PDFJS() {
+  if (!ios17PDFJSModule) {
+    ios17PDFJSModule = (async () => {
+      // PDF.js 4.x ne prend officiellement en charge Safari qu’à partir de la
+      // version 18. iOS 17 utilise donc le build classique 3.11 : aucun module
+      // ES et aucun vrai Web Worker, deux chemins instables dans WKWebView 17.
+      await loadPDFScript(
+        "/vendor/pdfjs-ios17/pdf.worker.min.js?v=ios17-pdf-v184",
+        () => typeof globalThis.pdfjsWorker?.WorkerMessageHandler === "function",
+      );
+      await loadPDFScript(
+        "/vendor/pdfjs-ios17/pdf.min.js?v=ios17-pdf-v184",
+        () => globalThis.pdfjsLib?.version === "3.11.174",
+      );
+      const module = globalThis.pdfjsLib;
+      module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs-ios17/pdf.worker.min.js?v=ios17-pdf-v184";
+      return module;
+    })().catch((error) => {
+      ios17PDFJSModule = null;
+      throw error;
+    });
+  }
+  return ios17PDFJSModule;
+}
+
 async function pdfJS() {
+  if (needsInlinePDFWorker()) return ios17PDFJS();
   if (!pdfJSModule) {
-    pdfJSModule = import("/vendor/pdfjs/pdf.compat.mjs?v=share-errors-v171")
-      .then(() => import("/vendor/pdfjs/pdf.min.mjs?v=share-errors-v171"))
-      .then((module) => {
-        module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.compat.mjs?v=share-errors-v171";
+    pdfJSModule = import("/vendor/pdfjs/pdf.compat.mjs?v=ios17-pdf-v184")
+      .then(async () => {
+        const module = await import("/vendor/pdfjs/pdf.min.mjs?v=ios17-pdf-v184");
+        module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.compat.mjs?v=ios17-pdf-v184";
         return module;
       })
       .catch((error) => {
@@ -5118,12 +5293,58 @@ async function pdfJS() {
   return pdfJSModule;
 }
 
-function renderNativePDFPreview(file, container) {
-  const frame = document.createElement("iframe");
-  frame.className = "document-page-preview pdf-native-preview";
-  frame.src = file.url;
-  frame.title = `Aperçu de ${file.name}`;
-  frame.loading = "lazy";
+function pdfOperationWithTimeout(operation, timeoutMS, label) {
+  let timeout;
+  return Promise.race([
+    operation,
+    new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(new Error(`${label} a expiré.`)), timeoutMS);
+    }),
+  ]).finally(() => clearTimeout(timeout));
+}
+
+function observeNativePDFPreviewSize(preview, container, pageRatio) {
+  let lastWidth = 0;
+  const ratio = Math.min(Math.max(pageRatio, 0.75), 2);
+  const resize = () => {
+    const width = Math.floor(container.getBoundingClientRect().width);
+    if (width <= 0 || width === lastWidth) return;
+    lastWidth = width;
+    const height = Math.round(width * ratio);
+    preview.width = String(width);
+    preview.height = String(height);
+    preview.style.height = `${height}px`;
+  };
+  resize();
+  if (!("ResizeObserver" in window)) {
+    requestAnimationFrame(resize);
+    return;
+  }
+  const observer = new ResizeObserver(() => {
+    if (container.isConnected) {
+      resize();
+      return;
+    }
+    observer.disconnect();
+    state.filePreviewObservers.delete(observer);
+  });
+  state.filePreviewObservers.add(observer);
+  observer.observe(container);
+}
+
+function renderNativePDFPreview(file, container, pageRatio = 297 / 210) {
+  // Safari enregistre la navigation d'une iframe dans son historique. Un
+  // objet PDF conserve l'aperçu natif. Il reste volontairement non interactif :
+  // certaines WebViews remplacent l'application par le document lors d'un clic.
+  const preview = document.createElement("object");
+  preview.className = "document-page-preview pdf-native-preview";
+  preview.type = "application/pdf";
+  preview.data = file.url;
+  preview.tabIndex = -1;
+  preview.setAttribute("aria-label", `Aperçu de ${file.name}`);
+  const unsupported = document.createElement("span");
+  unsupported.textContent = t("Aperçu PDF non pris en charge.");
+  preview.append(unsupported);
 
   const actions = document.createElement("div");
   actions.className = "pdf-native-actions";
@@ -5137,47 +5358,78 @@ function renderNativePDFPreview(file, container) {
   open.textContent = t("Ouvrir le PDF");
   actions.append(label, open);
   container.classList.add("pdf-native-fallback");
-  container.replaceChildren(frame, actions);
+  container.replaceChildren(preview, actions);
+  observeNativePDFPreviewSize(preview, container, pageRatio);
 }
 
-async function renderPDFPreview(file, container, allowNativeFallback = true) {
+async function renderPDFPreview(file, container, allowFallback = true) {
   let pdfDocument;
+  let loadingTask;
+  let renderTask;
+  let pageRatio = 297 / 210;
   try {
     const pdfjs = await pdfJS();
-    pdfDocument = await pdfjs.getDocument({ data: file.data.slice() }).promise;
-    const page = await pdfDocument.getPage(1);
+    loadingTask = pdfjs.getDocument({
+      data: file.data.slice(),
+      ...pdfDocumentCompatibilityOptions(),
+    });
+    pdfDocument = await pdfOperationWithTimeout(
+      loadingTask.promise,
+      needsInlinePDFWorker() ? 20000 : 15000,
+      "Le chargement du PDF",
+    );
+    const page = await pdfOperationWithTimeout(pdfDocument.getPage(1), 10000, "La lecture de la première page");
     const baseViewport = page.getViewport({ scale: 1 });
-    const cssWidth = Math.min(Math.max(container.clientWidth, 240), 460);
-    const scale = cssWidth / baseViewport.width;
+    pageRatio = baseViewport.height / baseViewport.width;
+    const isReplyPreview = container.classList.contains("message-reply-file-thumb");
+    const availableWidth = Math.round(container.getBoundingClientRect().width);
+    const renderWidth = isReplyPreview ? 160 : Math.min(Math.max(availableWidth, 240), 620);
+    const scale = renderWidth / baseViewport.width;
     const viewport = page.getViewport({ scale });
     const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
     const canvas = document.createElement("canvas");
     canvas.className = "pdf-page-preview";
+    canvas.draggable = false;
     canvas.width = Math.ceil(viewport.width * pixelRatio);
     canvas.height = Math.ceil(viewport.height * pixelRatio);
-    canvas.style.width = `${Math.round(viewport.width)}px`;
-    canvas.style.height = `${Math.round(viewport.height)}px`;
+    canvas.style.width = "100%";
+    canvas.style.maxWidth = "100%";
+    canvas.style.aspectRatio = `${baseViewport.width} / ${baseViewport.height}`;
     const context = canvas.getContext("2d", { alpha: false });
-    await page.render({
+    if (!context) throw new Error("Le contexte de rendu PDF est indisponible.");
+    renderTask = page.render({
+      canvas,
       canvasContext: context,
       viewport,
       transform: pixelRatio === 1 ? null : [pixelRatio, 0, 0, pixelRatio, 0, 0],
       background: "#ffffff",
-    }).promise;
+    });
+    await pdfOperationWithTimeout(
+      renderTask.promise,
+      needsInlinePDFWorker() ? 20000 : 15000,
+      "Le rendu de la première page",
+    );
     container.append(canvas);
   } catch (error) {
-    if (!allowNativeFallback) throw error;
+    try {
+      renderTask?.cancel();
+    } catch {}
+    if (!allowFallback) throw error;
     console.warn("Rendu PDF.js impossible, utilisation de l’aperçu natif", error);
-    renderNativePDFPreview(file, container);
+    renderNativePDFPreview(file, container, pageRatio);
   } finally {
     if (pdfDocument) {
       try {
-        await pdfDocument.destroy();
+        await pdfOperationWithTimeout(pdfDocument.destroy(), 5000, "La fermeture du moteur PDF");
       } catch (error) {
         // Le document est déjà affiché : un échec de fermeture du worker ne
         // doit pas remplacer l’aperçu par un message d’erreur.
         console.warn("Fermeture du moteur PDF impossible", error);
       }
+    } else if (loadingTask) {
+      try {
+        await pdfOperationWithTimeout(loadingTask.destroy(), 5000, "L’arrêt du chargement PDF");
+      } catch {}
     }
   }
 }
@@ -5305,7 +5557,14 @@ async function renderFilePreview(message, container, key) {
       return;
     }
     if (mime === "application/pdf") {
+      container.classList.add("pdf-file-preview");
+      container.closest(".message-row")?.classList.add("pdf-message");
       await renderPDFPreview(file, container);
+      return;
+    }
+    if (modernOfficeKind(file)) {
+      container.closest(".message-row")?.classList.add("office-message");
+      await renderModernOfficePreview(file, container, { locale, translate: t });
       return;
     }
     if (mime.startsWith("text/") || /(?:json|xml|javascript)$/i.test(mime)) {
@@ -5369,6 +5628,10 @@ async function renderReplyFilePreview(message, container, key) {
     }
     if (mime === "application/pdf") {
       await renderPDFPreview(file, container, false);
+      return;
+    }
+    if (modernOfficeKind(file)) {
+      await renderModernOfficePreview(file, container, { compact: true, locale, translate: t });
       return;
     }
     if (mime.startsWith("text/") || /(?:json|xml|javascript)$/i.test(mime)) {
@@ -5679,6 +5942,7 @@ async function handleSocketEvent(event) {
     await expireRenderedMessage(event.conversation_id, event.message_id);
   } else if (event.type === "contact_updated") {
     await refreshAll();
+    await refreshCurrentConversationHeader();
   } else if (event.type === "presence_state") {
     state.onlineUsers = new Set((event.online_user_ids || []).map(String));
     await renderConversations();
@@ -5692,13 +5956,16 @@ async function handleSocketEvent(event) {
   } else if (event.type === "conversation_updated") {
     const currentID = state.current?.id;
     state.members.delete(event.conversation_id);
-    if ((event.deleted || event.removed) && currentID === event.conversation_id) {
+    if ((event.deleted || event.removed) && sameID(currentID, event.conversation_id)) {
       closeCurrentConversation(event.conversation_id);
       state.keys.delete(event.conversation_id);
     }
     state.conversations = await api("/api/conversations");
     await renderConversations();
-    if ((event.deleted_message_id || event.updated_message_id || event.reaction_message_id || event.pinned_message_id || event.poll_message_id || event.profile_updated) && currentID === event.conversation_id) {
+    if (!(event.deleted || event.removed) && sameID(currentID, event.conversation_id)) {
+      await refreshCurrentConversationHeader(currentID);
+    }
+    if ((event.deleted_message_id || event.updated_message_id || event.reaction_message_id || event.pinned_message_id || event.poll_message_id || event.profile_updated) && sameID(currentID, event.conversation_id)) {
       await loadMessages();
       if (event.pinned_message_id && !elements.pinnedPanel.hidden) await loadPinnedMessages();
     }

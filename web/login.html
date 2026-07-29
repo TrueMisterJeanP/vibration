@@ -45,9 +45,10 @@
       <label>Nom d’utilisateur<input name="username" required pattern="[a-z0-9_]{3,32}" autocomplete="username"></label>
       <label>Nom affiché<input name="display_name" required maxlength="80" autocomplete="name"></label>
       <label id="invitation-code-label" hidden>Code d’activation<input name="invitation_code" maxlength="128" autocomplete="off"></label>
-      <label>Mot de passe de connexion<input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+      <label>Mot de passe de connexion<input name="password" type="password" required minlength="8" maxlength="256" autocomplete="new-password"></label>
+      <label>Confirmer le mot de passe de connexion<input name="password_confirm" type="password" required minlength="8" maxlength="256" autocomplete="new-password"></label>
       <label>Phrase secrète de chiffrement<input name="phrase" type="password" required minlength="10" autocomplete="off"></label>
-      <label>Confirmer la phrase<input name="phrase_confirm" type="password" required minlength="10" autocomplete="off"></label>
+      <label>Confirmer la phrase de chiffrement<input name="phrase_confirm" type="password" required minlength="10" autocomplete="off"></label>
       <small>La clé sera mémorisée automatiquement sur cet appareil. Conservez néanmoins cette phrase : elle sera demandée périodiquement et ne peut pas être récupérée par le serveur.</small>
       <button type="submit">Créer le compte et les clés</button>
     </form>

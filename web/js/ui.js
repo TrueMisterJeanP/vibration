@@ -447,7 +447,7 @@ export function bindSwipeActions(surface, row, distance = 104) {
   };
   surface.addEventListener("pointerdown", (event) => {
     if (event.pointerType === "touch" || event.button !== 0) return;
-    if (event.target.closest("button, a, input, textarea, audio, video")) return;
+    if (event.target.closest("button, a, input, textarea, audio, video, iframe, canvas, .file-preview")) return;
     start(event.clientX, event.clientY);
     surface.setPointerCapture?.(event.pointerId);
   });
@@ -461,7 +461,7 @@ export function bindSwipeActions(surface, row, distance = 104) {
   surface.addEventListener("pointercancel", end);
   surface.addEventListener("touchstart", (event) => {
     if (event.touches.length !== 1) return;
-    if (event.target.closest("button, a, input, textarea, audio, video")) return;
+    if (event.target.closest("button, a, input, textarea, audio, video, iframe, canvas, .file-preview")) return;
     const touch = event.touches[0];
     start(touch.clientX, touch.clientY);
   }, { passive: true });

@@ -13,6 +13,11 @@ de licence amont lorsque les licences concernées l’exigent.
 | Composant | Version | Emplacement | Licence | Notice |
 | --- | --- | --- | --- | --- |
 | PDF.js | `4.10.38` | `web/vendor/pdfjs/` | Apache-2.0 | Copyright Mozilla et contributeurs. Le texte complet de la licence est conservé dans `web/vendor/pdfjs/LICENSE`. |
+| PDF.js | `3.11.174` | `web/vendor/pdfjs-ios17/` | Apache-2.0 | Copyright Mozilla et contributeurs. Build de compatibilité réservé à iOS/iPadOS 17 ; le texte complet de la licence est conservé dans `web/vendor/pdfjs-ios17/LICENSE`. |
+| JSZip | `3.10.1` | `web/vendor/jszip/` | MIT | Copyright Stuart Knightley, David Duponchel, Franz Buchinger, António Afonso. Le texte complet de la licence est conservé dans `web/vendor/jszip/LICENSE.markdown`. |
+| docx-preview | `0.4.0` | `web/vendor/docx-preview/` | Apache-2.0 | Copyright Volodymyr Baydalka et contributeurs. Le texte complet de la licence est conservé dans `web/vendor/docx-preview/LICENSE`. |
+| ExcelJS | `4.4.0` | `web/vendor/exceljs/` | MIT | Copyright Guyon Roche. Le texte complet de la licence est conservé dans `web/vendor/exceljs/LICENSE`. |
+| pptx-preview | `1.0.7` | `web/vendor/pptx-preview/` | ISC | Copyright _hit757_ et contributeurs. Le texte complet de la licence est conservé dans `web/vendor/pptx-preview/LICENSE`. |
 
 ## Modules Go
 
@@ -52,6 +57,11 @@ pas inclus dans l’export Community.
 
 - Vibration : `LICENSE`
 - PDF.js : `web/vendor/pdfjs/LICENSE`
+- PDF.js pour iOS 17 : `web/vendor/pdfjs-ios17/LICENSE`
+- JSZip : `web/vendor/jszip/LICENSE.markdown`
+- docx-preview : `web/vendor/docx-preview/LICENSE`
+- ExcelJS : `web/vendor/exceljs/LICENSE`
+- pptx-preview : `web/vendor/pptx-preview/LICENSE`
 - Modules Go : les fichiers de licence font partie du code source des modules
   téléchargés et vérifiés par `go.sum`.
 

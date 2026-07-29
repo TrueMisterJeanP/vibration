@@ -39,6 +39,14 @@ async function load(language) {
     pt: ["Este ficheiro partilhado não está disponível.", "Este ficheiro partilhado já não está disponível.", "Não foi possível verificar esta ligação de partilha.", "Chave de partilha inválida.", "A chave de partilha não permite desencriptar este ficheiro."],
     de: ["Diese geteilte Datei ist nicht verfügbar.", "Diese geteilte Datei ist nicht mehr verfügbar.", "Dieser Freigabelink kann nicht überprüft werden.", "Ungültiger Freigabeschlüssel.", "Der Freigabeschlüssel kann diese Datei nicht entschlüsseln."],
   };
+  const expectedRegistrationErrors = {
+    en: ["The registration information is invalid.", "Registration is disabled.", "The activation code is invalid.", "This username is already in use.", "This display name is already in use.", "Too many attempts. Try again later.", "Registration failed.", "The password could not be secured.", "The recovery code could not be created.", "The session could not be created."],
+    fr: ["Les informations d’inscription sont invalides.", "Les inscriptions sont désactivées.", "Le code d’activation est invalide.", "Ce nom d’utilisateur existe déjà.", "Ce nom affiché existe déjà.", "Trop de tentatives. Réessayez plus tard.", "L’inscription a échoué.", "La sécurisation du mot de passe a échoué.", "La création du code de récupération a échoué.", "La création de la session a échoué."],
+    es: ["La información de registro no es válida.", "El registro está desactivado.", "El código de activación no es válido.", "Este nombre de usuario ya está en uso.", "Este nombre para mostrar ya está en uso.", "Demasiados intentos. Inténtalo de nuevo más tarde.", "El registro ha fallado.", "No se ha podido proteger la contraseña.", "No se ha podido crear el código de recuperación.", "No se ha podido crear la sesión."],
+    it: ["Le informazioni di registrazione non sono valide.", "La registrazione è disabilitata.", "Il codice di attivazione non è valido.", "Questo nome utente è già in uso.", "Questo nome visualizzato è già in uso.", "Troppi tentativi. Riprova più tardi.", "Registrazione non riuscita.", "Impossibile proteggere la password.", "Impossibile creare il codice di recupero.", "Impossibile creare la sessione."],
+    pt: ["As informações de registo são inválidas.", "O registo está desativado.", "O código de ativação é inválido.", "Este nome de utilizador já está a ser utilizado.", "Este nome apresentado já está a ser utilizado.", "Demasiadas tentativas. Tente novamente mais tarde.", "O registo falhou.", "Não foi possível proteger a palavra-passe.", "Não foi possível criar o código de recuperação.", "Não foi possível criar a sessão."],
+    de: ["Die Registrierungsangaben sind ungültig.", "Die Registrierung ist deaktiviert.", "Der Aktivierungscode ist ungültig.", "Dieser Benutzername wird bereits verwendet.", "Dieser Anzeigename wird bereits verwendet.", "Zu viele Versuche. Versuchen Sie es später erneut.", "Die Registrierung ist fehlgeschlagen.", "Das Passwort konnte nicht geschützt werden.", "Der Wiederherstellungscode konnte nicht erstellt werden.", "Die Sitzung konnte nicht erstellt werden."],
+  };
 
   for (const [language, label] of Object.entries(expected)) {
     const i18n = await load(`${language}-TEST`);
@@ -63,6 +71,18 @@ async function load(language) {
       i18n.t("Clé de partage invalide."),
       i18n.t("La clé de partage ne permet pas de déchiffrer ce fichier."),
     ], expectedShareErrors[language]);
+    assert.deepEqual([
+      i18n.t("Les informations d’inscription sont invalides."),
+      i18n.t("Les inscriptions sont désactivées."),
+      i18n.t("Le code d’activation est invalide."),
+      i18n.t("Ce nom d’utilisateur existe déjà."),
+      i18n.t("Ce nom affiché existe déjà."),
+      i18n.t("Trop de tentatives. Réessayez plus tard."),
+      i18n.t("L’inscription a échoué."),
+      i18n.t("La sécurisation du mot de passe a échoué."),
+      i18n.t("La création du code de récupération a échoué."),
+      i18n.t("La création de la session a échoué."),
+    ], expectedRegistrationErrors[language]);
   }
 
   const spanish = await load("es-ES");

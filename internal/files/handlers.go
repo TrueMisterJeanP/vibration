@@ -10,7 +10,10 @@ import (
 	"chat-pwa-go/internal/httpx"
 )
 
-const maxFileSize = 10 << 20
+const (
+	maxFileSize            = 25 << 20
+	maxFileRequestBodySize = 36 << 20
+)
 
 type Broadcaster interface {
 	SendToUser(userID int64, event any) bool
@@ -94,7 +97,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		IV               string `json:"iv"`
 		ExpiresInSeconds int64  `json:"expires_in_seconds"`
 	}
-	if !httpx.Decode(w, r, &input) {
+	if !httpx.DecodeWithLimit(w, r, &input, maxFileRequestBodySize) {
 		return
 	}
 	userID := auth.UserID(r)
@@ -110,7 +113,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := base64.StdEncoding.DecodeString(input.EncryptedData)
 	if err != nil || len(data) == 0 || len(data) > maxFileSize+64 {
-		httpx.Error(w, http.StatusRequestEntityTooLarge, "encrypted file exceeds 10 MB")
+		httpx.Error(w, http.StatusRequestEntityTooLarge, "encrypted file exceeds 25 MB")
 		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
