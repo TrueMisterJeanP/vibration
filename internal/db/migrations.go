@@ -65,6 +65,7 @@ var migrations = []string{
 		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		encrypted_conversation_key TEXT NOT NULL,
 		role TEXT NOT NULL DEFAULT 'member',
+		favorite_at TEXT,
 		created_at TEXT NOT NULL,
 		UNIQUE(conversation_id, user_id)
 	)`,
@@ -307,6 +308,15 @@ func Migrate(database *sql.DB) error {
 			return fmt.Errorf("add contacts.status: %w", err)
 		}
 	}
+	exists, err = columnExists(tx, "conversation_members", "favorite_at")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if _, err := tx.Exec(`ALTER TABLE conversation_members ADD COLUMN favorite_at TEXT`); err != nil {
+			return fmt.Errorf("add conversation_members.favorite_at: %w", err)
+		}
+	}
 	exists, err = columnExists(tx, "federated_instances", "host")
 	if err != nil {
 		return err
@@ -393,6 +403,7 @@ func Migrate(database *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_message_events_dates ON message_events(starts_at, ends_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_poll_options_message ON poll_options(message_id, position)`,
 		`CREATE INDEX IF NOT EXISTS idx_poll_votes_message ON poll_votes(message_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_members_favorites ON conversation_members(user_id, favorite_at)`,
 	} {
 		if _, err := tx.Exec(statement); err != nil {
 			return fmt.Errorf("create federation index: %w", err)

@@ -142,6 +142,76 @@ func TestCreatePrivateConversationRequiresAcceptedContact(t *testing.T) {
 	}
 }
 
+func TestConversationFavoriteIsPersonalAndSortsFirst(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	handler := &Handler{DB: db, Hub: testHub{}}
+	owner := registerUser(t, authHandler, "favorite_owner")
+	registerUser(t, authHandler, "favorite_member")
+	other := registerUser(t, authHandler, "favorite_other")
+	mux := conversationMux(authHandler, handler)
+	ensureAcceptedContact(t, db, 1, 2)
+	ensureAcceptedContact(t, db, 1, 3)
+
+	favoriteID := createPrivateConversation(t, mux, owner, 2)
+	newerID := createPrivateConversation(t, mux, owner, 3)
+	if _, err := db.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,created_at)
+		VALUES(?,3,'newer-message','message-iv','2026-12-01T00:00:00Z')`, newerID); err != nil {
+		t.Fatal(err)
+	}
+
+	favorited := request(t, mux, http.MethodPatch, "/api/conversations/"+favoriteID+"/favorite",
+		map[string]bool{"favorite": true}, owner)
+	if favorited.Code != http.StatusOK {
+		t.Fatalf("favorite status=%d body=%s", favorited.Code, favorited.Body.String())
+	}
+	var ownerFavorite, memberFavorite sql.NullString
+	if err := db.QueryRow(`SELECT favorite_at FROM conversation_members WHERE conversation_id=? AND user_id=1`, favoriteID).Scan(&ownerFavorite); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT favorite_at FROM conversation_members WHERE conversation_id=? AND user_id=2`, favoriteID).Scan(&memberFavorite); err != nil {
+		t.Fatal(err)
+	}
+	if !ownerFavorite.Valid || memberFavorite.Valid {
+		t.Fatalf("favorite should remain personal: owner=%v member=%v", ownerFavorite, memberFavorite)
+	}
+
+	list := request(t, mux, http.MethodGet, "/api/conversations", nil, owner)
+	if list.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", list.Code, list.Body.String())
+	}
+	var conversations []Conversation
+	if err := json.Unmarshal(list.Body.Bytes(), &conversations); err != nil {
+		t.Fatal(err)
+	}
+	if len(conversations) != 2 || formatID(conversations[0].ID) != favoriteID || conversations[0].FavoriteAt == nil {
+		t.Fatalf("favorite should sort first: %#v", conversations)
+	}
+
+	blocked := request(t, mux, http.MethodPatch, "/api/conversations/"+favoriteID+"/favorite",
+		map[string]bool{"favorite": true}, other)
+	if blocked.Code != http.StatusNotFound {
+		t.Fatalf("non-member favorite status=%d body=%s", blocked.Code, blocked.Body.String())
+	}
+
+	removed := request(t, mux, http.MethodPatch, "/api/conversations/"+favoriteID+"/favorite",
+		map[string]bool{"favorite": false}, owner)
+	if removed.Code != http.StatusOK {
+		t.Fatalf("remove favorite status=%d body=%s", removed.Code, removed.Body.String())
+	}
+	if err := db.QueryRow(`SELECT favorite_at FROM conversation_members WHERE conversation_id=? AND user_id=1`, favoriteID).Scan(&ownerFavorite); err != nil {
+		t.Fatal(err)
+	}
+	if ownerFavorite.Valid {
+		t.Fatalf("favorite_at=%q, want NULL", ownerFavorite.String)
+	}
+
+}
+
 func TestCreatePersonalConversationIsIdempotentAndCannotBeDeleted(t *testing.T) {
 	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
 	if err != nil {
@@ -237,6 +307,10 @@ func TestGroupMemberLeavesAndOwnerDeletesGroup(t *testing.T) {
 	if err := db.QueryRow(`SELECT role FROM conversation_members WHERE conversation_id=? AND user_id=2`, id).Scan(&role); err != nil || role != "pending" {
 		t.Fatalf("new group member role=%q err=%v", role, err)
 	}
+	pendingFavorite := request(t, mux, http.MethodPatch, path+"/favorite", map[string]bool{"favorite": true}, member)
+	if pendingFavorite.Code != http.StatusForbidden {
+		t.Fatalf("pending favorite status=%d body=%s", pendingFavorite.Code, pendingFavorite.Body.String())
+	}
 	accepted := request(t, mux, http.MethodPost, path+"/accept", nil, member)
 	if accepted.Code != http.StatusOK {
 		t.Fatalf("accept group status=%d body=%s", accepted.Code, accepted.Body.String())
@@ -323,6 +397,7 @@ func conversationMux(authHandler *auth.Handler, handler *Handler) *http.ServeMux
 	mux.Handle("POST /api/conversations/personal", authHandler.Middleware(http.HandlerFunc(handler.CreatePersonal)))
 	mux.Handle("POST /api/conversations/group", authHandler.Middleware(http.HandlerFunc(handler.CreateGroup)))
 	mux.Handle("POST /api/conversations/{id}/accept", authHandler.Middleware(http.HandlerFunc(handler.Accept)))
+	mux.Handle("PATCH /api/conversations/{id}/favorite", authHandler.Middleware(http.HandlerFunc(handler.SetFavorite)))
 	mux.Handle("PUT /api/conversations/{id}", authHandler.Middleware(http.HandlerFunc(handler.Update)))
 	mux.Handle("DELETE /api/conversations/{id}", authHandler.Middleware(http.HandlerFunc(handler.Delete)))
 	mux.Handle("POST /api/conversations/{id}/members", authHandler.Middleware(http.HandlerFunc(handler.AddMember)))

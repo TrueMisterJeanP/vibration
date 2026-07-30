@@ -14,6 +14,7 @@ const mobileButtonEnd = html.indexOf("</button>", mobileButtonStart);
 assert.ok(avatarPosition >= 0, "the conversation header avatar must exist");
 assert.ok(avatarPosition < titlePosition, "the avatar must appear before the conversation name");
 assert.match(html, /id="chat-title"[\s\S]*id="chat-description"/);
+assert.match(html, /button id="close-sidebar-logo"[\s\S]*aria-controls="profile-dialog"/);
 assert.match(html, /id="open-sidebar-logo"[\s\S]*header-conversation-initial/);
 assert.doesNotMatch(
   html.slice(mobileButtonStart, mobileButtonEnd),
@@ -22,6 +23,8 @@ assert.doesNotMatch(
 );
 
 assert.match(app, /function renderConversationHeader\(conversation, display\)/);
+assert.match(app, /const openProfileDialog = async \(\) =>/);
+assert.match(app, /document\.querySelector\("#close-sidebar-logo"\)\.onclick = openProfileDialog/);
 assert.match(app, /function renderPersonalNoteIcon\(container\)/);
 assert.match(app, /elements\.personalConversationButton\.querySelector\("\.personal-note-avatar svg"\)/);
 assert.match(app, /elements\.chatAvatar\.classList\.toggle\("personal-note-avatar", Boolean\(conversation\.is_personal\)\)/);

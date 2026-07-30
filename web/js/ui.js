@@ -56,9 +56,11 @@ export function actionIcon(kind) {
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("aria-hidden", "true");
   svg.classList.add("action-icon");
-  const paths = kind === "edit"
-    ? ["M12 20h9", "M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"]
-    : ["M3 6h18", "M8 6V4h8v2", "M19 6l-1 15H6L5 6", "M10 10v7", "M14 10v7"];
+  const paths = {
+    edit: ["M12 20h9", "M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"],
+    favorite: ["m12 2.8 2.84 5.75 6.35.92-4.6 4.48 1.08 6.32L12 17.77l-5.67 2.98 1.08-6.32-4.6-4.48 6.35-.92Z"],
+    delete: ["M3 6h18", "M8 6V4h8v2", "M19 6l-1 15H6L5 6", "M10 10v7", "M14 10v7"],
+  }[kind] || ["M3 6h18", "M8 6V4h8v2", "M19 6l-1 15H6L5 6", "M10 10v7", "M14 10v7"];
   for (const data of paths) {
     const path = document.createElementNS(namespace, "path");
     path.setAttribute("d", data);

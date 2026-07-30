@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js?v=ios17-pdf-v184";
+import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js?v=ios17-pdf-v189";
 import {
   decryptBytes,
   decryptEnvelope,
@@ -32,26 +32,26 @@ import {
   syncBrowserSubscription,
   testNotification,
 } from "./notifications.js";
-import { ChatSocket } from "./websocket.js?v=ios17-pdf-v184";
-import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios17-pdf-v184";
+import { ChatSocket } from "./websocket.js?v=ios17-pdf-v189";
+import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios17-pdf-v189";
 import { locale, t } from "./i18n.js";
-import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v184";
+import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v189";
 import {
   needsInlinePDFWorker,
   pdfDocumentCompatibilityOptions,
-} from "./pdf-preview-compat.js?v=ios17-pdf-v184";
+} from "./pdf-preview-compat.js?v=ios17-pdf-v189";
 import {
   clearOfficePreviewResources,
   modernOfficeKind,
   renderModernOfficePreview,
-} from "./office-preview.js?v=ios17-pdf-v184";
+} from "./office-preview.js?v=ios17-pdf-v189";
 
 const CALL_INVITE_TIMEOUT_MS = 45000;
 const CALL_SIGNAL_LOSS_GRACE_MS = 15000;
 const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
 const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "ios17-pdf-v184";
+const APP_BUILD = "ios17-pdf-v189";
 
 window.VIBRATION_BUILD = APP_BUILD;
 console.info(`Vibration build ${APP_BUILD}`);
@@ -115,6 +115,20 @@ const elements = {
   pinnedWindowButton: document.querySelector("#pinned-window-button"),
   closePinnedPanel: document.querySelector("#close-pinned-panel"),
   chatAvatar: document.querySelector("#chat-avatar"),
+  chatIdentity: document.querySelector("#chat-conversation-identity"),
+  conversationInfoDialog: document.querySelector("#conversation-info-dialog"),
+  conversationInfoAvatar: document.querySelector("#conversation-info-avatar"),
+  conversationInfoTitle: document.querySelector("#conversation-info-title"),
+  conversationInfoKind: document.querySelector("#conversation-info-kind"),
+  conversationInfoName: document.querySelector("#conversation-info-name"),
+  conversationInfoNameLabel: document.querySelector("#conversation-info-name-label"),
+  conversationInfoDisplayName: document.querySelector("#conversation-info-display-name"),
+  conversationInfoUsernameRow: document.querySelector("#conversation-info-username-row"),
+  conversationInfoUsername: document.querySelector("#conversation-info-username"),
+  conversationInfoAddressRow: document.querySelector("#conversation-info-address-row"),
+  conversationInfoAddress: document.querySelector("#conversation-info-address"),
+  conversationInfoInstance: document.querySelector("#conversation-info-instance"),
+  conversationInfoDescription: document.querySelector("#conversation-info-description"),
   title: document.querySelector("#chat-title"),
   description: document.querySelector("#chat-description"),
   typing: document.querySelector("#typing-label"),
@@ -657,7 +671,7 @@ function bindUI() {
   bindDialogMediaIsolation();
   const profileDialog = document.querySelector("#profile-dialog");
   const profileForm = document.querySelector("#profile-form");
-  document.querySelector("#profile-button").onclick = async () => {
+  const openProfileDialog = async () => {
     profileAvatar = state.me.avatar || null;
     updateProfileAvatarPreview();
     document.querySelector("#profile-username").value = state.me.username;
@@ -676,7 +690,24 @@ function bindUI() {
     await refreshRememberedKeyStatus();
     await refreshNotificationStatus();
   };
+  document.querySelector("#profile-button").onclick = openProfileDialog;
+  document.querySelector("#close-sidebar-logo").onclick = openProfileDialog;
   document.querySelector("#profile-close").onclick = () => profileDialog.close();
+  document.querySelector("#conversation-info-close").onclick = () => elements.conversationInfoDialog.close();
+  elements.chatAvatar.onclick = () => {
+    openCurrentConversationInfo().catch((error) => {
+      toast(frenchErrorMessage(error, "Impossible d’afficher ces informations."), "error");
+    });
+  };
+  elements.chatIdentity.onclick = () => {
+    if (!elements.chatIdentity.classList.contains("conversation-info-trigger")) return;
+    elements.chatAvatar.click();
+  };
+  elements.chatIdentity.addEventListener("keydown", (event) => {
+    if (!elements.chatIdentity.classList.contains("conversation-info-trigger") || !["Enter", " "].includes(event.key)) return;
+    event.preventDefault();
+    elements.chatAvatar.click();
+  });
   document.querySelector("#profile-avatar-input").addEventListener("change", async (event) => {
     const file = event.target.files[0];
     event.target.value = "";
@@ -1046,6 +1077,97 @@ function replaceAvatarContent(container, avatar, fallback, trailingElements = []
   container.append(...trailingElements);
 }
 
+function conversationInstanceLabel(value) {
+  if (!value) return t("Instance inconnue");
+  try {
+    return new URL(value).host || value;
+  } catch {
+    return value;
+  }
+}
+
+function conversationContactAddress(username, instance) {
+  const normalizedUsername = String(username || "").replace(/^@+/, "");
+  const normalizedInstance = conversationInstanceLabel(instance);
+  if (!normalizedUsername) return t("Non renseigné");
+  if (!instance || normalizedInstance === t("Instance inconnue")) return `@${normalizedUsername}`;
+  return `${normalizedUsername}@${normalizedInstance}`;
+}
+
+function setConversationInfoTrigger(conversation) {
+  const enabled = Boolean(conversation && !conversation.is_personal && ["private", "group"].includes(conversation.type));
+  const label = enabled
+    ? t(conversation.type === "group" ? "Afficher les informations du groupe" : "Afficher les informations du contact")
+    : "";
+  elements.chatAvatar.disabled = !enabled;
+  elements.chatAvatar.title = label;
+  elements.chatAvatar.setAttribute("aria-label", label);
+  elements.chatIdentity.classList.toggle("conversation-info-trigger", enabled);
+  if (enabled) {
+    elements.chatIdentity.setAttribute("role", "button");
+    elements.chatIdentity.setAttribute("tabindex", "0");
+    elements.chatIdentity.setAttribute("aria-haspopup", "dialog");
+    elements.chatIdentity.setAttribute("aria-controls", "conversation-info-dialog");
+    elements.chatIdentity.setAttribute("aria-label", label);
+  } else {
+    for (const attribute of ["role", "tabindex", "aria-haspopup", "aria-controls", "aria-label"]) {
+      elements.chatIdentity.removeAttribute(attribute);
+    }
+  }
+}
+
+async function openCurrentConversationInfo() {
+  const conversation = state.current;
+  if (!conversation || conversation.is_personal || !["private", "group"].includes(conversation.type)) return;
+  const isGroup = conversation.type === "group";
+  elements.conversationInfoTitle.textContent = t(isGroup ? "Informations du groupe" : "Informations du contact");
+  elements.conversationInfoKind.textContent = t(isGroup ? "Groupe" : "Contact");
+  elements.conversationInfoName.textContent = t("Chargement…");
+  elements.conversationInfoNameLabel.textContent = t(isGroup ? "Nom du groupe" : "Nom affiché");
+  elements.conversationInfoDisplayName.textContent = "—";
+  elements.conversationInfoUsernameRow.hidden = isGroup;
+  elements.conversationInfoAddressRow.hidden = isGroup;
+  elements.conversationInfoUsername.textContent = "—";
+  elements.conversationInfoAddress.textContent = "—";
+  elements.conversationInfoInstance.textContent = "—";
+  elements.conversationInfoDescription.textContent = "—";
+  replaceAvatarContent(elements.conversationInfoAvatar, null, isGroup ? "G" : "?");
+  if (!elements.conversationInfoDialog.open) elements.conversationInfoDialog.showModal();
+  elements.conversationInfoTitle.setAttribute("tabindex", "-1");
+  elements.conversationInfoTitle.focus({ preventScroll: true });
+
+  const [display, members] = await Promise.all([
+    resolveConversationDisplay(conversation),
+    getMembers(conversation.id),
+  ]);
+  if (!elements.conversationInfoDialog.open) return;
+  const peer = isGroup ? null : members.find((member) => member.user_id !== state.me.id);
+  const displayName = isGroup
+    ? display.title
+    : peer?.display_name || peer?.username || display.title;
+  const username = peer?.remote_username || peer?.username || conversation.remote_username || "";
+  const instance = peer?.federation_instance_url
+    || conversation.federation_instance_url
+    || getInstanceURL();
+  const description = isGroup
+    ? (conversation.encrypted_description ? display.description : "")
+    : peer?.description || "";
+  elements.conversationInfoName.textContent = displayName;
+  elements.conversationInfoDisplayName.textContent = displayName;
+  elements.conversationInfoUsername.textContent = username
+    ? (username.startsWith("@") ? username : `@${username}`)
+    : t("Non renseigné");
+  elements.conversationInfoAddress.textContent = conversationContactAddress(username, instance);
+  elements.conversationInfoInstance.textContent = conversationInstanceLabel(instance);
+  elements.conversationInfoInstance.title = instance || "";
+  elements.conversationInfoDescription.textContent = description || t("Aucune description.");
+  replaceAvatarContent(
+    elements.conversationInfoAvatar,
+    display.avatar,
+    conversationAvatarFallback(display, conversation),
+  );
+}
+
 function renderConversationHeader(conversation, display) {
   elements.title.textContent = display.title;
   elements.description.textContent = display.description || t(
@@ -1063,6 +1185,7 @@ function renderConversationHeader(conversation, display) {
     );
   }
   renderMobileNavigationAvatar(display, conversation);
+  setConversationInfoTrigger(conversation);
 }
 
 async function refreshCurrentConversationHeader(expectedID = state.current?.id) {
@@ -1335,6 +1458,25 @@ async function refreshConversationList() {
   await renderConversations();
 }
 
+async function toggleConversationFavorite(conversation, button) {
+  const favorite = !conversation.favorite_at;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    const result = await api(`/api/conversations/${conversation.id}/favorite`, {
+      method: "PATCH",
+      body: { favorite },
+    });
+    conversation.favorite_at = result.favorite_at;
+    await refreshConversationList();
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible de modifier ce favori."), "error");
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
+}
+
 function refreshConversationListOnForeground() {
   if (!state.me) return;
   refreshConversationList().catch((error) => {
@@ -1442,11 +1584,25 @@ async function renderConversations() {
     const subtitle = document.createElement("small");
     subtitle.className = "conversation-description";
     subtitle.textContent = t(conversation.type === "group" ? "Groupe" : "Contact");
-    titleRow.append(title, callBadge, unread);
+    const favoriteIndicator = document.createElement("span");
+    favoriteIndicator.className = "favorite-indicator";
+    favoriteIndicator.textContent = "★";
+    favoriteIndicator.hidden = !conversation.favorite_at;
+    favoriteIndicator.title = t("Favori");
+    favoriteIndicator.setAttribute("aria-label", favoriteIndicator.title);
+    titleRow.append(title, favoriteIndicator, callBadge, unread);
     copy.append(titleRow, subtitle);
     button.append(avatar, copy);
     button.onclick = () => selectConversation(conversation);
     const canEdit = conversation.type === "group" && conversation.created_by === state.me.id;
+    const favorite = document.createElement("button");
+    favorite.type = "button";
+    favorite.className = `swipe-favorite${conversation.favorite_at ? " active" : ""}`;
+    favorite.append(actionIcon("favorite"));
+    favorite.title = t(conversation.favorite_at ? "Retirer des favoris" : "Ajouter aux favoris");
+    favorite.setAttribute("aria-label", favorite.title);
+    favorite.onclick = () => toggleConversationFavorite(conversation, favorite);
+    actions.append(favorite);
     if (canEdit) {
       const edit = document.createElement("button");
       edit.type = "button";
@@ -1470,7 +1626,7 @@ async function renderConversations() {
     remove.onclick = () => deleteConversation(conversation, row);
     actions.append(remove);
     row.append(actions, button);
-    const swipe = bindSwipeActions(button, row, canEdit ? 112 : 56);
+    const swipe = bindSwipeActions(button, row, canEdit ? 168 : 112);
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "conversation-actions-toggle";
@@ -1766,6 +1922,7 @@ function closeCurrentConversation(conversationID) {
   elements.title.textContent = t("Sélectionnez une conversation");
   elements.description.textContent = "";
   elements.chatAvatar.hidden = true;
+  setConversationInfoTrigger(null);
   elements.chatAvatar.classList.remove("personal-note-avatar");
   elements.chatAvatar.replaceChildren();
   renderMobileNavigationAvatar();
@@ -5256,15 +5413,15 @@ async function ios17PDFJS() {
       // version 18. iOS 17 utilise donc le build classique 3.11 : aucun module
       // ES et aucun vrai Web Worker, deux chemins instables dans WKWebView 17.
       await loadPDFScript(
-        "/vendor/pdfjs-ios17/pdf.worker.min.js?v=ios17-pdf-v184",
+        "/vendor/pdfjs-ios17/pdf.worker.min.js?v=ios17-pdf-v189",
         () => typeof globalThis.pdfjsWorker?.WorkerMessageHandler === "function",
       );
       await loadPDFScript(
-        "/vendor/pdfjs-ios17/pdf.min.js?v=ios17-pdf-v184",
+        "/vendor/pdfjs-ios17/pdf.min.js?v=ios17-pdf-v189",
         () => globalThis.pdfjsLib?.version === "3.11.174",
       );
       const module = globalThis.pdfjsLib;
-      module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs-ios17/pdf.worker.min.js?v=ios17-pdf-v184";
+      module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs-ios17/pdf.worker.min.js?v=ios17-pdf-v189";
       return module;
     })().catch((error) => {
       ios17PDFJSModule = null;
@@ -5277,10 +5434,10 @@ async function ios17PDFJS() {
 async function pdfJS() {
   if (needsInlinePDFWorker()) return ios17PDFJS();
   if (!pdfJSModule) {
-    pdfJSModule = import("/vendor/pdfjs/pdf.compat.mjs?v=ios17-pdf-v184")
+    pdfJSModule = import("/vendor/pdfjs/pdf.compat.mjs?v=ios17-pdf-v189")
       .then(async () => {
-        const module = await import("/vendor/pdfjs/pdf.min.mjs?v=ios17-pdf-v184");
-        module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.compat.mjs?v=ios17-pdf-v184";
+        const module = await import("/vendor/pdfjs/pdf.min.mjs?v=ios17-pdf-v189");
+        module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.compat.mjs?v=ios17-pdf-v189";
         return module;
       })
       .catch((error) => {

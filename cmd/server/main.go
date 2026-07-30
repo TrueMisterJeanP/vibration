@@ -91,6 +91,7 @@ func main() {
 	mux.Handle("POST /api/conversations/group", authHandler.Middleware(http.HandlerFunc(conversationHandler.CreateGroup)))
 	mux.Handle("GET /api/conversations/{id}", authHandler.Middleware(http.HandlerFunc(conversationHandler.Get)))
 	mux.Handle("POST /api/conversations/{id}/accept", authHandler.Middleware(http.HandlerFunc(conversationHandler.Accept)))
+	mux.Handle("PATCH /api/conversations/{id}/favorite", authHandler.Middleware(http.HandlerFunc(conversationHandler.SetFavorite)))
 	mux.Handle("PUT /api/conversations/{id}", authHandler.Middleware(http.HandlerFunc(conversationHandler.Update)))
 	mux.Handle("DELETE /api/conversations/{id}", authHandler.Middleware(http.HandlerFunc(conversationHandler.Delete)))
 	mux.Handle("GET /api/conversations/{id}/members", authHandler.Middleware(http.HandlerFunc(conversationHandler.Members)))

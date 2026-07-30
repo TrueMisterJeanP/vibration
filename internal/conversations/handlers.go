@@ -46,6 +46,7 @@ type Conversation struct {
 	CreatedAt                string  `json:"created_at"`
 	EncryptedConversationKey string  `json:"encrypted_conversation_key"`
 	Role                     string  `json:"role"`
+	FavoriteAt               *string `json:"favorite_at"`
 	LastMessageAt            *string `json:"last_message_at"`
 	LastMessageEncrypted     *string `json:"last_message_encrypted_content"`
 	LastMessageIV            *string `json:"last_message_iv"`
@@ -71,7 +72,7 @@ type Member struct {
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	rows, err := h.DB.Query(`SELECT c.id,c.type,c.encrypted_title,c.encrypted_description,c.encrypted_avatar,c.federation_key_id,fi.base_url,ru.remote_username,
-		c.created_by,c.created_at,cm.encrypted_conversation_key,cm.role,
+		c.created_by,c.created_at,cm.encrypted_conversation_key,cm.role,cm.favorite_at,
 		(SELECT MAX(created_at) FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?)),
 		(SELECT encrypted_content FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
 		(SELECT iv FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
@@ -83,7 +84,10 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN federated_conversations fc ON fc.local_conversation_id=c.id
 		LEFT JOIN federated_instances fi ON fi.id=fc.instance_id
 		LEFT JOIN users ru ON ru.id=fc.remote_user_id
-		WHERE cm.user_id=? ORDER BY COALESCE((SELECT MAX(id) FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?)),0) DESC,c.id DESC`, now, now, now, now, auth.UserID(r), now, auth.UserID(r), now)
+		WHERE cm.user_id=?
+		ORDER BY CASE WHEN cm.favorite_at IS NULL THEN 1 ELSE 0 END,cm.favorite_at DESC,
+			COALESCE((SELECT MAX(id) FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?)),0) DESC,c.id DESC`,
+		now, now, now, now, auth.UserID(r), now, auth.UserID(r), now)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "conversation lookup failed")
 		return
@@ -94,8 +98,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		var item Conversation
 		var memberCount int
 		if rows.Scan(&item.ID, &item.Type, &item.EncryptedTitle, &item.EncryptedDescription, &item.EncryptedAvatar, &item.FederationKeyID,
-			&item.FederationInstanceURL, &item.RemoteUsername, &item.CreatedBy, &item.CreatedAt, &item.EncryptedConversationKey, &item.Role, &item.LastMessageAt,
-			&item.LastMessageEncrypted, &item.LastMessageIV, &item.LastMessageHasFile, &item.UnreadCount, &memberCount) == nil {
+			&item.FederationInstanceURL, &item.RemoteUsername, &item.CreatedBy, &item.CreatedAt, &item.EncryptedConversationKey, &item.Role, &item.FavoriteAt,
+			&item.LastMessageAt, &item.LastMessageEncrypted, &item.LastMessageIV, &item.LastMessageHasFile, &item.UnreadCount, &memberCount) == nil {
 			item.IsPersonal = item.Type == "private" && item.CreatedBy == auth.UserID(r) && memberCount == 1
 			result = append(result, item)
 		}
@@ -295,7 +299,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	var conversation Conversation
 	var memberCount int
 	err = h.DB.QueryRow(`SELECT c.id,c.type,c.encrypted_title,c.encrypted_description,c.encrypted_avatar,c.federation_key_id,fi.base_url,ru.remote_username,
-		c.created_by,c.created_at,cm.encrypted_conversation_key,cm.role,
+		c.created_by,c.created_at,cm.encrypted_conversation_key,cm.role,cm.favorite_at,
 		(SELECT MAX(created_at) FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?)),
 		(SELECT encrypted_content FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
 		(SELECT iv FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
@@ -310,7 +314,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		WHERE c.id=? AND cm.user_id=?`, now, now, now, now, auth.UserID(r), now, id, auth.UserID(r)).
 		Scan(&conversation.ID, &conversation.Type, &conversation.EncryptedTitle, &conversation.EncryptedDescription, &conversation.EncryptedAvatar,
 			&conversation.FederationKeyID, &conversation.FederationInstanceURL, &conversation.RemoteUsername, &conversation.CreatedBy, &conversation.CreatedAt,
-			&conversation.EncryptedConversationKey, &conversation.Role, &conversation.LastMessageAt, &conversation.LastMessageEncrypted, &conversation.LastMessageIV,
+			&conversation.EncryptedConversationKey, &conversation.Role, &conversation.FavoriteAt, &conversation.LastMessageAt, &conversation.LastMessageEncrypted, &conversation.LastMessageIV,
 			&conversation.LastMessageHasFile, &conversation.UnreadCount, &memberCount)
 	if err != nil {
 		httpx.Error(w, http.StatusNotFound, "conversation not found")
@@ -318,6 +322,51 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	conversation.IsPersonal = conversation.Type == "private" && conversation.CreatedBy == auth.UserID(r) && memberCount == 1
 	httpx.JSON(w, http.StatusOK, conversation)
+}
+
+func (h *Handler) SetFavorite(w http.ResponseWriter, r *http.Request) {
+	conversationID, err := httpx.PathID(r, "id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var input struct {
+		Favorite *bool `json:"favorite"`
+	}
+	if !httpx.Decode(w, r, &input) {
+		return
+	}
+	if input.Favorite == nil {
+		httpx.Error(w, http.StatusBadRequest, "favorite is required")
+		return
+	}
+	userID := auth.UserID(r)
+	var role string
+	if err := h.DB.QueryRow(`SELECT role FROM conversation_members WHERE conversation_id=? AND user_id=?`,
+		conversationID, userID).Scan(&role); err != nil {
+		httpx.Error(w, http.StatusNotFound, "conversation not found")
+		return
+	}
+	if role == "pending" {
+		httpx.Error(w, http.StatusForbidden, "pending conversation cannot be favorited")
+		return
+	}
+	var favoriteAt *string
+	if *input.Favorite {
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		favoriteAt = &now
+	}
+	if _, err := h.DB.Exec(`UPDATE conversation_members SET favorite_at=? WHERE conversation_id=? AND user_id=?`,
+		favoriteAt, conversationID, userID); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "favorite update failed")
+		return
+	}
+	if h.Hub != nil {
+		h.Hub.SendToUser(userID, map[string]any{
+			"type": "conversation_updated", "conversation_id": conversationID, "favorite_updated": true,
+		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"favorite": *input.Favorite, "favorite_at": favoriteAt})
 }
 
 func (h *Handler) Members(w http.ResponseWriter, r *http.Request) {

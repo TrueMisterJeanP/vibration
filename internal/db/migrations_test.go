@@ -206,6 +206,61 @@ func TestMigrateAddsMessageFeatureColumnsToLegacyMessages(t *testing.T) {
 	}
 }
 
+func TestMigrateAddsConversationMemberFavoriteColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-favorites.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = legacy.Exec(`CREATE TABLE users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		username TEXT UNIQUE NOT NULL,
+		display_name TEXT NOT NULL,
+		password_hash TEXT NOT NULL,
+		public_key TEXT NOT NULL,
+		encrypted_private_key TEXT NOT NULL,
+		crypto_salt TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	);
+	CREATE TABLE conversations (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		type TEXT NOT NULL,
+		created_by INTEGER NOT NULL,
+		created_at TEXT NOT NULL
+	);
+	CREATE TABLE conversation_members (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		conversation_id INTEGER NOT NULL,
+		user_id INTEGER NOT NULL,
+		encrypted_conversation_key TEXT NOT NULL,
+		role TEXT NOT NULL DEFAULT 'member',
+		created_at TEXT NOT NULL,
+		UNIQUE(conversation_id, user_id)
+	);
+	INSERT INTO users(username,display_name,password_hash,public_key,encrypted_private_key,crypto_salt,created_at)
+	VALUES('first','First','hash','public','private','salt','2025-01-01T00:00:00Z');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy.Close()
+
+	database, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var favoriteColumn, favoriteIndex int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('conversation_members') WHERE name='favorite_at'`).Scan(&favoriteColumn); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_members_favorites'`).Scan(&favoriteIndex); err != nil {
+		t.Fatal(err)
+	}
+	if favoriteColumn != 1 || favoriteIndex != 1 {
+		t.Fatalf("favorite column=%d index=%d", favoriteColumn, favoriteIndex)
+	}
+}
+
 func TestMigratePreservesLegacyPinForItsOwner(t *testing.T) {
 	database, err := Open(filepath.Join(t.TempDir(), "legacy-pin.db"))
 	if err != nil {

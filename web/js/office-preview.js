@@ -1,4 +1,4 @@
-const OFFICE_PREVIEW_BUILD = "ios17-pdf-v184";
+const OFFICE_PREVIEW_BUILD = "ios17-pdf-v189";
 const scriptLoads = new Map();
 const previewCleanups = new Set();
 
