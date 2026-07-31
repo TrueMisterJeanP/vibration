@@ -174,6 +174,8 @@ export function renderMessage(
       const thumb = document.createElement("span");
       thumb.className = "message-reply-file-thumb";
       thumb.textContent = t("Aperçu");
+      thumb.dataset.fileMime = message.reply_preview.mime || "";
+      thumb.dataset.fileName = message.reply_preview.name || "";
       const label = document.createElement("span");
       label.className = "message-reply-file-label";
       label.textContent = message.reply_preview.name || t("Fichier");
@@ -233,6 +235,8 @@ export function renderMessage(
     const preview = document.createElement("div");
     preview.className = "file-preview";
     preview.textContent = "Chargement de l’aperçu…";
+    preview.dataset.fileMime = clear?.mime || "";
+    preview.dataset.fileName = clear?.name || "";
     attachment.append(title, preview);
     article.append(attachment);
     filePreview = preview;

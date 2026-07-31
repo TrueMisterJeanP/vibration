@@ -114,6 +114,7 @@ func main() {
 	mux.Handle("POST /api/files", authHandler.Middleware(http.HandlerFunc(fileHandler.Upload)))
 	mux.Handle("GET /api/files", authHandler.Middleware(http.HandlerFunc(fileHandler.List)))
 	mux.Handle("GET /api/files/{id}", authHandler.Middleware(http.HandlerFunc(fileHandler.Download)))
+	mux.Handle("GET /api/files/{id}/preview", authHandler.Middleware(http.HandlerFunc(fileHandler.Preview)))
 	mux.Handle("POST /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(fileHandler.CreateShare)))
 	mux.Handle("GET /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(fileHandler.ListShares)))
 	mux.Handle("DELETE /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(fileHandler.DeleteFileShares)))

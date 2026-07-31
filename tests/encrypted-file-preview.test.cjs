@@ -1,0 +1,40 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const app = fs.readFileSync(path.join(__dirname, "../web/js/app.js"), "utf8");
+const ui = fs.readFileSync(path.join(__dirname, "../web/js/ui.js"), "utf8");
+const styles = fs.readFileSync(path.join(__dirname, "../web/css/style.css"), "utf8");
+const server = fs.readFileSync(path.join(__dirname, "../cmd/server/main.go"), "utf8");
+
+assert.match(app, /const FILE_PREVIEW_MAX_BYTES = 512 \* 1024/);
+assert.match(app, /async function encryptedFilePreview\(file, data, key\)/);
+assert.match(app, /mime === "application\/pdf"[\s\S]*pdfFilePreview\(data\)/);
+assert.match(app, /modernOfficeKind\(\{ name: file\.name, mime \}\)[\s\S]*officeFilePreview\(file, data\)/);
+assert.match(app, /rasterOnly: true/);
+assert.match(app, /encrypted_preview_data: preview\?\.data \|\| ""/);
+assert.match(app, /preview_iv: preview\?\.iv \|\| ""/);
+assert.match(app, /api\(`\/api\/files\/\$\{message\.file\.id\}\/preview`\)/);
+assert.match(ui, /preview\.dataset\.fileMime = clear\?\.mime \|\| ""/);
+assert.match(app, /previewMIME === "application\/pdf"[\s\S]*preparedPDFThumbnail\(thumbnail\)[\s\S]*fitPDFPreviewToAspect\(container, display\.width \|\| image\.naturalWidth, display\.height \|\| image\.naturalHeight\)/);
+assert.match(app, /async function pdfFilePreview[\s\S]*canvasJPEG\(croppedPDFPreviewCanvas\(canvas, base\.width \/ base\.height\)\)/);
+assert.match(app, /async function preparedPDFThumbnail[\s\S]*croppedPDFPreviewCanvas\(canvas, source\.naturalWidth \/ source\.naturalHeight\)/);
+assert.match(app, /const displayedCanvas = croppedPDFPreviewCanvas\(canvas, baseViewport\.width \/ baseViewport\.height\)[\s\S]*const previewBlob = await canvasJPEG\(displayedCanvas, 0\.82\)/);
+assert.match(app, /const previewURL = URL\.createObjectURL\(previewBlob\);[\s\S]*const image = document\.createElement\("img"\);[\s\S]*image\.className = "pdf-page-preview"/);
+assert.match(app, /fitPDFPreviewToAspect\(container, displayedCanvas\.width, displayedCanvas\.height\)/);
+assert.match(styles, /\.fitted-pdf-message \.file-attachment\s*\{[^}]*width:\s*var\(--pdf-preview-width\)/);
+assert.match(styles, /\.file-preview\.fitted-pdf-preview > img\s*\{[^}]*max-height:\s*none;/);
+
+for (const functionName of ["renderFilePreview", "renderReplyFilePreview"]) {
+  const start = app.indexOf(`async function ${functionName}`);
+  assert.notEqual(start, -1);
+  const body = app.slice(start, app.indexOf("\n}", start) + 2);
+  assert.ok(
+    body.indexOf("renderEncryptedFileThumbnail") < body.indexOf("loadDecryptedFile(message, key)"),
+    `${functionName} doit essayer l’aperçu séparé avant le fichier original`,
+  );
+}
+
+assert.match(server, /GET \/api\/files\/\{id\}\/preview/);
+
+console.log("Encrypted file preview: generation, upload and lightweight loading wired");

@@ -43,7 +43,11 @@ func TestFileUploadLimitSupports25MiB(t *testing.T) {
 	if maxFileSize != 25<<20 {
 		t.Fatalf("maxFileSize=%d, want %d", maxFileSize, 25<<20)
 	}
-	minimumJSONBodySize := int64(base64.StdEncoding.EncodedLen(maxFileSize+64) + 8192)
+	minimumJSONBodySize := int64(
+		base64.StdEncoding.EncodedLen(maxFileSize+64) +
+			base64.StdEncoding.EncodedLen(maxFilePreviewSize+64) +
+			8192,
+	)
 	if maxFileRequestBodySize < minimumJSONBodySize {
 		t.Fatalf("maxFileRequestBodySize=%d, need at least %d", maxFileRequestBodySize, minimumJSONBodySize)
 	}
@@ -65,11 +69,16 @@ func TestUploadDownloadFileAndMarkDeliveredWhenRecipientOnline(t *testing.T) {
 	var uploadResponse struct {
 		ID   int64 `json:"id"`
 		File struct {
-			ID int64 `json:"id"`
+			ID          int64 `json:"id"`
+			HasPreview  bool  `json:"has_preview"`
+			PreviewSize int64 `json:"preview_size"`
 		} `json:"file"`
 	}
 	if err := json.Unmarshal(uploaded.Body.Bytes(), &uploadResponse); err != nil {
 		t.Fatal(err)
+	}
+	if !uploadResponse.File.HasPreview || uploadResponse.File.PreviewSize != int64(len("encrypted-preview-data")) {
+		t.Fatalf("preview metadata=%+v", uploadResponse.File)
 	}
 	var receiptStatus string
 	if err := db.QueryRow(`SELECT status FROM message_receipts WHERE message_id=? AND user_id=2`, uploadResponse.ID).Scan(&receiptStatus); err != nil || receiptStatus != "delivered" {
@@ -100,6 +109,22 @@ func TestUploadDownloadFileAndMarkDeliveredWhenRecipientOnline(t *testing.T) {
 	if downloadResponse.EncryptedData != base64.StdEncoding.EncodeToString([]byte("encrypted-file-data")) {
 		t.Fatalf("downloaded encrypted data=%q", downloadResponse.EncryptedData)
 	}
+	previewed := fileRequest(t, mux, http.MethodGet, "/api/files/"+formatID(uploadResponse.File.ID)+"/preview", nil, recipient)
+	if previewed.Code != http.StatusOK {
+		t.Fatalf("preview status=%d body=%s", previewed.Code, previewed.Body.String())
+	}
+	var previewResponse struct {
+		EncryptedData string `json:"encrypted_data"`
+		IV            string `json:"iv"`
+		Size          int64  `json:"size"`
+	}
+	if err := json.Unmarshal(previewed.Body.Bytes(), &previewResponse); err != nil {
+		t.Fatal(err)
+	}
+	if previewResponse.EncryptedData != base64.StdEncoding.EncodeToString([]byte("encrypted-preview-data")) ||
+		previewResponse.IV != "preview-iv-123" || previewResponse.Size != int64(len("encrypted-preview-data")) {
+		t.Fatalf("preview response=%+v", previewResponse)
+	}
 
 	listed := fileRequest(t, mux, http.MethodGet, "/api/files", nil, recipient)
 	if listed.Code != http.StatusOK {
@@ -121,6 +146,42 @@ func TestUploadDownloadFileAndMarkDeliveredWhenRecipientOnline(t *testing.T) {
 	listedMessages = nil
 	if err := json.Unmarshal(outsiderList.Body.Bytes(), &listedMessages); err != nil || len(listedMessages) != 0 {
 		t.Fatalf("outsider files=%+v err=%v", listedMessages, err)
+	}
+}
+
+func TestUploadWithoutPreviewRemainsCompatible(t *testing.T) {
+	db, conversationID, sender, recipient := setupFileConversation(t)
+	defer db.Close()
+
+	handler := &Handler{DB: db}
+	mux := fileMux(authHandlerForTest(db), handler)
+	body := uploadBody(conversationID)
+	delete(body, "encrypted_preview_data")
+	delete(body, "preview_iv")
+
+	uploaded := fileRequest(t, mux, http.MethodPost, "/api/files", body, sender)
+	if uploaded.Code != http.StatusCreated {
+		t.Fatalf("upload status=%d body=%s", uploaded.Code, uploaded.Body.String())
+	}
+	var response struct {
+		File struct {
+			ID         int64 `json:"id"`
+			HasPreview bool  `json:"has_preview"`
+		} `json:"file"`
+	}
+	if err := json.Unmarshal(uploaded.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.File.HasPreview {
+		t.Fatal("legacy upload unexpectedly has a preview")
+	}
+	preview := fileRequest(t, mux, http.MethodGet, "/api/files/"+formatID(response.File.ID)+"/preview", nil, recipient)
+	if preview.Code != http.StatusNotFound {
+		t.Fatalf("preview status=%d body=%s", preview.Code, preview.Body.String())
+	}
+	download := fileRequest(t, mux, http.MethodGet, "/api/files/"+formatID(response.File.ID), nil, recipient)
+	if download.Code != http.StatusOK {
+		t.Fatalf("download status=%d body=%s", download.Code, download.Body.String())
 	}
 }
 
@@ -426,6 +487,7 @@ func fileMux(authHandler *auth.Handler, handler *Handler) *http.ServeMux {
 	mux.Handle("POST /api/files", authHandler.Middleware(http.HandlerFunc(handler.Upload)))
 	mux.Handle("GET /api/files", authHandler.Middleware(http.HandlerFunc(handler.List)))
 	mux.Handle("GET /api/files/{id}", authHandler.Middleware(http.HandlerFunc(handler.Download)))
+	mux.Handle("GET /api/files/{id}/preview", authHandler.Middleware(http.HandlerFunc(handler.Preview)))
 	mux.Handle("POST /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(handler.CreateShare)))
 	mux.Handle("GET /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(handler.ListShares)))
 	mux.Handle("DELETE /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(handler.DeleteFileShares)))
@@ -445,12 +507,14 @@ func publicFileRequest(t *testing.T, mux http.Handler, path string) *httptest.Re
 
 func uploadBody(conversationID int64) map[string]any {
 	return map[string]any{
-		"conversation_id":    conversationID,
-		"encrypted_name":     "encrypted-file-name",
-		"encrypted_mime":     "encrypted-file-mime",
-		"encrypted_data":     base64.StdEncoding.EncodeToString([]byte("encrypted-file-data")),
-		"iv":                 "file-iv-123",
-		"expires_in_seconds": 0,
+		"conversation_id":        conversationID,
+		"encrypted_name":         "encrypted-file-name",
+		"encrypted_mime":         "encrypted-file-mime",
+		"encrypted_data":         base64.StdEncoding.EncodeToString([]byte("encrypted-file-data")),
+		"iv":                     "file-iv-123",
+		"encrypted_preview_data": base64.StdEncoding.EncodeToString([]byte("encrypted-preview-data")),
+		"preview_iv":             "preview-iv-123",
+		"expires_in_seconds":     0,
 	}
 }
 

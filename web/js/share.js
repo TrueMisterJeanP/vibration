@@ -1,4 +1,4 @@
-import { decryptBytes, decryptEnvelope, importShareKey } from "./crypto.js?v=ios17-pdf-v189";
+import { decryptBytes, decryptEnvelope, importShareKey } from "./crypto.js?v=ios17-pdf-v199";
 import { locale, localizeDocument, t } from "./i18n.js";
 
 localizeDocument();

@@ -12,6 +12,7 @@ import (
 
 const (
 	maxFileSize            = 25 << 20
+	maxFilePreviewSize     = 512 << 10
 	maxFileRequestBodySize = 36 << 20
 )
 
@@ -40,6 +41,8 @@ type listedFile struct {
 	EncryptedMIME    string `json:"encrypted_mime"`
 	IV               string `json:"iv"`
 	Size             int64  `json:"size"`
+	HasPreview       bool   `json:"has_preview"`
+	PreviewSize      int64  `json:"preview_size,omitempty"`
 	ActiveShareCount int64  `json:"active_share_count"`
 }
 
@@ -62,7 +65,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserID(r)
 	rows, err := h.DB.Query(`SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,
 		m.encrypted_content,m.iv,m.expires_at,m.created_at,m.updated_at,
-		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,
+		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,f.preview_size,
 		(SELECT COUNT(*) FROM file_shares fs WHERE fs.file_id=f.id AND fs.created_by=?
 			AND fs.revoked_at IS NULL AND fs.expires_at>?)
 		FROM files f JOIN messages m ON m.id=f.message_id JOIN users u ON u.id=m.sender_id
@@ -78,9 +81,14 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var message listedFileMessage
 		var file listedFile
+		var previewSize sql.NullInt64
 		if rows.Scan(&message.ID, &message.ConversationID, &message.SenderID, &message.SenderUsername, &message.SenderAvatar,
 			&message.EncryptedContent, &message.IV, &message.ExpiresAt, &message.CreatedAt, &message.UpdatedAt,
-			&file.ID, &file.EncryptedName, &file.EncryptedMIME, &file.IV, &file.Size, &file.ActiveShareCount) == nil {
+			&file.ID, &file.EncryptedName, &file.EncryptedMIME, &file.IV, &file.Size, &previewSize, &file.ActiveShareCount) == nil {
+			if previewSize.Valid && previewSize.Int64 > 0 {
+				file.HasPreview = true
+				file.PreviewSize = previewSize.Int64
+			}
 			message.File = &file
 			result = append(result, message)
 		}
@@ -95,6 +103,8 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		EncryptedMIME    string `json:"encrypted_mime"`
 		EncryptedData    string `json:"encrypted_data"`
 		IV               string `json:"iv"`
+		EncryptedPreview string `json:"encrypted_preview_data"`
+		PreviewIV        string `json:"preview_iv"`
 		ExpiresInSeconds int64  `json:"expires_in_seconds"`
 	}
 	if !httpx.DecodeWithLimit(w, r, &input, maxFileRequestBodySize) {
@@ -116,6 +126,18 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusRequestEntityTooLarge, "encrypted file exceeds 25 MB")
 		return
 	}
+	var previewData []byte
+	if input.EncryptedPreview != "" || input.PreviewIV != "" {
+		if input.EncryptedPreview == "" || len(input.PreviewIV) < 8 || len(input.PreviewIV) > 128 {
+			httpx.Error(w, http.StatusBadRequest, "invalid encrypted file preview")
+			return
+		}
+		previewData, err = base64.StdEncoding.DecodeString(input.EncryptedPreview)
+		if err != nil || len(previewData) == 0 || len(previewData) > maxFilePreviewSize+64 {
+			httpx.Error(w, http.StatusRequestEntityTooLarge, "encrypted file preview exceeds 512 KB")
+			return
+		}
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := h.DB.Begin()
 	if err != nil {
@@ -130,8 +152,8 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	messageID, _ := messageResult.LastInsertId()
-	fileResult, err := tx.Exec(`INSERT INTO files(message_id,owner_id,encrypted_name,encrypted_mime,encrypted_data,iv,size,created_at)
-		VALUES(?,?,?,?,?,?,?,?)`, messageID, userID, input.EncryptedName, input.EncryptedMIME, data, input.IV, len(data), now)
+	fileResult, err := tx.Exec(`INSERT INTO files(message_id,owner_id,encrypted_name,encrypted_mime,encrypted_data,iv,size,encrypted_preview_data,preview_iv,preview_size,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, messageID, userID, input.EncryptedName, input.EncryptedMIME, data, input.IV, len(data), nullablePreviewBytes(previewData), nullablePreviewString(input.PreviewIV), nullablePreviewSize(previewData), now)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "file storage failed")
 		return
@@ -167,7 +189,8 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, "upload commit failed")
 		return
 	}
-	fileMeta := map[string]any{"id": fileID, "encrypted_name": input.EncryptedName, "encrypted_mime": input.EncryptedMIME, "iv": input.IV, "size": len(data)}
+	fileMeta := map[string]any{"id": fileID, "encrypted_name": input.EncryptedName, "encrypted_mime": input.EncryptedMIME, "iv": input.IV, "size": len(data),
+		"has_preview": len(previewData) > 0, "preview_size": len(previewData)}
 	message := map[string]any{"id": messageID, "conversation_id": input.ConversationID, "sender_id": userID,
 		"sender_username": username, "sender_avatar": avatar, "encrypted_content": nil, "iv": input.IV, "expires_at": expiresAt, "created_at": now, "status": "sent", "file": fileMeta}
 	personalConversation := len(members) == 1 && members[0] == userID
@@ -218,6 +241,50 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 		"id": fileID, "encrypted_name": name, "encrypted_mime": mime,
 		"encrypted_data": base64.StdEncoding.EncodeToString(data), "iv": iv, "size": size,
 	})
+}
+
+func (h *Handler) Preview(w http.ResponseWriter, r *http.Request) {
+	fileID, err := httpx.PathID(r, "id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var data []byte
+	var iv string
+	var size int64
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	err = h.DB.QueryRow(`SELECT f.encrypted_preview_data,f.preview_iv,f.preview_size
+		FROM files f JOIN messages m ON m.id=f.message_id JOIN conversation_members cm ON cm.conversation_id=m.conversation_id
+		WHERE f.id=? AND f.encrypted_preview_data IS NOT NULL AND cm.user_id=? AND cm.role<>'pending'
+		AND m.created_at>=cm.created_at AND (m.expires_at IS NULL OR m.expires_at>?)`, fileID, auth.UserID(r), now).Scan(&data, &iv, &size)
+	if err != nil {
+		httpx.Error(w, http.StatusNotFound, "file preview not found")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"id": fileID, "encrypted_data": base64.StdEncoding.EncodeToString(data), "iv": iv, "size": size,
+	})
+}
+
+func nullablePreviewBytes(value []byte) any {
+	if len(value) == 0 {
+		return nil
+	}
+	return value
+}
+
+func nullablePreviewString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func nullablePreviewSize(value []byte) any {
+	if len(value) == 0 {
+		return nil
+	}
+	return len(value)
 }
 
 func expiryTime(seconds int64) (*string, bool) {

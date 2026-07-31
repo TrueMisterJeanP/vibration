@@ -59,10 +59,10 @@ const moduleURL = `data:text/javascript;base64,${Buffer.from(source).toString("b
   assert.match(app, /if \(needsInlinePDFWorker\(\)\) return ios17PDFJS\(\)/);
   assert.match(app, /pdfjsLib\?\.version === "3\.11\.174"/);
   assert.match(app, /pdfOperationWithTimeout/);
-  assert.match(app, /preview\.tabIndex = -1/);
-  assert.match(styles, /\.pdf-native-preview\s*\{[^}]*pointer-events:\s*none;/);
+  assert.doesNotMatch(app, /application\/pdf[\s\S]*createElement\("object"\)/);
+  assert.doesNotMatch(styles, /pdf-native-preview|pdf-native-fallback/);
 
-  console.log("PDF preview: compatibility routing and inert native fallback verified");
+  console.log("PDF preview: compatibility routing and JPEG-only first-page rendering verified");
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

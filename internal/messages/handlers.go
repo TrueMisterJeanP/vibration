@@ -103,6 +103,8 @@ type File struct {
 	EncryptedMIME string `json:"encrypted_mime"`
 	IV            string `json:"iv"`
 	Size          int64  `json:"size"`
+	HasPreview    bool   `json:"has_preview"`
+	PreviewSize   int64  `json:"preview_size,omitempty"`
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -131,7 +133,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	h.deleteExpired(conversationID)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	query := `SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,m.encrypted_content,m.iv,m.reply_to,m.expires_at,mp.user_id,mp.created_at,m.created_at,m.updated_at,
-		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,
+		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,f.preview_size,
 		CASE
 			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status<>'read') THEN 'read'
 			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status='sent') THEN 'delivered'
@@ -152,9 +154,9 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		var item Message
 		var fileID, pinnedBy sql.NullInt64
 		var fileName, fileMIME, fileIV, expiresAt, pinnedAt sql.NullString
-		var fileSize sql.NullInt64
+		var fileSize, previewSize sql.NullInt64
 		if rows.Scan(&item.ID, &item.ConversationID, &item.SenderID, &item.SenderUsername, &item.SenderAvatar, &item.EncryptedContent, &item.IV,
-			&item.ReplyTo, &expiresAt, &pinnedBy, &pinnedAt, &item.CreatedAt, &item.UpdatedAt, &fileID, &fileName, &fileMIME, &fileIV, &fileSize, &item.Status) == nil {
+			&item.ReplyTo, &expiresAt, &pinnedBy, &pinnedAt, &item.CreatedAt, &item.UpdatedAt, &fileID, &fileName, &fileMIME, &fileIV, &fileSize, &previewSize, &item.Status) == nil {
 			if expiresAt.Valid {
 				item.ExpiresAt = &expiresAt.String
 			}
@@ -164,7 +166,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 				item.PinnedAt = &pinnedAt.String
 			}
 			if fileID.Valid {
-				item.File = &File{ID: fileID.Int64, EncryptedName: fileName.String, EncryptedMIME: fileMIME.String, IV: fileIV.String, Size: fileSize.Int64}
+				item.File = &File{ID: fileID.Int64, EncryptedName: fileName.String, EncryptedMIME: fileMIME.String, IV: fileIV.String, Size: fileSize.Int64,
+					HasPreview: previewSize.Valid && previewSize.Int64 > 0, PreviewSize: previewSize.Int64}
 			}
 			result = append(result, item)
 		}
@@ -194,7 +197,7 @@ func (h *Handler) ListPinned(w http.ResponseWriter, r *http.Request) {
 	h.deleteExpired(conversationID)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	rows, err := h.DB.Query(`SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,m.encrypted_content,m.iv,m.reply_to,m.expires_at,mp.user_id,mp.created_at,m.created_at,m.updated_at,
-		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,
+		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,f.preview_size,
 		CASE
 			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status<>'read') THEN 'read'
 			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status='sent') THEN 'delivered'
@@ -216,9 +219,9 @@ func (h *Handler) ListPinned(w http.ResponseWriter, r *http.Request) {
 		var item Message
 		var fileID, pinnedBy sql.NullInt64
 		var fileName, fileMIME, fileIV, expiresAt, pinnedAt sql.NullString
-		var fileSize sql.NullInt64
+		var fileSize, previewSize sql.NullInt64
 		if rows.Scan(&item.ID, &item.ConversationID, &item.SenderID, &item.SenderUsername, &item.SenderAvatar, &item.EncryptedContent, &item.IV,
-			&item.ReplyTo, &expiresAt, &pinnedBy, &pinnedAt, &item.CreatedAt, &item.UpdatedAt, &fileID, &fileName, &fileMIME, &fileIV, &fileSize, &item.Status) == nil {
+			&item.ReplyTo, &expiresAt, &pinnedBy, &pinnedAt, &item.CreatedAt, &item.UpdatedAt, &fileID, &fileName, &fileMIME, &fileIV, &fileSize, &previewSize, &item.Status) == nil {
 			if expiresAt.Valid {
 				item.ExpiresAt = &expiresAt.String
 			}
@@ -226,7 +229,8 @@ func (h *Handler) ListPinned(w http.ResponseWriter, r *http.Request) {
 			item.PinnedBy = &pinnedBy.Int64
 			item.PinnedAt = &pinnedAt.String
 			if fileID.Valid {
-				item.File = &File{ID: fileID.Int64, EncryptedName: fileName.String, EncryptedMIME: fileMIME.String, IV: fileIV.String, Size: fileSize.Int64}
+				item.File = &File{ID: fileID.Int64, EncryptedName: fileName.String, EncryptedMIME: fileMIME.String, IV: fileIV.String, Size: fileSize.Int64,
+					HasPreview: previewSize.Valid && previewSize.Int64 > 0, PreviewSize: previewSize.Int64}
 			}
 			result = append(result, item)
 		}

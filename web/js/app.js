@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js?v=ios17-pdf-v189";
+import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js?v=ios17-pdf-v199";
 import {
   decryptBytes,
   decryptEnvelope,
@@ -32,26 +32,29 @@ import {
   syncBrowserSubscription,
   testNotification,
 } from "./notifications.js";
-import { ChatSocket } from "./websocket.js?v=ios17-pdf-v189";
-import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios17-pdf-v189";
+import { ChatSocket } from "./websocket.js?v=ios17-pdf-v199";
+import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios17-pdf-v199";
 import { locale, t } from "./i18n.js";
-import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v189";
+import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
+import { nonWhiteImageBounds } from "./file-preview-image.js?v=ios17-pdf-v199";
 import {
   needsInlinePDFWorker,
   pdfDocumentCompatibilityOptions,
-} from "./pdf-preview-compat.js?v=ios17-pdf-v189";
+} from "./pdf-preview-compat.js?v=ios17-pdf-v199";
 import {
   clearOfficePreviewResources,
   modernOfficeKind,
+  preloadModernOfficePreview,
   renderModernOfficePreview,
-} from "./office-preview.js?v=ios17-pdf-v189";
+} from "./office-preview.js?v=ios17-pdf-v199";
 
 const CALL_INVITE_TIMEOUT_MS = 45000;
 const CALL_SIGNAL_LOSS_GRACE_MS = 15000;
 const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
 const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
+const FILE_PREVIEW_PREFETCH_BUDGET_BYTES = 8 * 1024 * 1024;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "ios17-pdf-v189";
+const APP_BUILD = "ios17-pdf-v199";
 
 window.VIBRATION_BUILD = APP_BUILD;
 console.info(`Vibration build ${APP_BUILD}`);
@@ -71,6 +74,8 @@ const state = {
   onlineUsers: new Set(),
   files: new Map(),
   fileLoads: new Map(),
+  fileThumbnails: new Map(),
+  fileThumbnailLoads: new Map(),
   messageClears: new Map(),
   messageExpiryTimers: new Map(),
   messageAppendTasks: new Map(),
@@ -489,16 +494,29 @@ function pushFailureMessage(failures = []) {
   return "échec technique de livraison";
 }
 
-function clearFileCache() {
-  state.fileCacheGeneration++;
+function clearRenderedFilePreviews() {
   clearOfficePreviewResources();
   for (const observer of state.filePreviewObservers) observer.disconnect();
   state.filePreviewObservers.clear();
   for (const url of state.previewURLs) URL.revokeObjectURL(url);
   state.previewURLs.clear();
+}
+
+function clearFileCache() {
+  state.fileCacheGeneration++;
+  clearRenderedFilePreviews();
   for (const file of state.files.values()) URL.revokeObjectURL(file.url);
+  for (const thumbnail of state.fileThumbnails.values()) revokeFileThumbnail(thumbnail);
   state.files.clear();
   state.fileLoads.clear();
+  state.fileThumbnails.clear();
+  state.fileThumbnailLoads.clear();
+}
+
+function revokeFileThumbnail(thumbnail) {
+  thumbnail.revoked = true;
+  URL.revokeObjectURL(thumbnail.url);
+  if (thumbnail.displayURL && thumbnail.displayURL !== thumbnail.url) URL.revokeObjectURL(thumbnail.displayURL);
 }
 
 function messageTimerKey(conversationID, messageID) {
@@ -2172,7 +2190,11 @@ async function selectConversation(conversation, targetMessageID = null) {
     toast("Acceptez cette invitation avant d’ouvrir le groupe.", "error");
     return;
   }
-  if (!sameID(state.current?.id, conversation.id)) clearVoiceDraft();
+  const conversationChanged = !sameID(state.current?.id, conversation.id);
+  if (conversationChanged) {
+    clearVoiceDraft();
+    clearFileCache();
+  }
   closeReactionPicker();
   state.current = conversation;
   conversation.unread_count = 0;
@@ -3883,7 +3905,7 @@ async function handleCallSignal(event) {
 
 async function loadMessages(targetMessageID = null) {
   closeReactionPicker();
-  clearFileCache();
+  clearRenderedFilePreviews();
   clearConversationMessageExpirations(state.current.id);
   let messages;
   if (targetMessageID) {
@@ -3906,10 +3928,13 @@ async function loadMessages(targetMessageID = null) {
     return;
   }
   const key = await getConversationKey(state.current);
+  prefetchRecentFileThumbnails(messages, key);
   const decrypted = await Promise.all(messages.map(async (message) => ({
     message,
     clear: await decryptMessageContent(message, key),
   })));
+  prewarmFilePreviewRenderers(decrypted);
+  prefetchRecentFullFilePreviews(decrypted, key);
   const clearByID = messageClearCache(state.current.id);
   for (const { message, clear } of decrypted) {
     clearByID.set(message.id, clear);
@@ -3951,6 +3976,8 @@ async function decryptMessageContent(message, key) {
           mime: await decryptEnvelope(key, message.file.encrypted_mime),
           fileID: message.file.id,
           size: message.file.size,
+          hasPreview: message.file.has_preview === true,
+          previewSize: message.file.preview_size || 0,
         };
     }
     const clear = await decryptText(key, message.encrypted_content, message.iv);
@@ -4008,6 +4035,8 @@ function withReplyPreview(message, clearByID) {
             mime: parent.mime,
             fileID: parent.fileID,
             size: parent.size,
+            hasPreview: parent.hasPreview,
+            previewSize: parent.previewSize,
           };
   return {
     ...message,
@@ -4252,7 +4281,10 @@ async function appendMessage(message, scroll = true) {
     if (elements.messages.querySelector(`[data-id="${message.id}"]`)) return;
     if (!scheduleMessageExpiration(message)) return;
     const key = await getConversationKey(conversation);
+    prefetchFileThumbnail(message, key);
     const clear = await decryptMessageContent(message, key);
+    prewarmFilePreviewRenderers([{ message, clear }]);
+    prefetchRecentFullFilePreviews([{ message, clear }], key);
     if (!sameID(state.current?.id, conversation.id)) return;
     if (elements.messages.querySelector(`[data-id="${message.id}"]`)) return;
     document.querySelector("#empty-chat")?.remove();
@@ -4905,28 +4937,209 @@ async function sendFile(event) {
   await sendEncryptedFile(file, "Fichier chiffré envoyé.");
 }
 
+const FILE_PREVIEW_MAX_BYTES = 512 * 1024;
+
+function canvasJPEG(canvas, quality = 0.76) {
+  return new Promise((resolve) => {
+    const fallback = () => {
+      try {
+        const dataURL = canvas.toDataURL("image/jpeg", quality);
+        const [header, payload] = dataURL.split(",");
+        const binary = atob(payload);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+        resolve(new Blob([bytes], { type: header.match(/data:([^;]+)/)?.[1] || "image/jpeg" }));
+      } catch {
+        resolve(null);
+      }
+    };
+    try {
+      if (typeof canvas.toBlob !== "function") {
+        fallback();
+        return;
+      }
+      canvas.toBlob((blob) => blob ? resolve(blob) : fallback(), "image/jpeg", quality);
+    } catch {
+      fallback();
+    }
+  });
+}
+
+function croppedPDFPreviewCanvas(canvas, targetAspect = canvas.width / canvas.height) {
+  try {
+    const context = canvas.getContext("2d", { alpha: false });
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+    const bounds = nonWhiteImageBounds(pixels.data, canvas.width, canvas.height);
+    if (!bounds || (bounds.width >= canvas.width - 2 && bounds.height >= canvas.height - 2)) return canvas;
+    let cropX = bounds.x;
+    let cropY = bounds.y;
+    let cropWidth = bounds.width;
+    let cropHeight = bounds.height;
+    if (Number.isFinite(targetAspect) && targetAspect > 0) {
+      const contentAspect = cropWidth / cropHeight;
+      if (contentAspect < targetAspect) {
+        cropWidth = Math.min(canvas.width, Math.ceil(cropHeight * targetAspect));
+      } else if (contentAspect > targetAspect) {
+        cropHeight = Math.min(canvas.height, Math.ceil(cropWidth / targetAspect));
+      }
+      cropX = Math.min(canvas.width - cropWidth, Math.max(0, Math.round(bounds.x + bounds.width / 2 - cropWidth / 2)));
+      cropY = Math.min(canvas.height - cropHeight, Math.max(0, Math.round(bounds.y + bounds.height / 2 - cropHeight / 2)));
+    }
+    const cropped = document.createElement("canvas");
+    cropped.width = cropWidth;
+    cropped.height = cropHeight;
+    const croppedContext = cropped.getContext("2d", { alpha: false });
+    croppedContext.fillStyle = "#ffffff";
+    croppedContext.fillRect(0, 0, cropped.width, cropped.height);
+    croppedContext.drawImage(
+      canvas,
+      cropX,
+      cropY,
+      cropWidth,
+      cropHeight,
+      0,
+      0,
+      cropWidth,
+      cropHeight,
+    );
+    return cropped;
+  } catch (error) {
+    console.warn("Recadrage de l’aperçu PDF impossible", error);
+    return canvas;
+  }
+}
+
+async function rasterFilePreview(file, data) {
+  const blob = new Blob([data], { type: normalizedFileMIME(file.type, file.name) });
+  let source;
+  let cleanup = () => {};
+  if (typeof createImageBitmap === "function") {
+    source = await createImageBitmap(blob);
+    cleanup = () => source.close?.();
+  } else {
+    const url = URL.createObjectURL(blob);
+    source = new Image();
+    cleanup = () => URL.revokeObjectURL(url);
+    await new Promise((resolve, reject) => {
+      source.onload = resolve;
+      source.onerror = () => reject(new Error("Image illisible."));
+      source.src = url;
+    });
+  }
+  try {
+    const width = source.width || source.naturalWidth;
+    const height = source.height || source.naturalHeight;
+    if (!width || !height) return null;
+    const scale = Math.min(1, 640 / width, 640 / height);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext("2d", { alpha: false });
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+    return canvasJPEG(canvas);
+  } finally {
+    cleanup();
+  }
+}
+
+async function pdfFilePreview(data) {
+  const pdfjs = await compatiblePDFJS();
+  let loadingTask;
+  let pdfDocument;
+  try {
+    ({ loadingTask, pdfDocument } = await openPDFDocument(pdfjs, data, 20000, "La préparation de l’aperçu PDF"));
+    const page = await pdfOperationWithTimeout(pdfDocument.getPage(1), 10000, "La lecture de la première page");
+    const base = page.getViewport({ scale: 1 });
+    const scale = Math.min(640 / base.width, 800 / base.height);
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.ceil(viewport.width));
+    canvas.height = Math.max(1, Math.ceil(viewport.height));
+    const context = canvas.getContext("2d", { alpha: false });
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const task = page.render({ canvasContext: context, viewport });
+    await pdfOperationWithTimeout(task.promise, 15000, "Le rendu de l’aperçu PDF");
+    return canvasJPEG(croppedPDFPreviewCanvas(canvas, base.width / base.height));
+  } finally {
+    if (pdfDocument) {
+      await pdfDocument.destroy().catch(() => {});
+    } else if (loadingTask) {
+      await loadingTask.destroy().catch(() => {});
+    }
+  }
+}
+
+async function officeFilePreview(file, data) {
+  const container = document.createElement("div");
+  container.className = "file-preview office-file-preview";
+  container.style.position = "fixed";
+  container.style.left = "-100000px";
+  container.style.top = "0";
+  container.style.width = "620px";
+  container.style.maxWidth = "620px";
+  document.body.append(container);
+  try {
+    return await renderModernOfficePreview(
+      { name: file.name, mime: normalizedFileMIME(file.type, file.name), data },
+      container,
+      { rasterOnly: true, locale, translate: t },
+    );
+  } finally {
+    container.remove();
+  }
+}
+
+async function encryptedFilePreview(file, data, key) {
+  try {
+    const mime = mimeEssence(normalizedFileMIME(file.type, file.name));
+    let blob = null;
+    if (/^image\/(avif|bmp|gif|jpeg|png|webp)$/i.test(mime)) {
+      blob = await rasterFilePreview(file, data);
+    } else if (mime === "application/pdf") {
+      blob = await pdfFilePreview(data);
+    } else if (modernOfficeKind({ name: file.name, mime })) {
+      blob = await officeFilePreview(file, data);
+    }
+    if (!blob || blob.size === 0 || blob.size > FILE_PREVIEW_MAX_BYTES) return null;
+    return encryptBytes(key, await blob.arrayBuffer());
+  } catch (error) {
+    console.warn("Création de l’aperçu chiffré impossible", error);
+    return null;
+  }
+}
+
 async function sendEncryptedFile(file, successMessage) {
   if (file.size > 25 * 1024 * 1024) {
     toast("Le fichier dépasse la limite de 25 Mo.", "error");
     return false;
   }
+  const conversation = state.current;
+  if (!conversation) return false;
+  const expiresInSeconds = state.messageExpirationSeconds;
   toast("Chiffrement et envoi du fichier…");
   try {
-    const key = await getConversationKey(state.current);
-    const [encrypted, encryptedName, encryptedMIME] = await Promise.all([
-      encryptBytes(key, await file.arrayBuffer()),
+    const key = await getConversationKey(conversation);
+    const data = await file.arrayBuffer();
+    const [encrypted, encryptedName, encryptedMIME, preview] = await Promise.all([
+      encryptBytes(key, data),
       encryptEnvelope(key, file.name),
       encryptEnvelope(key, file.type || "application/octet-stream"),
+      encryptedFilePreview(file, data, key),
     ]);
     const message = await api("/api/files", {
       method: "POST",
       body: {
-        conversation_id: state.current.id,
+        conversation_id: conversation.id,
         encrypted_name: encryptedName,
         encrypted_mime: encryptedMIME,
         encrypted_data: encrypted.data,
         iv: encrypted.iv,
-        expires_in_seconds: state.messageExpirationSeconds,
+        encrypted_preview_data: preview?.data || "",
+        preview_iv: preview?.iv || "",
+        expires_in_seconds: expiresInSeconds,
       },
     });
     await appendMessage(message);
@@ -5247,8 +5460,12 @@ async function deleteMessage(message, row) {
     if (message.file) {
       const cached = state.files.get(message.file.id);
       if (cached) URL.revokeObjectURL(cached.url);
+      const thumbnail = state.fileThumbnails.get(message.file.id);
+      if (thumbnail) revokeFileThumbnail(thumbnail);
       state.files.delete(message.file.id);
       state.fileLoads.delete(message.file.id);
+      state.fileThumbnails.delete(message.file.id);
+      state.fileThumbnailLoads.delete(message.file.id);
     }
     clearMessageExpiration(message);
     state.messageClears.get(message.conversation_id)?.delete(message.id);
@@ -5299,6 +5516,112 @@ async function loadDecryptedFile(message, key) {
   }
 }
 
+async function loadDecryptedFileThumbnail(message, key) {
+  if (message.file.has_preview !== true) return null;
+  const cached = state.fileThumbnails.get(message.file.id);
+  if (cached) return cached;
+  const pending = state.fileThumbnailLoads.get(message.file.id);
+  if (pending) return pending;
+  const generation = state.fileCacheGeneration;
+  const load = (async () => {
+    const payload = await api(`/api/files/${message.file.id}/preview`);
+    const data = await decryptBytes(key, payload.encrypted_data, payload.iv);
+    if (data.byteLength === 0 || data.byteLength > FILE_PREVIEW_MAX_BYTES) {
+      throw new Error("L’aperçu du fichier est invalide.");
+    }
+    const thumbnail = {
+      // The preview is normally JPEG, but Office rendering can fall back to
+      // PNG on Safari/WebView. Let the browser sniff the self-describing image
+      // bytes instead of forcing a possibly wrong MIME type.
+      url: URL.createObjectURL(new Blob([data])),
+    };
+    if (generation !== state.fileCacheGeneration) {
+      URL.revokeObjectURL(thumbnail.url);
+      throw new Error("L’aperçu n’est plus disponible.");
+    }
+    state.fileThumbnails.set(message.file.id, thumbnail);
+    return thumbnail;
+  })();
+  state.fileThumbnailLoads.set(message.file.id, load);
+  try {
+    return await load;
+  } finally {
+    if (state.fileThumbnailLoads.get(message.file.id) === load) state.fileThumbnailLoads.delete(message.file.id);
+  }
+}
+
+async function renderEncryptedFileThumbnail(message, container, key) {
+  if (message.file.has_preview !== true) return false;
+  try {
+    const thumbnail = state.fileThumbnails.get(message.file.id) || await loadDecryptedFileThumbnail(message, key);
+    if (!thumbnail || !container.isConnected) return false;
+    const previewMIME = mimeEssence(normalizedFileMIME(container.dataset.fileMime, container.dataset.fileName));
+    const display = previewMIME === "application/pdf"
+      ? await preparedPDFThumbnail(thumbnail)
+      : { url: thumbnail.url };
+    if (!container.isConnected) return false;
+    const image = document.createElement("img");
+    image.src = display.url;
+    image.alt = t("Aperçu");
+    image.decoding = "async";
+    image.loading = "eager";
+    if (previewMIME === "application/pdf" && !container.classList.contains("message-reply-file-thumb")) {
+      markPDFFilePreview(container);
+      fitPDFPreviewToAspect(container, display.width || image.naturalWidth, display.height || image.naturalHeight);
+    }
+    container.replaceChildren(image);
+    return true;
+  } catch (error) {
+    console.warn("Chargement de l’aperçu chiffré impossible, utilisation du fichier original", error);
+    return false;
+  }
+}
+
+function loadPreviewImage(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("L’image de l’aperçu PDF est illisible."));
+    image.src = url;
+  });
+}
+
+async function preparedPDFThumbnail(thumbnail) {
+  if (thumbnail.displayURL) {
+    return { url: thumbnail.displayURL, width: thumbnail.displayWidth, height: thumbnail.displayHeight };
+  }
+  if (!thumbnail.displayLoad) {
+    thumbnail.displayLoad = (async () => {
+      const source = await loadPreviewImage(thumbnail.url);
+      if (thumbnail.revoked) throw new Error("L’aperçu PDF n’est plus disponible.");
+      const canvas = document.createElement("canvas");
+      canvas.width = source.naturalWidth;
+      canvas.height = source.naturalHeight;
+      const context = canvas.getContext("2d", { alpha: false });
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(source, 0, 0);
+      const cropped = croppedPDFPreviewCanvas(canvas, source.naturalWidth / source.naturalHeight);
+      let url = thumbnail.url;
+      if (cropped !== canvas) {
+        const blob = await canvasJPEG(cropped, 0.82);
+        if (blob) url = URL.createObjectURL(blob);
+      }
+      if (thumbnail.revoked) {
+        if (url !== thumbnail.url) URL.revokeObjectURL(url);
+        throw new Error("L’aperçu PDF n’est plus disponible.");
+      }
+      thumbnail.displayURL = url;
+      thumbnail.displayWidth = cropped.width;
+      thumbnail.displayHeight = cropped.height;
+      return { url, width: cropped.width, height: cropped.height };
+    })().finally(() => {
+      delete thumbnail.displayLoad;
+    });
+  }
+  return thumbnail.displayLoad;
+}
+
 function normalizedFileMIME(mime, name) {
   const normalized = (mime || "").trim().toLowerCase();
   const essence = mimeEssence(normalized);
@@ -5341,6 +5664,76 @@ function mimeEssence(mime) {
   return (mime || "").split(";")[0].trim().toLowerCase();
 }
 
+function markPDFFilePreview(container) {
+  container.classList.add("pdf-file-preview");
+  container.closest(".message-row")?.classList.add("pdf-message");
+}
+
+function fitPDFPreviewToAspect(container, width, height) {
+  if (width <= 0 || height <= 0 || container.classList.contains("message-reply-file-thumb")) return;
+  const row = container.closest(".message-row");
+  if (!row) return;
+  // La boîte suit le ratio exact de la première page : Safari n’a ainsi plus
+  // à centrer le JPEG dans un cadre fixe de 620 × 420 px.
+  const previewWidth = Math.min(620, Math.max(1, 420 * (width / height)));
+  container.classList.add("fitted-pdf-preview");
+  row.classList.add("fitted-pdf-message");
+  row.style.setProperty("--pdf-preview-width", `${Math.round(previewWidth)}px`);
+}
+
+function prefetchFileThumbnail(message, key) {
+  if (message.file?.has_preview !== true) return;
+  void loadDecryptedFileThumbnail(message, key).catch(() => {});
+}
+
+function prefetchRecentFileThumbnails(messages, key, limit = 16) {
+  let scheduled = 0;
+  for (const message of messages) {
+    if (message.file?.has_preview !== true) continue;
+    prefetchFileThumbnail(message, key);
+    scheduled++;
+    if (scheduled >= limit) break;
+  }
+}
+
+function prewarmFilePreviewRenderers(decryptedMessages) {
+  for (const { message, clear } of decryptedMessages) {
+    if (!message.file || message.file.has_preview === true || !clear) continue;
+    const file = { name: clear.name || "", mime: clear.mime || "" };
+    if (mimeEssence(file.mime) === "application/pdf") {
+      void pdfJS().catch(() => {});
+    } else if (modernOfficeKind(file)) {
+      void preloadModernOfficePreview(file).catch(() => {});
+    }
+  }
+}
+
+function supportsFullFilePreview(file) {
+  const mime = mimeEssence(file.mime);
+  return /^image\//i.test(mime) || /^(?:video|audio)\//i.test(mime) ||
+    mime === "application/pdf" || mime.startsWith("text/") ||
+    /(?:json|xml|javascript)$/i.test(mime) || Boolean(modernOfficeKind(file));
+}
+
+function prefetchRecentFullFilePreviews(
+  decryptedMessages,
+  key,
+  limit = 4,
+  byteBudget = FILE_PREVIEW_PREFETCH_BUDGET_BYTES,
+) {
+  let scheduled = 0;
+  let remainingBytes = byteBudget;
+  for (const { message, clear } of decryptedMessages) {
+    if (!message.file || message.file.has_preview === true || !supportsFullFilePreview(clear || {})) continue;
+    const size = Number(message.file.size) || 0;
+    if (size <= 0 || size > remainingBytes) continue;
+    void loadDecryptedFile(message, key).catch(() => {});
+    remainingBytes -= size;
+    scheduled++;
+    if (scheduled >= limit || remainingBytes <= 0) break;
+  }
+}
+
 function scheduleFilePreview(message, container, key) {
   if (!("IntersectionObserver" in window)) {
     renderFilePreview(message, container, key);
@@ -5351,9 +5744,9 @@ function scheduleFilePreview(message, container, key) {
     observer.disconnect();
     state.filePreviewObservers.delete(observer);
     renderFilePreview(message, container, key);
-  }, { root: elements.messages, rootMargin: "240px 0px" });
+  }, { root: elements.messages, rootMargin: "1200px 0px" });
   state.filePreviewObservers.add(observer);
-  observer.observe(container);
+  observer.observe(container.closest(".file-attachment") || container);
 }
 
 function scheduleReplyFilePreview(replyPreview, container, key) {
@@ -5361,7 +5754,14 @@ function scheduleReplyFilePreview(replyPreview, container, key) {
     renderUnavailableReplyPreview(container);
     return;
   }
-  const message = { file: { id: replyPreview.fileID, size: replyPreview.size || 0 } };
+  const message = {
+    file: {
+      id: replyPreview.fileID,
+      size: replyPreview.size || 0,
+      has_preview: replyPreview.hasPreview === true,
+      preview_size: replyPreview.previewSize || 0,
+    },
+  };
   if (!("IntersectionObserver" in window)) {
     renderReplyFilePreview(message, container, key);
     return;
@@ -5371,9 +5771,9 @@ function scheduleReplyFilePreview(replyPreview, container, key) {
     observer.disconnect();
     state.filePreviewObservers.delete(observer);
     renderReplyFilePreview(message, container, key);
-  }, { root: elements.messages, rootMargin: "240px 0px" });
+  }, { root: elements.messages, rootMargin: "1200px 0px" });
   state.filePreviewObservers.add(observer);
-  observer.observe(container);
+  observer.observe(container.closest(".message-reply-preview") || container);
 }
 
 function loadPDFScript(source, available) {
@@ -5413,15 +5813,15 @@ async function ios17PDFJS() {
       // version 18. iOS 17 utilise donc le build classique 3.11 : aucun module
       // ES et aucun vrai Web Worker, deux chemins instables dans WKWebView 17.
       await loadPDFScript(
-        "/vendor/pdfjs-ios17/pdf.worker.min.js?v=ios17-pdf-v189",
+        "/vendor/pdfjs-ios17/pdf.worker.min.js?v=ios17-pdf-v199",
         () => typeof globalThis.pdfjsWorker?.WorkerMessageHandler === "function",
       );
       await loadPDFScript(
-        "/vendor/pdfjs-ios17/pdf.min.js?v=ios17-pdf-v189",
+        "/vendor/pdfjs-ios17/pdf.min.js?v=ios17-pdf-v199",
         () => globalThis.pdfjsLib?.version === "3.11.174",
       );
       const module = globalThis.pdfjsLib;
-      module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs-ios17/pdf.worker.min.js?v=ios17-pdf-v189";
+      module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs-ios17/pdf.worker.min.js?v=ios17-pdf-v199";
       return module;
     })().catch((error) => {
       ios17PDFJSModule = null;
@@ -5434,10 +5834,10 @@ async function ios17PDFJS() {
 async function pdfJS() {
   if (needsInlinePDFWorker()) return ios17PDFJS();
   if (!pdfJSModule) {
-    pdfJSModule = import("/vendor/pdfjs/pdf.compat.mjs?v=ios17-pdf-v189")
+    pdfJSModule = import("/vendor/pdfjs/pdf.compat.mjs?v=ios17-pdf-v199")
       .then(async () => {
-        const module = await import("/vendor/pdfjs/pdf.min.mjs?v=ios17-pdf-v189");
-        module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.compat.mjs?v=ios17-pdf-v189";
+        const module = await import("/vendor/pdfjs/pdf.min.mjs?v=ios17-pdf-v199");
+        module.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.compat.mjs?v=ios17-pdf-v199";
         return module;
       })
       .catch((error) => {
@@ -5450,6 +5850,18 @@ async function pdfJS() {
   return pdfJSModule;
 }
 
+async function compatiblePDFJS() {
+  try {
+    return await pdfJS();
+  } catch (error) {
+    // Certains Firefox/WebViews refusent le module PDF.js moderne ou son
+    // worker. Le build classique reste un moteur de rendu, jamais un lecteur
+    // natif : la sortie est toujours convertie en JPEG.
+    console.warn("PDF.js moderne indisponible, essai du moteur compatible", error);
+    return ios17PDFJS();
+  }
+}
+
 function pdfOperationWithTimeout(operation, timeoutMS, label) {
   let timeout;
   return Promise.race([
@@ -5460,84 +5872,40 @@ function pdfOperationWithTimeout(operation, timeoutMS, label) {
   ]).finally(() => clearTimeout(timeout));
 }
 
-function observeNativePDFPreviewSize(preview, container, pageRatio) {
-  let lastWidth = 0;
-  const ratio = Math.min(Math.max(pageRatio, 0.75), 2);
-  const resize = () => {
-    const width = Math.floor(container.getBoundingClientRect().width);
-    if (width <= 0 || width === lastWidth) return;
-    lastWidth = width;
-    const height = Math.round(width * ratio);
-    preview.width = String(width);
-    preview.height = String(height);
-    preview.style.height = `${height}px`;
-  };
-  resize();
-  if (!("ResizeObserver" in window)) {
-    requestAnimationFrame(resize);
-    return;
-  }
-  const observer = new ResizeObserver(() => {
-    if (container.isConnected) {
-      resize();
-      return;
+async function openPDFDocument(pdfjs, data, timeoutMS, label) {
+  const options = pdfDocumentCompatibilityOptions();
+  let loadingTask = pdfjs.getDocument({ data: data.slice(0), ...options });
+  try {
+    const pdfDocument = await pdfOperationWithTimeout(loadingTask.promise, timeoutMS, label);
+    return { loadingTask, pdfDocument };
+  } catch (firstError) {
+    await loadingTask.destroy().catch(() => {});
+    if (needsInlinePDFWorker()) throw firstError;
+    loadingTask = pdfjs.getDocument({ data: data.slice(0), ...options, disableWorker: true });
+    try {
+      const pdfDocument = await pdfOperationWithTimeout(loadingTask.promise, timeoutMS, label);
+      return { loadingTask, pdfDocument };
+    } catch (secondError) {
+      await loadingTask.destroy().catch(() => {});
+      throw secondError;
     }
-    observer.disconnect();
-    state.filePreviewObservers.delete(observer);
-  });
-  state.filePreviewObservers.add(observer);
-  observer.observe(container);
+  }
 }
 
-function renderNativePDFPreview(file, container, pageRatio = 297 / 210) {
-  // Safari enregistre la navigation d'une iframe dans son historique. Un
-  // objet PDF conserve l'aperçu natif. Il reste volontairement non interactif :
-  // certaines WebViews remplacent l'application par le document lors d'un clic.
-  const preview = document.createElement("object");
-  preview.className = "document-page-preview pdf-native-preview";
-  preview.type = "application/pdf";
-  preview.data = file.url;
-  preview.tabIndex = -1;
-  preview.setAttribute("aria-label", `Aperçu de ${file.name}`);
-  const unsupported = document.createElement("span");
-  unsupported.textContent = t("Aperçu PDF non pris en charge.");
-  preview.append(unsupported);
-
-  const actions = document.createElement("div");
-  actions.className = "pdf-native-actions";
-  const label = document.createElement("span");
-  label.textContent = t("Aperçu PDF fourni par le navigateur.");
-  const open = document.createElement("a");
-  open.className = "pdf-native-open";
-  open.href = file.url;
-  open.target = "_blank";
-  open.rel = "noopener";
-  open.textContent = t("Ouvrir le PDF");
-  actions.append(label, open);
-  container.classList.add("pdf-native-fallback");
-  container.replaceChildren(preview, actions);
-  observeNativePDFPreviewSize(preview, container, pageRatio);
-}
-
-async function renderPDFPreview(file, container, allowFallback = true) {
+async function renderPDFPreview(file, container) {
   let pdfDocument;
   let loadingTask;
   let renderTask;
-  let pageRatio = 297 / 210;
   try {
-    const pdfjs = await pdfJS();
-    loadingTask = pdfjs.getDocument({
-      data: file.data.slice(),
-      ...pdfDocumentCompatibilityOptions(),
-    });
-    pdfDocument = await pdfOperationWithTimeout(
-      loadingTask.promise,
+    const pdfjs = await compatiblePDFJS();
+    ({ loadingTask, pdfDocument } = await openPDFDocument(
+      pdfjs,
+      file.data,
       needsInlinePDFWorker() ? 20000 : 15000,
       "Le chargement du PDF",
-    );
+    ));
     const page = await pdfOperationWithTimeout(pdfDocument.getPage(1), 10000, "La lecture de la première page");
     const baseViewport = page.getViewport({ scale: 1 });
-    pageRatio = baseViewport.height / baseViewport.width;
     const isReplyPreview = container.classList.contains("message-reply-file-thumb");
     const availableWidth = Math.round(container.getBoundingClientRect().width);
     const renderWidth = isReplyPreview ? 160 : Math.min(Math.max(availableWidth, 240), 620);
@@ -5545,13 +5913,8 @@ async function renderPDFPreview(file, container, allowFallback = true) {
     const viewport = page.getViewport({ scale });
     const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
     const canvas = document.createElement("canvas");
-    canvas.className = "pdf-page-preview";
-    canvas.draggable = false;
     canvas.width = Math.ceil(viewport.width * pixelRatio);
     canvas.height = Math.ceil(viewport.height * pixelRatio);
-    canvas.style.width = "100%";
-    canvas.style.maxWidth = "100%";
-    canvas.style.aspectRatio = `${baseViewport.width} / ${baseViewport.height}`;
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("Le contexte de rendu PDF est indisponible.");
     renderTask = page.render({
@@ -5566,14 +5929,31 @@ async function renderPDFPreview(file, container, allowFallback = true) {
       needsInlinePDFWorker() ? 20000 : 15000,
       "Le rendu de la première page",
     );
-    container.append(canvas);
+    const displayedCanvas = croppedPDFPreviewCanvas(canvas, baseViewport.width / baseViewport.height);
+    const previewBlob = await canvasJPEG(displayedCanvas, 0.82);
+    if (!previewBlob) throw new Error("La conversion JPEG de l’aperçu PDF est indisponible.");
+    const previewURL = URL.createObjectURL(previewBlob);
+    const image = document.createElement("img");
+    image.className = "pdf-page-preview";
+    image.src = previewURL;
+    image.alt = t("Aperçu");
+    image.decoding = "async";
+    image.loading = "eager";
+    image.draggable = false;
+    image.style.width = "100%";
+    image.style.maxWidth = "100%";
+    image.style.aspectRatio = `${displayedCanvas.width} / ${displayedCanvas.height}`;
+    const releasePreviewURL = () => URL.revokeObjectURL(previewURL);
+    image.addEventListener("load", releasePreviewURL, { once: true });
+    image.addEventListener("error", releasePreviewURL, { once: true });
+    container.append(image);
+    fitPDFPreviewToAspect(container, displayedCanvas.width, displayedCanvas.height);
   } catch (error) {
     try {
       renderTask?.cancel();
     } catch {}
-    if (!allowFallback) throw error;
-    console.warn("Rendu PDF.js impossible, utilisation de l’aperçu natif", error);
-    renderNativePDFPreview(file, container, pageRatio);
+    console.warn("Rendu JPEG de la première page PDF impossible", error);
+    throw error;
   } finally {
     if (pdfDocument) {
       try {
@@ -5681,6 +6061,7 @@ async function renderAudioPreview(file, container) {
 
 async function renderFilePreview(message, container, key) {
   try {
+    if (await renderEncryptedFileThumbnail(message, container, key) || !container.isConnected) return;
     const file = await loadDecryptedFile(message, key);
     if (!container.isConnected) return;
     const mime = mimeEssence(file.mime);
@@ -5689,7 +6070,8 @@ async function renderFilePreview(message, container, key) {
       const image = document.createElement("img");
       image.src = file.url;
       image.alt = file.name;
-      image.loading = "lazy";
+      image.decoding = "async";
+      image.loading = "eager";
       container.append(image);
       return;
     }
@@ -5705,7 +6087,7 @@ async function renderFilePreview(message, container, key) {
       const video = document.createElement("video");
       video.src = file.url;
       video.controls = true;
-      video.preload = "metadata";
+      video.preload = "auto";
       container.append(video);
       return;
     }
@@ -5714,8 +6096,7 @@ async function renderFilePreview(message, container, key) {
       return;
     }
     if (mime === "application/pdf") {
-      container.classList.add("pdf-file-preview");
-      container.closest(".message-row")?.classList.add("pdf-message");
+      markPDFFilePreview(container);
       await renderPDFPreview(file, container);
       return;
     }
@@ -5755,6 +6136,7 @@ async function renderFilePreview(message, container, key) {
 
 async function renderReplyFilePreview(message, container, key) {
   try {
+    if (await renderEncryptedFileThumbnail(message, container, key) || !container.isConnected) return;
     const file = await loadDecryptedFile(message, key);
     if (!container.isConnected) return;
     const mime = mimeEssence(file.mime);
@@ -5763,7 +6145,8 @@ async function renderReplyFilePreview(message, container, key) {
       const image = document.createElement("img");
       image.src = file.url;
       image.alt = file.name;
-      image.loading = "lazy";
+      image.decoding = "async";
+      image.loading = "eager";
       container.append(image);
       return;
     }
@@ -5779,12 +6162,12 @@ async function renderReplyFilePreview(message, container, key) {
       video.src = file.url;
       video.muted = true;
       video.playsInline = true;
-      video.preload = "metadata";
+      video.preload = "auto";
       container.append(video);
       return;
     }
     if (mime === "application/pdf") {
-      await renderPDFPreview(file, container, false);
+      await renderPDFPreview(file, container);
       return;
     }
     if (modernOfficeKind(file)) {

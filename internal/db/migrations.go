@@ -133,6 +133,9 @@ var migrations = []string{
 		encrypted_data BLOB NOT NULL,
 		iv TEXT NOT NULL,
 		size INTEGER NOT NULL,
+		encrypted_preview_data BLOB,
+		preview_iv TEXT,
+		preview_size INTEGER,
 		created_at TEXT NOT NULL
 	)`,
 	`CREATE TABLE IF NOT EXISTS file_shares (
@@ -269,6 +272,24 @@ func Migrate(database *sql.DB) error {
 		if !exists {
 			if _, err := tx.Exec(`ALTER TABLE users ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
 				return fmt.Errorf("add users.%s: %w", column.name, err)
+			}
+		}
+	}
+	for _, column := range []struct {
+		name       string
+		definition string
+	}{
+		{"encrypted_preview_data", "BLOB"},
+		{"preview_iv", "TEXT"},
+		{"preview_size", "INTEGER"},
+	} {
+		exists, err := columnExists(tx, "files", column.name)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if _, err := tx.Exec(`ALTER TABLE files ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
+				return fmt.Errorf("add files.%s: %w", column.name, err)
 			}
 		}
 	}

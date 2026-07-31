@@ -1,4 +1,4 @@
-import { websocketProtocols, websocketURL } from "./api.js?v=ios17-pdf-v189";
+import { websocketProtocols, websocketURL } from "./api.js?v=ios17-pdf-v199";
 
 export class ChatSocket extends EventTarget {
   constructor() {

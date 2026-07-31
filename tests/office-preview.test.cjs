@@ -4,6 +4,13 @@ const path = require("node:path");
 
 const root = path.join(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "web/js/office-preview.js"), "utf8");
+assert.match(source, /async function rasterizeOfficeElement\(element, width, height\)/);
+assert.match(source, /officeCanvasJPEG\(canvas\)/);
+assert.match(source, /\{ type: "image\/png" \}/);
+assert.match(source, /setTimeout\(\(\) => \{/);
+assert.match(source, /appendOfficeImagePreview\(container, preview\)/);
+assert.match(source, /renderSingleSlide\(0\)/);
+assert.match(source, /rasterOnly/);
 const moduleURL = `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 
 (async () => {
@@ -11,6 +18,7 @@ const moduleURL = `data:text/javascript;base64,${Buffer.from(source).toString("b
     copiedArrayBuffer,
     modernOfficeKind,
     officeCellText,
+    preloadModernOfficePreview,
   } = await import(moduleURL);
 
   assert.equal(modernOfficeKind({
@@ -22,6 +30,7 @@ const moduleURL = `data:text/javascript;base64,${Buffer.from(source).toString("b
   assert.equal(modernOfficeKind({ name: "ancien.doc", mime: "application/msword" }), null);
   assert.equal(modernOfficeKind({ name: "ancien.xls", mime: "application/vnd.ms-excel" }), null);
   assert.equal(modernOfficeKind({ name: "ancien.ppt", mime: "application/vnd.ms-powerpoint" }), null);
+  assert.equal(await preloadModernOfficePreview({ name: "ancien.doc", mime: "application/msword" }), null);
 
   const bytes = Uint8Array.from([10, 20, 30, 40]);
   const copied = new Uint8Array(copiedArrayBuffer(bytes.subarray(1, 3)));

@@ -1,4 +1,4 @@
-const OFFICE_PREVIEW_BUILD = "ios17-pdf-v189";
+const OFFICE_PREVIEW_BUILD = "ios17-pdf-v199";
 const scriptLoads = new Map();
 const previewCleanups = new Set();
 
@@ -46,6 +46,153 @@ export function copiedArrayBuffer(data) {
 export function clearOfficePreviewResources() {
   for (const cleanup of previewCleanups) cleanup();
   previewCleanups.clear();
+}
+
+const OFFICE_CAPTURE_STYLE_PROPERTIES = [
+  "box-sizing", "display", "position", "top", "left", "right", "bottom", "width", "height",
+  "min-width", "min-height", "max-width", "max-height", "margin", "margin-top", "margin-right",
+  "margin-bottom", "margin-left", "padding", "padding-top", "padding-right", "padding-bottom",
+  "padding-left", "font-family", "font-size", "font-weight", "font-style", "line-height",
+  "letter-spacing", "text-align", "text-indent", "text-transform", "white-space", "color",
+  "background", "background-color", "background-image", "background-size", "background-position",
+  "border", "border-top", "border-right", "border-bottom", "border-left", "border-width",
+  "border-style", "border-color", "border-collapse", "border-spacing", "border-radius",
+  "vertical-align", "list-style", "opacity", "overflow", "overflow-wrap", "word-break",
+  "transform", "transform-origin", "flex", "flex-direction", "flex-wrap", "align-items",
+  "align-content", "justify-content", "grid-template-columns", "grid-template-rows", "gap",
+];
+
+function copyComputedStyles(source, target) {
+  const computed = getComputedStyle(source);
+  for (const property of OFFICE_CAPTURE_STYLE_PROPERTIES) {
+    target.style.setProperty(property, computed.getPropertyValue(property));
+  }
+  const sourceChildren = [...source.children];
+  const targetChildren = [...target.children];
+  for (let index = 0; index < sourceChildren.length; index += 1) {
+    if (targetChildren[index]) copyComputedStyles(sourceChildren[index], targetChildren[index]);
+  }
+}
+
+function officeCanvasJPEG(canvas, quality = 0.82) {
+  return new Promise((resolve) => {
+    const formats = [
+      { type: "image/jpeg", quality },
+      // Some Safari/WebView versions can render the canvas but refuse JPEG
+      // encoding. PNG keeps the preview usable in that case.
+      { type: "image/png" },
+    ];
+    let formatIndex = 0;
+
+    const encodeNextFormat = () => {
+      const format = formats[formatIndex++];
+      if (!format) {
+        resolve(null);
+        return;
+      }
+
+      const fallback = () => {
+        try {
+          const dataURL = canvas.toDataURL(format.type, format.quality);
+          const [header, payload] = dataURL.split(",");
+          const binary = atob(payload);
+          const bytes = new Uint8Array(binary.length);
+          for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+          resolve(new Blob([bytes], { type: header.match(/data:([^;]+)/)?.[1] || format.type }));
+        } catch {
+          encodeNextFormat();
+        }
+      };
+
+      if (typeof canvas.toBlob !== "function") {
+        fallback();
+        return;
+      }
+
+      let settled = false;
+      const fallbackTimer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        fallback();
+      }, 2000);
+      try {
+        canvas.toBlob((blob) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(fallbackTimer);
+          if (blob && blob.size > 0) {
+            resolve(blob);
+          } else {
+            fallback();
+          }
+        }, format.type, format.quality);
+      } catch {
+        if (!settled) {
+          settled = true;
+          clearTimeout(fallbackTimer);
+          fallback();
+        }
+      }
+    };
+
+    encodeNextFormat();
+  });
+}
+
+async function rasterizeOfficeElement(element, width, height) {
+  const naturalWidth = Math.max(1, Math.ceil(width || element.scrollWidth || element.getBoundingClientRect().width));
+  const naturalHeight = Math.max(1, Math.ceil(height || element.scrollHeight || element.getBoundingClientRect().height));
+  const clone = element.cloneNode(true);
+  copyComputedStyles(element, clone);
+  clone.style.width = `${naturalWidth}px`;
+  clone.style.height = `${naturalHeight}px`;
+  clone.style.maxWidth = "none";
+  clone.style.maxHeight = "none";
+  clone.style.overflow = "visible";
+  clone.style.transform = "none";
+  const serialized = new XMLSerializer().serializeToString(clone);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${naturalWidth}" height="${naturalHeight}" viewBox="0 0 ${naturalWidth} ${naturalHeight}"><foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml" style="width:${naturalWidth}px;height:${naturalHeight}px;overflow:hidden;background:#ffffff">${serialized}</div></foreignObject></svg>`;
+  const sourceURL = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  try {
+    const source = new Image();
+    const loadSource = (url) => new Promise((resolve, reject) => {
+      source.onload = resolve;
+      source.onerror = () => reject(new Error("Le rendu image du document Office est illisible."));
+      source.src = url;
+    });
+    try {
+      await loadSource(sourceURL);
+    } catch {
+      await loadSource(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = naturalWidth;
+    canvas.height = naturalHeight;
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error("Le contexte de rendu image est indisponible.");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, naturalWidth, naturalHeight);
+    context.drawImage(source, 0, 0, naturalWidth, naturalHeight);
+    const blob = await officeCanvasJPEG(canvas);
+    if (!blob) throw new Error("La conversion image du document Office est indisponible.");
+    return { blob, width: naturalWidth, height: naturalHeight };
+  } finally {
+    URL.revokeObjectURL(sourceURL);
+  }
+}
+
+function appendOfficeImagePreview(container, preview) {
+  const url = URL.createObjectURL(preview.blob);
+  previewCleanups.add(() => URL.revokeObjectURL(url));
+  const image = document.createElement("img");
+  image.className = "office-page-preview";
+  image.src = url;
+  image.alt = "Aperçu";
+  image.decoding = "async";
+  image.loading = "eager";
+  image.draggable = false;
+  image.style.aspectRatio = `${preview.width} / ${preview.height}`;
+  container.replaceChildren(image);
 }
 
 function loadScript(source, available) {
@@ -100,28 +247,16 @@ async function powerpointRenderer() {
   return globalThis.pptxPreview;
 }
 
-function nextFrame() {
-  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+export async function preloadModernOfficePreview(file) {
+  const kind = modernOfficeKind(file);
+  if (kind === "word") return wordRenderer();
+  if (kind === "excel") return excelRenderer();
+  if (kind === "powerpoint") return powerpointRenderer();
+  return null;
 }
 
-function observeScale(frame, content, naturalWidth, naturalHeight) {
-  const resize = () => {
-    if (!frame.isConnected) return;
-    const width = frame.getBoundingClientRect().width;
-    if (width <= 0) return;
-    const scale = width / naturalWidth;
-    content.style.transform = `scale(${scale})`;
-    frame.style.height = `${Math.ceil(naturalHeight * scale)}px`;
-  };
-  resize();
-  if (!("ResizeObserver" in window)) {
-    requestAnimationFrame(resize);
-    return;
-  }
-  const observer = new ResizeObserver(resize);
-  const cleanup = () => observer.disconnect();
-  previewCleanups.add(cleanup);
-  observer.observe(frame);
+function nextFrame() {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
 function sanitizeRenderedDocument(root) {
@@ -148,14 +283,13 @@ function appendLimitNote(container, text) {
   container.append(note);
 }
 
-async function renderWordPreview(file, container, compact, translate) {
+async function renderWordPreview(file, container, compact, translate, rasterOnly) {
   const docx = await wordRenderer();
   const frame = document.createElement("div");
   frame.className = "office-document-preview office-word-preview";
-  const shadow = frame.attachShadow({ mode: "open" });
   const isolation = document.createElement("style");
   isolation.textContent = `
-    :host { position: relative; display: block; width: 100%; overflow: hidden; background: #fff; color: #172124; }
+    .office-word-preview { position: relative; display: block; width: 100%; overflow: hidden; background: #fff; color: #172124; }
     .office-word-content { position: absolute; inset: 0 auto auto 0; transform-origin: top left; }
     .docx-wrapper { align-items: flex-start !important; padding: 0 !important; background: transparent !important; }
     .docx-wrapper > section.docx { margin: 0 !important; box-shadow: none !important; }
@@ -164,7 +298,7 @@ async function renderWordPreview(file, container, compact, translate) {
   const styleContainer = document.createElement("div");
   const bodyContainer = document.createElement("div");
   bodyContainer.className = "office-word-content";
-  shadow.append(isolation, styleContainer, bodyContainer);
+  frame.append(isolation, styleContainer, bodyContainer);
   container.append(frame);
 
   await docx.renderAsync(copiedArrayBuffer(file.data), bodyContainer, styleContainer, {
@@ -190,11 +324,15 @@ async function renderWordPreview(file, container, compact, translate) {
   const naturalHeight = Math.max(1, Math.ceil(bounds.height || page.scrollHeight || 1056));
   bodyContainer.style.width = `${naturalWidth}px`;
   bodyContainer.style.height = `${naturalHeight}px`;
-  observeScale(frame, bodyContainer, naturalWidth, naturalHeight);
-  if (!compact) appendLimitNote(container, translate("Aperçu limité à la première page."));
+  const preview = await rasterizeOfficeElement(page, naturalWidth, naturalHeight);
+  if (!rasterOnly) {
+    appendOfficeImagePreview(container, preview);
+    if (!compact) appendLimitNote(container, translate("Aperçu limité à la première page."));
+  }
+  return preview;
 }
 
-async function renderExcelPreview(file, container, compact, translate, locale) {
+async function renderExcelPreview(file, container, compact, translate, locale, rasterOnly) {
   const ExcelJS = await excelRenderer();
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(copiedArrayBuffer(file.data));
@@ -233,9 +371,17 @@ async function renderExcelPreview(file, container, compact, translate, locale) {
     shell.prepend(sheetName);
     appendLimitNote(container, translate("Aperçu limité à la première feuille."));
   }
+  await nextFrame();
+  const preview = await rasterizeOfficeElement(
+    table,
+    Math.max(1, table.scrollWidth || table.getBoundingClientRect().width),
+    Math.max(1, table.scrollHeight || table.getBoundingClientRect().height),
+  );
+  if (!rasterOnly) appendOfficeImagePreview(container, preview);
+  return preview;
 }
 
-async function renderPowerPointPreview(file, container, compact, translate) {
+async function renderPowerPointPreview(file, container, compact, translate, rasterOnly) {
   const pptx = await powerpointRenderer();
   const frame = document.createElement("div");
   frame.className = "office-document-preview office-powerpoint-preview";
@@ -247,19 +393,27 @@ async function renderPowerPointPreview(file, container, compact, translate) {
   container.append(frame);
 
   const previewer = pptx.init(content, { width: 960, height: 540, mode: "slide" });
-  previewCleanups.add(() => previewer.destroy?.());
-  const presentation = await previewer.load(copiedArrayBuffer(file.data));
-  if (!presentation?.slides?.length) throw new Error("La présentation PowerPoint est vide.");
-  previewer.renderSingleSlide(0);
-  sanitizeRenderedDocument(content);
-  observeScale(frame, content, 960, 540);
-  if (!compact) appendLimitNote(container, translate("Aperçu limité à la première diapositive."));
+  try {
+    const presentation = await previewer.load(copiedArrayBuffer(file.data));
+    if (!presentation?.slides?.length) throw new Error("La présentation PowerPoint est vide.");
+    previewer.renderSingleSlide(0);
+    sanitizeRenderedDocument(content);
+    const preview = await rasterizeOfficeElement(content, 960, 540);
+    if (!rasterOnly) {
+      appendOfficeImagePreview(container, preview);
+      if (!compact) appendLimitNote(container, translate("Aperçu limité à la première diapositive."));
+    }
+    return preview;
+  } finally {
+    previewer.destroy?.();
+  }
 }
 
 export async function renderModernOfficePreview(file, container, options = {}) {
   const kind = modernOfficeKind(file);
   if (!kind) throw new Error("Ce document Office n’est pas pris en charge.");
   const compact = options.compact === true;
+  const rasterOnly = options.rasterOnly === true;
   const translate = options.translate || ((value) => value);
   const locale = options.locale || "fr-FR";
   const loading = document.createElement("span");
@@ -269,11 +423,11 @@ export async function renderModernOfficePreview(file, container, options = {}) {
   container.classList.add("office-file-preview", `office-${kind}-file-preview`);
   try {
     if (kind === "word") {
-      await renderWordPreview(file, container, compact, translate);
+      return (await renderWordPreview(file, container, compact, translate, rasterOnly))?.blob || null;
     } else if (kind === "excel") {
-      await renderExcelPreview(file, container, compact, translate, locale);
+      return (await renderExcelPreview(file, container, compact, translate, locale, rasterOnly))?.blob || null;
     } else {
-      await renderPowerPointPreview(file, container, compact, translate);
+      return (await renderPowerPointPreview(file, container, compact, translate, rasterOnly))?.blob || null;
     }
   } finally {
     loading.remove();

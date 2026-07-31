@@ -295,18 +295,15 @@ small { color: var(--muted); }
 .file-preview .document-page-preview { display: block; width: min(100%, 460px); aspect-ratio: 210 / 297; border: 0; background: #ffffff; }
 .file-preview .pdf-page-preview { display: block; width: 100%; max-width: 100%; min-width: 0; height: auto !important; background: #ffffff; }
 .pdf-message .file-attachment { width: 100%; }
-.pdf-message .file-preview, .pdf-message .pdf-page-preview, .pdf-message .pdf-native-preview { touch-action: pan-y pinch-zoom; overscroll-behavior-x: none; -webkit-user-drag: none; user-select: none; }
-.file-preview.pdf-native-fallback { display: grid; width: 100%; }
-.file-preview .pdf-native-preview { display: block; width: 100%; max-width: 100%; min-width: 0; border: 0; background: #ffffff; pointer-events: none; }
-#app-shell.modal-open .pdf-native-preview { visibility: hidden; pointer-events: none; }
-@supports selector(body:has(dialog[open])) {
-  body:has(dialog[open]) #app-shell .pdf-native-preview { visibility: hidden; pointer-events: none; }
-}
-.pdf-native-actions { display: flex; align-items: center; justify-content: space-between; gap: .65rem; width: 100%; padding: .55rem .7rem; color: var(--muted); font-size: .78rem; }
-.pdf-native-open { flex: 0 0 auto; padding: .38rem .65rem; border-radius: .5rem; background: var(--accent); color: #072724; font-weight: 700; text-decoration: none; }
+.message-row.file-message.fitted-pdf-message { width: min(75%, calc(var(--pdf-preview-width) + 1.7rem)); max-width: min(75%, calc(var(--pdf-preview-width) + 1.7rem)); }
+.fitted-pdf-message .file-attachment { width: var(--pdf-preview-width); max-width: 100%; }
+.file-preview.fitted-pdf-preview { min-height: 0; }
+.file-preview.fitted-pdf-preview > img { width: 100%; height: auto; max-height: none; object-fit: contain; }
+.pdf-message .file-preview, .pdf-message .pdf-page-preview { touch-action: pan-y pinch-zoom; overscroll-behavior-x: none; -webkit-user-drag: none; user-select: none; }
 .office-message .file-attachment { width: 100%; }
 .file-preview.office-file-preview { display: grid; width: 100%; }
 .file-preview .office-document-preview { display: block; width: min(100%, 460px); max-width: 100%; min-width: 0; overflow: hidden; border: 0; background: #ffffff; color: #172124; }
+.file-preview .office-page-preview { display: block; width: 100%; max-width: 100%; height: auto; background: #ffffff; object-fit: contain; }
 .office-word-preview { position: relative; aspect-ratio: 210 / 297; }
 .office-powerpoint-preview { position: relative; aspect-ratio: 16 / 9; }
 .office-powerpoint-content { position: absolute; inset: 0 auto auto 0; overflow: hidden; transform-origin: top left; }
@@ -624,6 +621,7 @@ fieldset { min-width: 0; border: 1px solid var(--line); border-radius: .8rem; }
   .message-row.file-message { width: 88%; }
   .message-row.file-message.pdf-message,
   .message-row.file-message.office-message { width: calc(100% - .5rem); max-width: calc(100% - .5rem); }
+  .message-row.file-message.pdf-message.fitted-pdf-message { width: min(88%, calc(var(--pdf-preview-width) + 1.7rem)); max-width: 88%; }
   .pdf-message .file-preview .document-page-preview,
   .pdf-message .file-preview .pdf-page-preview,
   .office-message .file-preview .office-document-preview { width: 100%; max-width: 100%; min-width: 0; }
