@@ -50,6 +50,17 @@ export function formatTime(value) {
   return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
+export function formatMessageTime(value) {
+  const date = new Date(value);
+  const today = new Date();
+  const options = date.getFullYear() === today.getFullYear()
+    && date.getMonth() === today.getMonth()
+    && date.getDate() === today.getDate()
+    ? { hour: "2-digit", minute: "2-digit" }
+    : { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" };
+  return new Intl.DateTimeFormat(locale, options).format(date);
+}
+
 export function actionIcon(kind) {
   const namespace = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(namespace, "svg");
@@ -305,7 +316,7 @@ export function renderMessage(
   const time = document.createElement("time");
   const status = mine ? { sent: " ✓", delivered: " ✓✓", read: " ✓✓" }[message.status] || "" : "";
   const expiry = message.expires_at ? ` · expire ${formatTime(message.expires_at)}` : "";
-  time.textContent = `${formatTime(message.created_at)}${message.updated_at ? " · modifié" : ""}${expiry}${status}`;
+  time.textContent = `${formatMessageTime(message.created_at)}${message.updated_at ? " · modifié" : ""}${expiry}${status}`;
   if (message.status === "read") time.classList.add("read");
   article.append(time);
   if (message.reactions?.length) {
@@ -384,7 +395,7 @@ function renderCallHistoryMessage(container, message, clear) {
   const label = document.createElement("span");
   label.textContent = clear;
   const time = document.createElement("time");
-  time.textContent = formatTime(message.created_at);
+  time.textContent = formatMessageTime(message.created_at);
   event.append(label, time);
   row.append(event);
   container.append(row);

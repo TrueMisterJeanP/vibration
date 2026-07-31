@@ -33,7 +33,7 @@ import {
   testNotification,
 } from "./notifications.js";
 import { ChatSocket } from "./websocket.js?v=ios17-pdf-v199";
-import { actionIcon, bindSwipeActions, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios17-pdf-v199";
+import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios17-pdf-v199";
 import { locale, t } from "./i18n.js";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
 import { nonWhiteImageBounds } from "./file-preview-image.js?v=ios17-pdf-v199";
@@ -2194,6 +2194,10 @@ async function selectConversation(conversation, targetMessageID = null) {
   if (conversationChanged) {
     clearVoiceDraft();
     clearFileCache();
+    const loading = document.createElement("div");
+    loading.id = "empty-chat";
+    loading.textContent = t("Chargement…");
+    elements.messages.replaceChildren(loading);
   }
   closeReactionPicker();
   state.current = conversation;
@@ -3904,38 +3908,46 @@ async function handleCallSignal(event) {
 }
 
 async function loadMessages(targetMessageID = null) {
+  const conversation = state.current;
+  if (!conversation) return;
+  const conversationID = conversation.id;
   closeReactionPicker();
   clearRenderedFilePreviews();
-  clearConversationMessageExpirations(state.current.id);
+  clearConversationMessageExpirations(conversationID);
   let messages;
   if (targetMessageID) {
     const target = Number(targetMessageID);
     const [older, newer] = await Promise.all([
-      api(`/api/conversations/${state.current.id}/messages?limit=25&before=${target + 1}`),
-      api(`/api/conversations/${state.current.id}/messages?limit=25&after=${target}`),
+      api(`/api/conversations/${conversationID}/messages?limit=25&before=${target + 1}`),
+      api(`/api/conversations/${conversationID}/messages?limit=25&after=${target}`),
     ]);
+    if (!sameID(state.current?.id, conversationID)) return;
     messages = [...new Map([...older, ...newer].map((message) => [String(message.id), message])).values()]
       .sort((left, right) => Number(left.id) - Number(right.id));
   } else {
-    messages = await api(`/api/conversations/${state.current.id}/messages?limit=50`);
+    messages = await api(`/api/conversations/${conversationID}/messages?limit=50`);
+    if (!sameID(state.current?.id, conversationID)) return;
   }
   if (!messages.length) {
-    state.messageClears.set(state.current.id, new Map());
+    if (!sameID(state.current?.id, conversationID)) return;
+    state.messageClears.set(conversationID, new Map());
     const empty = document.createElement("div");
     empty.id = "empty-chat";
     empty.textContent = t("Aucun message. Écrivez le premier message chiffré.");
     elements.messages.replaceChildren(empty);
     return;
   }
-  const key = await getConversationKey(state.current);
+  const key = await getConversationKey(conversation);
+  if (!sameID(state.current?.id, conversationID)) return;
   prefetchRecentFileThumbnails(messages, key);
   const decrypted = await Promise.all(messages.map(async (message) => ({
     message,
     clear: await decryptMessageContent(message, key),
   })));
+  if (!sameID(state.current?.id, conversationID)) return;
   prewarmFilePreviewRenderers(decrypted);
   prefetchRecentFullFilePreviews(decrypted, key);
-  const clearByID = messageClearCache(state.current.id);
+  const clearByID = messageClearCache(conversationID);
   for (const { message, clear } of decrypted) {
     clearByID.set(message.id, clear);
   }
@@ -4231,7 +4243,7 @@ async function loadPinnedMessages() {
       author.textContent = sameID(message.sender_id, state.me.id) ? t("Vous") : message.sender_username;
       const date = document.createElement("time");
       date.dateTime = message.created_at;
-      date.textContent = new Intl.DateTimeFormat(locale, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(message.created_at));
+      date.textContent = formatMessageTime(message.created_at);
       meta.append(author, date);
       const preview = document.createElement("p");
       preview.className = "pinned-message-preview";
