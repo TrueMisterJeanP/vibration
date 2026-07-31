@@ -8,6 +8,8 @@ assert.match(source, /async function rasterizeOfficeElement\(element, width, hei
 assert.match(source, /officeCanvasJPEG\(canvas\)/);
 assert.match(source, /\{ type: "image\/png" \}/);
 assert.match(source, /setTimeout\(\(\) => \{/);
+assert.match(source, /async function tryRasterizeOfficeElement\(element, width, height\)/);
+assert.match(source, /fitOfficeDOMPreview\(frame, bodyContainer/);
 assert.match(source, /appendOfficeImagePreview\(container, preview\)/);
 assert.match(source, /renderSingleSlide\(0\)/);
 assert.match(source, /rasterOnly/);

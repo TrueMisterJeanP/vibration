@@ -181,6 +181,27 @@ async function rasterizeOfficeElement(element, width, height) {
   }
 }
 
+async function tryRasterizeOfficeElement(element, width, height) {
+  try {
+    return await rasterizeOfficeElement(element, width, height);
+  } catch (error) {
+    // Rendering the Office DOM remains useful even when a browser blocks
+    // SVG/foreignObject rasterization or canvas export.
+    console.warn("Conversion image du document Office impossible", error);
+    return null;
+  }
+}
+
+function fitOfficeDOMPreview(frame, content, width, height, container) {
+  const availableWidth = Math.max(1, container.getBoundingClientRect().width || width);
+  const scale = Math.min(1, availableWidth / width);
+  frame.style.height = `${Math.max(1, Math.ceil(height * scale))}px`;
+  frame.style.aspectRatio = `${width} / ${height}`;
+  content.style.width = `${width}px`;
+  content.style.height = `${height}px`;
+  content.style.transform = `scale(${scale})`;
+}
+
 function appendOfficeImagePreview(container, preview) {
   const url = URL.createObjectURL(preview.blob);
   previewCleanups.add(() => URL.revokeObjectURL(url));
@@ -324,10 +345,18 @@ async function renderWordPreview(file, container, compact, translate, rasterOnly
   const naturalHeight = Math.max(1, Math.ceil(bounds.height || page.scrollHeight || 1056));
   bodyContainer.style.width = `${naturalWidth}px`;
   bodyContainer.style.height = `${naturalHeight}px`;
-  const preview = await rasterizeOfficeElement(page, naturalWidth, naturalHeight);
+  const preview = await tryRasterizeOfficeElement(page, naturalWidth, naturalHeight);
+  if (!preview) {
+    if (rasterOnly) return null;
+    fitOfficeDOMPreview(frame, bodyContainer, naturalWidth, naturalHeight, container);
+  }
   if (!rasterOnly) {
-    appendOfficeImagePreview(container, preview);
-    if (!compact) appendLimitNote(container, translate("Aperçu limité à la première page."));
+    if (preview) {
+      appendOfficeImagePreview(container, preview);
+      if (!compact) appendLimitNote(container, translate("Aperçu limité à la première page."));
+    } else if (!compact) {
+      appendLimitNote(container, translate("Aperçu affiché dans le document Office."));
+    }
   }
   return preview;
 }
@@ -372,12 +401,13 @@ async function renderExcelPreview(file, container, compact, translate, locale, r
     appendLimitNote(container, translate("Aperçu limité à la première feuille."));
   }
   await nextFrame();
-  const preview = await rasterizeOfficeElement(
+  const preview = await tryRasterizeOfficeElement(
     table,
     Math.max(1, table.scrollWidth || table.getBoundingClientRect().width),
     Math.max(1, table.scrollHeight || table.getBoundingClientRect().height),
   );
-  if (!rasterOnly) appendOfficeImagePreview(container, preview);
+  if (rasterOnly && !preview) return null;
+  if (!rasterOnly && preview) appendOfficeImagePreview(container, preview);
   return preview;
 }
 
@@ -398,10 +428,18 @@ async function renderPowerPointPreview(file, container, compact, translate, rast
     if (!presentation?.slides?.length) throw new Error("La présentation PowerPoint est vide.");
     previewer.renderSingleSlide(0);
     sanitizeRenderedDocument(content);
-    const preview = await rasterizeOfficeElement(content, 960, 540);
+    const preview = await tryRasterizeOfficeElement(content, 960, 540);
+    if (!preview) {
+      if (rasterOnly) return null;
+      fitOfficeDOMPreview(frame, content, 960, 540, container);
+    }
     if (!rasterOnly) {
-      appendOfficeImagePreview(container, preview);
-      if (!compact) appendLimitNote(container, translate("Aperçu limité à la première diapositive."));
+      if (preview) {
+        appendOfficeImagePreview(container, preview);
+        if (!compact) appendLimitNote(container, translate("Aperçu limité à la première diapositive."));
+      } else if (!compact) {
+        appendLimitNote(container, translate("Aperçu affiché dans le document Office."));
+      }
     }
     return preview;
   } finally {
