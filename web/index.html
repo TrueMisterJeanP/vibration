@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0f766e">
-  <meta name="vibration-build" content="ios17-pdf-v201">
+  <meta name="vibration-build" content="ios17-pdf-v204">
   <script src="/js/theme.js"></script>
   <title>Vibration</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=ios17-pdf-v201">
+  <link rel="stylesheet" href="/css/style.css?v=ios17-pdf-v204">
 </head>
 <body>
   <main id="app-shell" class="sidebar-open" hidden>
@@ -346,6 +346,11 @@
       <p id="profile-error" class="error" role="alert"></p>
       <button id="profile-save" type="submit">Enregistrer le profil</button>
       <label class="profile-theme-label"><strong>Thème</strong><select id="profile-theme"><option value="auto">Automatique</option><option value="light">Clair</option><option value="dark">Sombre</option></select></label>
+      <section class="profile-notifications profile-storage" aria-labelledby="profile-storage-title">
+        <h4 id="profile-storage-title">Stockage des fichiers</h4>
+        <progress id="profile-storage-progress" max="1" value="0" aria-label="Espace de stockage"></progress>
+        <small id="profile-storage-status">Vérification…</small>
+      </section>
       <section class="profile-notifications" aria-labelledby="profile-security-title">
         <h4 id="profile-security-title">Clé de chiffrement locale</h4>
         <small id="remembered-key-status">Vérification…</small>
@@ -414,6 +419,6 @@
     </form>
   </dialog>
   <div id="toasts" aria-live="polite"></div>
-  <script type="module" src="/js/app.js?v=ios17-pdf-v201"></script>
+  <script type="module" src="/js/app.js?v=ios17-pdf-v204"></script>
 </body>
 </html>

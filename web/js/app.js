@@ -55,7 +55,7 @@ const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
 const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
 const FILE_PREVIEW_PREFETCH_BUDGET_BYTES = 8 * 1024 * 1024;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "ios17-pdf-v201";
+const APP_BUILD = "ios17-pdf-v204";
 
 window.VIBRATION_BUILD = APP_BUILD;
 console.info(`Vibration build ${APP_BUILD}`);
@@ -580,6 +580,24 @@ function scheduleMessageExpiration(message) {
   return true;
 }
 
+function defaultFileQuotas() {
+  return {
+    max_file_size: 25 * 1024 * 1024,
+    max_user_storage: 1024 * 1024 * 1024,
+    used_storage: 0,
+  };
+}
+
+async function refreshFileQuotas() {
+  try {
+    state.fileQuotas = await api("/api/files/limits");
+  } catch {
+    state.fileQuotas ||= defaultFileQuotas();
+  }
+  updateProfileStorage();
+  return state.fileQuotas;
+}
+
 async function boot() {
   try {
     const [me, edition, terms] = await Promise.all([api("/api/me"), api("/api/edition"), api("/api/terms/status")]);
@@ -590,15 +608,7 @@ async function boot() {
     state.me = me;
     state.edition = edition;
     state.cache = await openConversationCache(getInstanceURL(), state.me);
-    try {
-      state.fileQuotas = await api("/api/files/limits");
-    } catch {
-      state.fileQuotas = {
-        max_file_size: 25 * 1024 * 1024,
-        max_user_storage: 1024 * 1024 * 1024,
-        used_storage: 0,
-      };
-    }
+    await refreshFileQuotas();
   } catch (error) {
     location.replace("/login.html");
     return;
@@ -715,12 +725,16 @@ function bindUI() {
     document.querySelector("#profile-new-password").value = "";
     document.querySelector("#profile-confirm-password").value = "";
     document.querySelector("#profile-error").textContent = "";
+    updateProfileStorage();
     profileDialog.showModal();
     const profileTitle = document.querySelector("#profile-dialog h3");
     profileTitle?.setAttribute("tabindex", "-1");
     profileTitle?.focus({ preventScroll: true });
-    await refreshRememberedKeyStatus();
-    await refreshNotificationStatus();
+    await Promise.all([
+      refreshFileQuotas(),
+      refreshRememberedKeyStatus(),
+      refreshNotificationStatus(),
+    ]);
   };
   document.querySelector("#profile-button").onclick = openProfileDialog;
   document.querySelector("#close-sidebar-logo").onclick = openProfileDialog;
@@ -5305,6 +5319,7 @@ async function sendEncryptedFile(file, successMessage) {
       },
     });
     state.fileQuotas.used_storage = usedStorage + data.byteLength + 16;
+    updateProfileStorage();
     await appendMessage(message);
     await refreshConversationList();
     toast(successMessage, "success");
@@ -5318,6 +5333,40 @@ async function sendEncryptedFile(file, successMessage) {
 function formatFileQuotaSize(bytes) {
   if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(2).replace(/\.00$/, "")} Go`;
   return `${(bytes / (1024 * 1024)).toFixed(2).replace(/\.00$/, "")} Mo`;
+}
+
+function formatStorageMegabytes(bytes) {
+  const value = Math.max(0, Number(bytes) || 0) / (1024 * 1024);
+  return t("{count} Mo", {
+    count: new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value),
+  });
+}
+
+function updateProfileStorage() {
+  const progress = document.querySelector("#profile-storage-progress");
+  const status = document.querySelector("#profile-storage-status");
+  if (!progress || !status) return;
+  const max = Number(state.fileQuotas?.max_user_storage);
+  const used = Math.max(0, Number(state.fileQuotas?.used_storage) || 0);
+  if (!Number.isFinite(max) || max <= 0) {
+    progress.hidden = true;
+    status.textContent = t("Espace de stockage indisponible.");
+    return;
+  }
+  const boundedUsed = Math.min(used, max);
+  const percent = Math.min(100, Math.round((boundedUsed / max) * 100));
+  progress.hidden = false;
+  progress.max = max;
+  progress.value = boundedUsed;
+  progress.classList.toggle("near-limit", percent >= 80 && percent < 100);
+  progress.classList.toggle("at-limit", percent >= 100);
+  progress.setAttribute("aria-label", t("Espace de stockage"));
+  progress.setAttribute("aria-valuetext", t("{used} utilisés sur {max} ({percent} %)", {
+    used: formatStorageMegabytes(boundedUsed),
+    max: formatStorageMegabytes(max),
+    percent,
+  }));
+  status.textContent = progress.getAttribute("aria-valuetext");
 }
 
 function setVoiceDraft(file) {

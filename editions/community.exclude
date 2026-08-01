@@ -17,6 +17,7 @@ certs/
 turnserver.conf
 docker-compose.override.yml
 src-tauri/
+/tests/admin-file-storage.test.cjs
 editions/community.package.json
 editions/community.package-lock.json
 SiteWeb/
