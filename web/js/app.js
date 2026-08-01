@@ -845,10 +845,9 @@ function bindUI() {
       ? "Masquer les contacts, groupes et conversations"
       : "Afficher les contacts, groupes et conversations"));
     sidebarButton.title = t(open ? "Masquer les contacts et groupes" : "Afficher les contacts et groupes");
-    if (open && window.matchMedia("(max-width: 720px)").matches && state.current) {
-      renderConversations().catch((error) => {
-        console.warn("Désélection de la discussion impossible", error);
-      });
+    if (open && window.matchMedia("(max-width: 720px)").matches) {
+      elements.personalConversationButton.classList.remove("active");
+      elements.conversations.querySelectorAll(".conversation-item.active").forEach((item) => item.classList.remove("active"));
     }
   };
   const mobileLayout = window.matchMedia("(max-width: 720px)");
