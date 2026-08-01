@@ -172,6 +172,7 @@ small { color: var(--muted); }
 .unread-badge { min-width: 1.25rem; height: 1.25rem; margin-left: auto; padding: 0 .38rem; display: inline-grid; place-items: center; border-radius: 999px; background: var(--accent); color: #032f2c; font-size: .68rem; font-weight: 800; line-height: 1; }
 .call-conversation-badge { display: inline-grid; place-items: center; min-height: 1.25rem; margin-left: auto; padding: .12rem .42rem; border-radius: 999px; background: #62f4df; color: #032f2c; font-size: .66rem; font-weight: 900; line-height: 1; white-space: nowrap; }
 .conversation-item .conversation-description { display: -webkit-box; white-space: normal; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+#conversation-list .conversation-item .conversation-description { min-height: 2.4em; line-height: 1.2; }
 .conversation-item .conversation-description.typing { font-weight: inherit; }
 .conversation-item .conversation-description.call-description { color: #b9fff7; font-weight: 800; }
 .avatar { position: relative; flex: 0 0 2.6rem; width: 2.6rem; height: 2.6rem; display: grid; place-items: center; overflow: visible; border-radius: 50%; background: var(--avatar-bg); color: var(--avatar-fg); }

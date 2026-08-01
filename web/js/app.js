@@ -845,6 +845,11 @@ function bindUI() {
       ? "Masquer les contacts, groupes et conversations"
       : "Afficher les contacts, groupes et conversations"));
     sidebarButton.title = t(open ? "Masquer les contacts et groupes" : "Afficher les contacts et groupes");
+    if (open && window.matchMedia("(max-width: 720px)").matches && state.current) {
+      renderConversations().catch((error) => {
+        console.warn("Désélection de la discussion impossible", error);
+      });
+    }
   };
   const mobileLayout = window.matchMedia("(max-width: 720px)");
   const syncResponsiveLayout = ({ matches }) => {
@@ -1844,11 +1849,17 @@ function refreshConversationCallIndicators() {
   });
 }
 
+function conversationListActiveID() {
+  const mobileSidebarOpen = window.matchMedia("(max-width: 720px)").matches
+    && elements.shell.classList.contains("sidebar-open");
+  return mobileSidebarOpen ? null : state.current?.id;
+}
+
 async function renderPersonalConversation() {
   const conversation = state.conversations.find((item) => item.is_personal);
   elements.personalConversationButton.hidden = !conversation;
   if (!conversation) return;
-  elements.personalConversationButton.classList.toggle("active", sameID(state.current?.id, conversation.id));
+  elements.personalConversationButton.classList.toggle("active", sameID(conversationListActiveID(), conversation.id));
   const unreadCount = Number(conversation.unread_count || 0);
   elements.personalConversationUnread.hidden = unreadCount === 0;
   elements.personalConversationUnread.textContent = unreadCount > 99 ? "99+" : String(unreadCount || "");
@@ -1894,7 +1905,7 @@ async function renderConversations() {
     button.className = [
       "conversation-item",
       "swipe-surface",
-      state.current?.id === conversation.id ? "active" : "",
+      sameID(conversationListActiveID(), conversation.id) ? "active" : "",
       callState ? "call-highlight" : "",
       callState?.incoming ? "call-incoming" : "",
     ].filter(Boolean).join(" ");
