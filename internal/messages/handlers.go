@@ -575,6 +575,9 @@ func (h *Handler) Pin(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, "message pin update failed")
 		return
 	}
+	if h.Federation != nil {
+		h.Federation.QueuePin(messageID, userID, input.Pinned, now)
+	}
 	if h.Hub != nil {
 		h.Hub.SendToUser(userID, map[string]any{
 			"type": "conversation_updated", "conversation_id": conversationID, "pinned_message_id": messageID,

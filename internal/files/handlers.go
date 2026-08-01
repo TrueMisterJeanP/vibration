@@ -8,12 +8,14 @@ import (
 
 	"chat-pwa-go/internal/auth"
 	"chat-pwa-go/internal/httpx"
+	"chat-pwa-go/internal/settings"
 )
 
 const (
-	maxFileSize            = 25 << 20
+	maxFileSize            = settings.DefaultMaxFileSize
 	maxFilePreviewSize     = 512 << 10
 	maxFileRequestBodySize = 36 << 20
+	fileEncryptionOverhead = 64
 )
 
 type Broadcaster interface {
@@ -96,6 +98,29 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, result)
 }
 
+func (h *Handler) UploadLimits(w http.ResponseWriter, r *http.Request) {
+	quotas, err := settings.LoadFileQuotas(h.DB)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "file quota lookup failed")
+		return
+	}
+	used, err := fileUsage(h.DB, auth.UserID(r))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "file quota lookup failed")
+		return
+	}
+	remaining := quotas.MaxUserStorage - used
+	if remaining < 0 {
+		remaining = 0
+	}
+	httpx.JSON(w, http.StatusOK, map[string]int64{
+		"max_file_size":     quotas.MaxFileSize,
+		"max_user_storage":  quotas.MaxUserStorage,
+		"used_storage":      used,
+		"remaining_storage": remaining,
+	})
+}
+
 func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		ConversationID   int64  `json:"conversation_id"`
@@ -107,7 +132,12 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		PreviewIV        string `json:"preview_iv"`
 		ExpiresInSeconds int64  `json:"expires_in_seconds"`
 	}
-	if !httpx.DecodeWithLimit(w, r, &input, maxFileRequestBodySize) {
+	quotas, err := settings.LoadFileQuotas(h.DB)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "file quota lookup failed")
+		return
+	}
+	if !httpx.DecodeWithLimit(w, r, &input, fileRequestBodyLimit(quotas.MaxFileSize)) {
 		return
 	}
 	userID := auth.UserID(r)
@@ -122,8 +152,8 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, err := base64.StdEncoding.DecodeString(input.EncryptedData)
-	if err != nil || len(data) == 0 || len(data) > maxFileSize+64 {
-		httpx.Error(w, http.StatusRequestEntityTooLarge, "encrypted file exceeds 25 MB")
+	if err != nil || len(data) == 0 || int64(len(data)) > storedFileSizeLimit(quotas.MaxFileSize) {
+		httpx.Error(w, http.StatusRequestEntityTooLarge, "file exceeds configured size limit")
 		return
 	}
 	var previewData []byte
@@ -145,6 +175,28 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE users SET id=id WHERE id=?`, userID); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "upload failed")
+		return
+	}
+	quotas, err = settings.LoadFileQuotas(tx)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "file quota lookup failed")
+		return
+	}
+	if int64(len(data)) > storedFileSizeLimit(quotas.MaxFileSize) {
+		httpx.Error(w, http.StatusRequestEntityTooLarge, "file exceeds configured size limit")
+		return
+	}
+	used, err := fileUsage(tx, userID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "file quota lookup failed")
+		return
+	}
+	if used > quotas.MaxUserStorage || int64(len(data)) > quotas.MaxUserStorage-used {
+		httpx.Error(w, http.StatusRequestEntityTooLarge, "user file quota exceeded")
+		return
+	}
 	messageResult, err := tx.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,expires_at,created_at) VALUES(?,?,NULL,?,?,?)`,
 		input.ConversationID, userID, input.IV, expiresAt, now)
 	if err != nil {
@@ -304,4 +356,33 @@ func (h *Handler) isMember(conversationID, userID int64) bool {
 	var count int
 	return conversationID > 0 && h.DB.QueryRow(`SELECT COUNT(*) FROM conversation_members WHERE conversation_id=? AND user_id=? AND role<>'pending'`,
 		conversationID, userID).Scan(&count) == nil && count == 1
+}
+
+type fileUsageQueryer interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+func fileUsage(db fileUsageQueryer, userID int64) (int64, error) {
+	var used sql.NullInt64
+	if err := db.QueryRow(`SELECT COALESCE(SUM(size),0) FROM files WHERE owner_id=?`, userID).Scan(&used); err != nil {
+		return 0, err
+	}
+	if !used.Valid || used.Int64 < 0 {
+		return 0, nil
+	}
+	return used.Int64, nil
+}
+
+func storedFileSizeLimit(maxFileSize int64) int64 {
+	return maxFileSize + fileEncryptionOverhead
+}
+
+func fileRequestBodyLimit(maxFileSize int64) int64 {
+	encodedFile := ((storedFileSizeLimit(maxFileSize) + 2) / 3) * 4
+	encodedPreview := int64(((maxFilePreviewSize + fileEncryptionOverhead + 2) / 3) * 4)
+	limit := encodedFile + encodedPreview + 128<<10
+	if limit < maxFileRequestBodySize {
+		return maxFileRequestBodySize
+	}
+	return limit
 }

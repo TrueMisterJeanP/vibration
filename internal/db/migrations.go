@@ -186,6 +186,13 @@ var migrations = []string{
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL
 	)`,
+	`CREATE TABLE IF NOT EXISTS federation_replays (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		instance_id INTEGER NOT NULL REFERENCES federated_instances(id) ON DELETE CASCADE,
+		signature TEXT NOT NULL,
+		seen_at TEXT NOT NULL,
+		UNIQUE(instance_id, signature)
+	)`,
 	`CREATE TABLE IF NOT EXISTS federated_conversations (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		local_conversation_id INTEGER UNIQUE NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -216,7 +223,8 @@ var migrations = []string{
 		created_at TEXT NOT NULL,
 		sent_at TEXT,
 		locked_by TEXT,
-		locked_until_at TEXT
+		locked_until_at TEXT,
+		failed_at TEXT
 	)`,
 	`CREATE TABLE IF NOT EXISTS app_settings (
 		key TEXT PRIMARY KEY,
@@ -347,7 +355,7 @@ func Migrate(database *sql.DB) error {
 			return fmt.Errorf("add federated_instances.host: %w", err)
 		}
 	}
-	for _, column := range []string{"locked_by", "locked_until_at"} {
+	for _, column := range []string{"locked_by", "locked_until_at", "failed_at"} {
 		exists, err = columnExists(tx, "federation_outbox", column)
 		if err != nil {
 			return err
@@ -416,6 +424,7 @@ func Migrate(database *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_remote_users ON users(remote_instance_id, remote_username)`,
 		`CREATE INDEX IF NOT EXISTS idx_federated_instances_host ON federated_instances(host)`,
+		`CREATE INDEX IF NOT EXISTS idx_federation_replays_seen_at ON federation_replays(seen_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_federation_outbox_due ON federation_outbox(sent_at, next_attempt_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_federation_outbox_ready ON federation_outbox(sent_at, next_attempt_at, locked_until_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages(expires_at)`,

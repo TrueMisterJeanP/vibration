@@ -1,9 +1,10 @@
-const CACHE = "chat-pwa-go-v195";
+const CACHE = "chat-pwa-go-v198";
 const SHELL = [
-  "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=ios17-pdf-v199",
-  "/js/app.js?v=ios17-pdf-v199", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios17-pdf-v199", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js",
+  "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=ios17-pdf-v201",
+  "/js/app.js?v=ios17-pdf-v201", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios17-pdf-v199", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js",
   "/js/notifications.js", "/js/device-vault.js", "/js/i18n.js", "/js/ui.js?v=ios17-pdf-v199", "/js/share.js?v=ios17-pdf-v199", "/js/login.js", "/manifest.json",
   "/js/pdf-preview-compat.js?v=ios17-pdf-v199",
+  "/js/conversation-cache.js?v=cache-v1",
   "/js/file-preview-image.js?v=ios17-pdf-v199",
   "/js/office-preview.js?v=ios17-pdf-v199",
   "/vendor/pdfjs/pdf.compat.mjs?v=ios17-pdf-v199",

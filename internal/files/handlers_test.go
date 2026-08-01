@@ -14,6 +14,7 @@ import (
 
 	"chat-pwa-go/internal/auth"
 	database "chat-pwa-go/internal/db"
+	"chat-pwa-go/internal/settings"
 )
 
 type sentEvent struct {
@@ -50,6 +51,42 @@ func TestFileUploadLimitSupports25MiB(t *testing.T) {
 	)
 	if maxFileRequestBodySize < minimumJSONBodySize {
 		t.Fatalf("maxFileRequestBodySize=%d, need at least %d", maxFileRequestBodySize, minimumJSONBodySize)
+	}
+}
+
+func TestUploadEnforcesConfiguredFileAndUserQuotas(t *testing.T) {
+	db, conversationID, sender, _ := setupFileConversation(t)
+	defer db.Close()
+	if err := settings.SaveFileQuotas(db, settings.FileQuotas{MaxFileSize: 16, MaxUserStorage: 30}); err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{DB: db}
+	mux := fileMux(authHandlerForTest(db), handler)
+
+	tooLarge := uploadBody(conversationID)
+	tooLarge["encrypted_data"] = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte("x"), 100))
+	rejectedSize := fileRequest(t, mux, http.MethodPost, "/api/files", tooLarge, sender)
+	if rejectedSize.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("file quota status=%d body=%s", rejectedSize.Code, rejectedSize.Body.String())
+	}
+
+	uploaded := fileRequest(t, mux, http.MethodPost, "/api/files", uploadBody(conversationID), sender)
+	if uploaded.Code != http.StatusCreated {
+		t.Fatalf("first upload status=%d body=%s", uploaded.Code, uploaded.Body.String())
+	}
+	rejectedTotal := fileRequest(t, mux, http.MethodPost, "/api/files", uploadBody(conversationID), sender)
+	if rejectedTotal.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("user quota status=%d body=%s", rejectedTotal.Code, rejectedTotal.Body.String())
+	}
+	var messageCount, fileCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM messages WHERE sender_id=1`).Scan(&messageCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM files WHERE owner_id=1`).Scan(&fileCount); err != nil {
+		t.Fatal(err)
+	}
+	if messageCount != 1 || fileCount != 1 {
+		t.Fatalf("rejected upload left data behind: messages=%d files=%d", messageCount, fileCount)
 	}
 }
 
@@ -486,6 +523,7 @@ func fileMux(authHandler *auth.Handler, handler *Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/files", authHandler.Middleware(http.HandlerFunc(handler.Upload)))
 	mux.Handle("GET /api/files", authHandler.Middleware(http.HandlerFunc(handler.List)))
+	mux.Handle("GET /api/files/limits", authHandler.Middleware(http.HandlerFunc(handler.UploadLimits)))
 	mux.Handle("GET /api/files/{id}", authHandler.Middleware(http.HandlerFunc(handler.Download)))
 	mux.Handle("GET /api/files/{id}/preview", authHandler.Middleware(http.HandlerFunc(handler.Preview)))
 	mux.Handle("POST /api/files/{id}/shares", authHandler.Middleware(http.HandlerFunc(handler.CreateShare)))

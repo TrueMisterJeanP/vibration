@@ -12,6 +12,7 @@ import (
 
 	"chat-pwa-go/internal/auth"
 	"chat-pwa-go/internal/httpx"
+	"chat-pwa-go/internal/settings"
 )
 
 const shareTokenBytes = 32
@@ -43,13 +44,22 @@ func (h *Handler) CreateShare(w http.ResponseWriter, r *http.Request) {
 		Size             int64  `json:"size"`
 		ExpiresInSeconds int64  `json:"expires_in_seconds"`
 	}
-	if !httpx.DecodeWithLimit(w, r, &input, maxFileRequestBodySize) {
+	quotas, err := settings.LoadFileQuotas(h.DB)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "file quota lookup failed")
+		return
+	}
+	if !httpx.DecodeWithLimit(w, r, &input, fileRequestBodyLimit(quotas.MaxFileSize)) {
 		return
 	}
 	if len(input.EncryptedName) < 10 || len(input.EncryptedName) > 4096 ||
 		len(input.EncryptedMIME) < 10 || len(input.EncryptedMIME) > 4096 ||
-		len(input.IV) < 8 || len(input.IV) > 128 || input.Size <= 0 || input.Size > maxFileSize {
+		len(input.IV) < 8 || len(input.IV) > 128 || input.Size <= 0 {
 		httpx.Error(w, http.StatusBadRequest, "invalid encrypted file share")
+		return
+	}
+	if input.Size > quotas.MaxFileSize {
+		httpx.Error(w, http.StatusRequestEntityTooLarge, "file exceeds configured size limit")
 		return
 	}
 	data, err := base64.StdEncoding.DecodeString(input.EncryptedData)

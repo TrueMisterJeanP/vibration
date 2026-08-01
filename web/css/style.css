@@ -290,6 +290,11 @@ small { color: var(--muted); }
 }
 .file-preview { display: grid; place-items: center; width: 100%; min-width: 0; min-height: 4rem; overflow: hidden; border-radius: .7rem; background: rgb(0 0 0 / .18); color: var(--muted); }
 .file-preview img, .file-preview video { display: block; width: 100%; max-height: 420px; object-fit: contain; }
+.video-file-thumbnail { position: relative; width: 100%; overflow: hidden; }
+.video-file-thumbnail img { width: 100%; aspect-ratio: 16 / 9; max-height: 420px; object-fit: contain; background: #000; }
+.video-file-play-button { position: absolute; top: 50%; left: 50%; display: grid; place-items: center; width: 4rem; height: 4rem; padding: 0 0 0 .18rem; transform: translate(-50%, -50%); border: 1px solid rgb(255 255 255 / .72); border-radius: 50%; background: rgb(15 118 110 / .9); color: #fff; font-size: 1.45rem; line-height: 1; box-shadow: 0 .25rem .8rem rgb(0 0 0 / .28); }
+.video-file-play-button:hover, .video-file-play-button:focus-visible { background: rgb(13 148 136 / .98); }
+.video-file-play-button:disabled { cursor: wait; opacity: .7; }
 .file-preview audio { width: min(calc(100% - 1.3rem), 420px); margin: .65rem; }
 .file-preview-loading { padding: .8rem; color: var(--muted); }
 .file-preview .document-page-preview { display: block; width: min(100%, 460px); aspect-ratio: 210 / 297; border: 0; background: #ffffff; }
@@ -553,6 +558,7 @@ fieldset { min-width: 0; border: 1px solid var(--line); border-radius: .8rem; }
 .admin-row-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: .4rem; max-width: 100%; }
 .admin-row-actions button { padding: .5rem .65rem; font-size: .82rem; }
 .database-form { display: grid; gap: 1rem; min-width: 0; }
+#file-quotas-form + #invitation-form { margin-top: 1.4rem; }
 .webrtc-settings-form { margin-top: 1.4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
 .webrtc-settings-form .dialog-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .admin-db-status { min-height: 1.3rem; margin: 0; color: var(--muted); overflow-wrap: anywhere; }

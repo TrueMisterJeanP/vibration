@@ -47,6 +47,14 @@ async function load(language) {
     pt: ["As informações de registo são inválidas.", "O registo está desativado.", "O código de ativação é inválido.", "Este nome de utilizador já está a ser utilizado.", "Este nome apresentado já está a ser utilizado.", "Demasiadas tentativas. Tente novamente mais tarde.", "O registo falhou.", "Não foi possível proteger a palavra-passe.", "Não foi possível criar o código de recuperação.", "Não foi possível criar a sessão."],
     de: ["Die Registrierungsangaben sind ungültig.", "Die Registrierung ist deaktiviert.", "Der Aktivierungscode ist ungültig.", "Dieser Benutzername wird bereits verwendet.", "Dieser Anzeigename wird bereits verwendet.", "Zu viele Versuche. Versuchen Sie es später erneut.", "Die Registrierung ist fehlgeschlagen.", "Das Passwort konnte nicht geschützt werden.", "Der Wiederherstellungscode konnte nicht erstellt werden.", "Die Sitzung konnte nicht erstellt werden."],
   };
+  const expectedQuotas = {
+    en: ["File quotas", "Maximum file size (MB)", "Maximum per-user quota (GB)", "Save quotas", "File: 25 MB · User: 1 GB."],
+    fr: ["Quotas de fichiers", "Taille maximale d’un fichier (Mo)", "Quota maximal par utilisateur (Go)", "Enregistrer les quotas", "Fichier : 25 Mo · Utilisateur : 1 Go."],
+    es: ["Cuotas de archivos", "Tamaño máximo de un archivo (MB)", "Cuota máxima por usuario (GB)", "Guardar cuotas", "Archivo: 25 MB · Usuario: 1 GB."],
+    it: ["Quote dei file", "Dimensione massima di un file (MB)", "Quota massima per utente (GB)", "Salva quote", "File: 25 MB · Utente: 1 GB."],
+    pt: ["Quotas de ficheiros", "Tamanho máximo de um ficheiro (MB)", "Quota máxima por utilizador (GB)", "Guardar quotas", "Ficheiro: 25 MB · Utilizador: 1 GB."],
+    de: ["Dateikontingente", "Maximale Dateigröße (MB)", "Maximales Kontingent pro Benutzer (GB)", "Kontingente speichern", "Datei: 25 MB · Benutzer: 1 GB."],
+  };
 
   for (const [language, label] of Object.entries(expected)) {
     const i18n = await load(`${language}-TEST`);
@@ -57,6 +65,13 @@ async function load(language) {
     assert.equal(i18n.t("{visible} évènements ce mois · {total} au total", { visible: 2, total: 8 }).includes("8"), true);
     assert.notEqual(i18n.t("Droits administrateur accordés"), "", true);
     assert.notEqual(i18n.translateMultiline("CONDITIONS D’UTILISATION DE VIBRATION"), "", true);
+    assert.deepEqual([
+      i18n.t("Quotas de fichiers"),
+      i18n.t("Taille maximale d’un fichier (Mo)"),
+      i18n.t("Quota maximal par utilisateur (Go)"),
+      i18n.t("Enregistrer les quotas"),
+      i18n.t("Fichier : {file} · Utilisateur : {user}.", { file: i18n.t("{count} Mo", { count: 25 }), user: i18n.t("{count} Go", { count: 1 }) }),
+    ], expectedQuotas[language]);
     assert.deepEqual([
       i18n.t("Mes notes"),
       i18n.t("Messages et fichiers personnels"),

@@ -18,7 +18,7 @@ func TestOpenCreatesRequiredTables(t *testing.T) {
 	required := []string{
 		"users", "sessions", "contacts", "conversations", "conversation_members",
 		"messages", "message_events", "message_reactions", "message_pins", "poll_options", "poll_votes", "message_receipts", "files", "push_subscriptions", "admin_actions", "app_settings", "user_terms_acceptances",
-		"federated_instances", "federated_conversations", "federated_message_map", "federation_outbox",
+		"federated_instances", "federation_replays", "federated_conversations", "federated_message_map", "federation_outbox",
 	}
 	for _, table := range required {
 		var count int
@@ -339,7 +339,7 @@ func TestMigrateAddsFederationHostAndOutboxLockColumns(t *testing.T) {
 	if host != "remote.example:8443" {
 		t.Fatalf("host=%q", host)
 	}
-	for _, column := range []string{"locked_by", "locked_until_at"} {
+	for _, column := range []string{"locked_by", "locked_until_at", "failed_at"} {
 		var count int
 		if err := database.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('federation_outbox') WHERE name=?`, column).Scan(&count); err != nil {
 			t.Fatal(err)

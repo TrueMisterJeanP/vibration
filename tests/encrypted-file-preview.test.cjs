@@ -10,6 +10,8 @@ const server = fs.readFileSync(path.join(__dirname, "../cmd/server/main.go"), "u
 assert.match(app, /const FILE_PREVIEW_MAX_BYTES = 512 \* 1024/);
 assert.match(app, /async function encryptedFilePreview\(file, data, key\)/);
 assert.match(app, /mime === "application\/pdf"[\s\S]*pdfFilePreview\(data\)/);
+assert.match(app, /async function videoFilePreview\(file, data\)[\s\S]*video\.currentTime[\s\S]*return canvasJPEG\(canvas, 0\.78\)/);
+assert.match(app, /mime\.startsWith\("video\/"\)[\s\S]*videoFilePreview\(file, data\)/);
 assert.match(app, /modernOfficeKind\(\{ name: file\.name, mime \}\)[\s\S]*officeFilePreview\(file, data\)/);
 assert.match(app, /rasterOnly: true/);
 assert.match(app, /encrypted_preview_data: preview\?\.data \|\| ""/);
@@ -17,6 +19,9 @@ assert.match(app, /preview_iv: preview\?\.iv \|\| ""/);
 assert.match(app, /api\(`\/api\/files\/\$\{message\.file\.id\}\/preview`\)/);
 assert.match(ui, /preview\.dataset\.fileMime = clear\?\.mime \|\| ""/);
 assert.match(app, /previewMIME === "application\/pdf"[\s\S]*preparedPDFThumbnail\(thumbnail\)[\s\S]*fitPDFPreviewToAspect\(container, display\.width \|\| image\.naturalWidth, display\.height \|\| image\.naturalHeight\)/);
+assert.match(app, /video-file-play-button/);
+assert.match(app, /loadDecryptedFile\(message, key\)[\s\S]*renderVideoPlayer\(file, container, \{ poster: thumbnail\.url, autoplay: true \}\)/);
+assert.match(app, /function renderVideoPlayer\(file, container/);
 assert.match(app, /async function pdfFilePreview[\s\S]*canvasJPEG\(croppedPDFPreviewCanvas\(canvas, base\.width \/ base\.height\)\)/);
 assert.match(app, /async function preparedPDFThumbnail[\s\S]*croppedPDFPreviewCanvas\(canvas, source\.naturalWidth \/ source\.naturalHeight\)/);
 assert.match(app, /const displayedCanvas = croppedPDFPreviewCanvas\(canvas, baseViewport\.width \/ baseViewport\.height\)[\s\S]*const previewBlob = await canvasJPEG\(displayedCanvas, 0\.82\)/);
@@ -24,6 +29,8 @@ assert.match(app, /const previewURL = URL\.createObjectURL\(previewBlob\);[\s\S]
 assert.match(app, /fitPDFPreviewToAspect\(container, displayedCanvas\.width, displayedCanvas\.height\)/);
 assert.match(styles, /\.fitted-pdf-message \.file-attachment\s*\{[^}]*width:\s*var\(--pdf-preview-width\)/);
 assert.match(styles, /\.file-preview\.fitted-pdf-preview > img\s*\{[^}]*max-height:\s*none;/);
+assert.match(styles, /\.video-file-thumbnail\s*\{/);
+assert.match(styles, /\.video-file-play-button\s*\{/);
 
 for (const functionName of ["renderFilePreview", "renderReplyFilePreview"]) {
   const start = app.indexOf(`async function ${functionName}`);

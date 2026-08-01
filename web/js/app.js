@@ -47,6 +47,7 @@ import {
   preloadModernOfficePreview,
   renderModernOfficePreview,
 } from "./office-preview.js?v=ios17-pdf-v199";
+import { openConversationCache } from "./conversation-cache.js?v=cache-v1";
 
 const CALL_INVITE_TIMEOUT_MS = 45000;
 const CALL_SIGNAL_LOSS_GRACE_MS = 15000;
@@ -54,7 +55,7 @@ const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
 const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
 const FILE_PREVIEW_PREFETCH_BUDGET_BYTES = 8 * 1024 * 1024;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "ios17-pdf-v199";
+const APP_BUILD = "ios17-pdf-v201";
 
 window.VIBRATION_BUILD = APP_BUILD;
 console.info(`Vibration build ${APP_BUILD}`);
@@ -62,6 +63,8 @@ console.info(`Vibration build ${APP_BUILD}`);
 const state = {
   me: null,
   edition: { edition: "enterprise", admin_panel: true, manager_panel: true },
+  cache: null,
+  fileQuotas: null,
   privateKey: null,
   contacts: [],
   conversations: [],
@@ -539,6 +542,7 @@ function clearConversationMessageExpirations(conversationID) {
 }
 
 async function expireRenderedMessage(conversationID, messageID) {
+  state.cache?.deleteMessage(conversationID, messageID);
   state.messageClears.get(conversationID)?.delete(messageID);
   const key = messageTimerKey(conversationID, messageID);
   clearTimeout(state.messageExpiryTimers.get(key));
@@ -585,6 +589,16 @@ async function boot() {
     }
     state.me = me;
     state.edition = edition;
+    state.cache = await openConversationCache(getInstanceURL(), state.me);
+    try {
+      state.fileQuotas = await api("/api/files/limits");
+    } catch {
+      state.fileQuotas = {
+        max_file_size: 25 * 1024 * 1024,
+        max_user_storage: 1024 * 1024 * 1024,
+        used_storage: 0,
+      };
+    }
   } catch (error) {
     location.replace("/login.html");
     return;
@@ -1448,6 +1462,10 @@ function connectSocket() {
     if (detail) {
       clearCallSignalLossTimer();
       resumePendingCallIceRestarts();
+      if (state.conversations.length) {
+        refreshConversationList().catch(() => {});
+        if (state.current) loadMessages(null, false).catch(() => {});
+      }
     } else {
       state.onlineUsers.clear();
       renderConversations().catch(() => {});
@@ -1460,6 +1478,13 @@ function connectSocket() {
 }
 
 async function refreshAll() {
+  if (!state.conversations.length) {
+    const cachedConversations = await state.cache?.getConversations();
+    if (cachedConversations?.length) {
+      state.conversations = cachedConversations;
+      await renderConversations();
+    }
+  }
   let [contacts, conversations] = await Promise.all([api("/api/contacts"), api("/api/conversations")]);
   if (!conversations.some((conversation) => conversation.is_personal)) {
     await api("/api/conversations/personal", { method: "POST" });
@@ -1468,11 +1493,13 @@ async function refreshAll() {
   state.contacts = contacts;
   state.conversations = conversations;
   state.members.clear();
+  state.cache?.saveConversations(conversations);
   await renderConversations();
 }
 
 async function refreshConversationList() {
   state.conversations = await api("/api/conversations");
+  state.cache?.saveConversations(state.conversations);
   await renderConversations();
 }
 
@@ -1500,6 +1527,7 @@ function refreshConversationListOnForeground() {
   refreshConversationList().catch((error) => {
     console.warn("Actualisation des conversations au retour impossible", error);
   });
+  if (state.current) loadMessages(null, false).catch(() => {});
 }
 
 function conversationCallState(conversation) {
@@ -1982,6 +2010,7 @@ async function deleteConversation(conversation, button) {
     state.keys.delete(conversation.id);
     state.members.delete(conversation.id);
     state.messageClears.delete(conversation.id);
+    state.cache?.deleteConversation(conversation.id);
     await refreshAll();
     toast(result.action === "left" ? "Vous avez quitté le groupe." : conversation.type === "private" ? "Contact supprimé." : "Discussion supprimée.", "success");
   } catch (error) {
@@ -1993,7 +2022,20 @@ async function deleteConversation(conversation, button) {
 
 async function getMembers(conversationID) {
   if (!state.members.has(conversationID)) {
-    state.members.set(conversationID, await api(`/api/conversations/${conversationID}/members`));
+    const cached = await state.cache?.getMembers(conversationID);
+    if (cached?.length) {
+      state.members.set(conversationID, cached);
+      api(`/api/conversations/${conversationID}/members`)
+        .then((members) => {
+          state.members.set(conversationID, members);
+          state.cache?.saveMembers(conversationID, members);
+        })
+        .catch(() => {});
+    } else {
+      const members = await api(`/api/conversations/${conversationID}/members`);
+      state.members.set(conversationID, members);
+      state.cache?.saveMembers(conversationID, members);
+    }
   }
   return state.members.get(conversationID);
 }
@@ -3907,30 +3949,57 @@ async function handleCallSignal(event) {
   }
 }
 
-async function loadMessages(targetMessageID = null) {
+async function loadMessages(targetMessageID = null, useCache = true) {
   const conversation = state.current;
   if (!conversation) return;
   const conversationID = conversation.id;
   closeReactionPicker();
+  let cachedDisplayed = false;
+  if (!targetMessageID && useCache) {
+    const cachedMessages = await state.cache?.getMessages(conversationID);
+    if (cachedMessages?.length && sameID(state.current?.id, conversationID)) {
+      try {
+        await renderMessages(cachedMessages, conversation);
+        cachedDisplayed = true;
+      } catch (error) {
+        console.warn("Affichage du cache local impossible", error);
+      }
+    }
+  }
+  try {
+    let messages;
+    if (targetMessageID) {
+      const target = Number(targetMessageID);
+      const [older, newer] = await Promise.all([
+        api(`/api/conversations/${conversationID}/messages?limit=25&before=${target + 1}`),
+        api(`/api/conversations/${conversationID}/messages?limit=25&after=${target}`),
+      ]);
+      if (!sameID(state.current?.id, conversationID)) return;
+      messages = [...new Map([...older, ...newer].map((message) => [String(message.id), message])).values()]
+        .sort((left, right) => Number(left.id) - Number(right.id));
+      state.cache?.putMessages(messages);
+    } else {
+      messages = await api(`/api/conversations/${conversationID}/messages?limit=50`);
+      if (!sameID(state.current?.id, conversationID)) return;
+      state.cache?.replaceMessages(conversationID, messages);
+    }
+    await renderMessages(messages, conversation);
+  } catch (error) {
+    if (cachedDisplayed && sameID(state.current?.id, conversationID)) {
+      console.warn("Synchronisation de la discussion impossible, cache local conservé", error);
+      return;
+    }
+    throw error;
+  }
+}
+
+async function renderMessages(messages, conversation) {
+  const conversationID = conversation.id;
+  if (!sameID(state.current?.id, conversationID)) return;
   clearRenderedFilePreviews();
   clearConversationMessageExpirations(conversationID);
-  let messages;
-  if (targetMessageID) {
-    const target = Number(targetMessageID);
-    const [older, newer] = await Promise.all([
-      api(`/api/conversations/${conversationID}/messages?limit=25&before=${target + 1}`),
-      api(`/api/conversations/${conversationID}/messages?limit=25&after=${target}`),
-    ]);
-    if (!sameID(state.current?.id, conversationID)) return;
-    messages = [...new Map([...older, ...newer].map((message) => [String(message.id), message])).values()]
-      .sort((left, right) => Number(left.id) - Number(right.id));
-  } else {
-    messages = await api(`/api/conversations/${conversationID}/messages?limit=50`);
-    if (!sameID(state.current?.id, conversationID)) return;
-  }
+  state.messageClears.set(conversationID, new Map());
   if (!messages.length) {
-    if (!sameID(state.current?.id, conversationID)) return;
-    state.messageClears.set(conversationID, new Map());
     const empty = document.createElement("div");
     empty.id = "empty-chat";
     empty.textContent = t("Aucun message. Écrivez le premier message chiffré.");
@@ -4170,7 +4239,7 @@ async function updateMessageReaction(message, emoji) {
       method: "POST",
       body: { emoji },
     });
-    await loadMessages();
+    await loadMessages(null, false);
   } catch (error) {
     toast(frenchErrorMessage(error, "Impossible d’ajouter la réaction."), "error");
   }
@@ -4190,7 +4259,7 @@ async function togglePinnedMessage(message) {
       method: "POST",
       body: { pinned: !message.is_pinned },
     });
-    await loadMessages();
+    await loadMessages(null, false);
     if (!elements.pinnedPanel.hidden) await loadPinnedMessages();
     toast(message.is_pinned ? "Message désépinglé." : "Message épinglé.", "success");
   } catch (error) {
@@ -4285,6 +4354,7 @@ function pinnedMessagePreview(message, clear) {
 }
 
 async function appendMessage(message, scroll = true) {
+  state.cache?.putMessages([message]);
   if (elements.messages.querySelector(`[data-id="${message.id}"]`)) return;
   const conversation = state.current;
   if (!conversation || !sameID(conversation.id, message.conversation_id)) return;
@@ -4427,7 +4497,7 @@ async function submitPoll(event) {
         body: { encrypted_content: encrypted.data, iv: encrypted.iv, option_count: options.length, expires_in_seconds: expiresInSeconds },
       });
       closePollDialog();
-      await loadMessages();
+      await loadMessages(null, false);
       await refreshConversationList();
       toast("Sondage modifié. Les votes ont été remis à zéro.", "success");
     } else {
@@ -4451,7 +4521,7 @@ async function votePoll(message, optionID) {
   if (message.poll?.has_voted) return;
   if (message.poll?.closed || (message.poll?.expires_at && Date.parse(message.poll.expires_at) <= Date.now())) {
     toast("Ce sondage est terminé.", "error");
-    await loadMessages();
+    await loadMessages(null, false);
     return;
   }
   try {
@@ -4459,7 +4529,7 @@ async function votePoll(message, optionID) {
       method: "POST",
       body: { option_id: optionID },
     });
-    await loadMessages();
+    await loadMessages(null, false);
     toast("Vote enregistré.", "success");
   } catch (error) {
     const messageText = /poll expired/i.test(error?.message || "")
@@ -4530,7 +4600,7 @@ async function submitEvent(event) {
     if (editing) {
       await api(`/api/messages/${editing.message.id}/event`, { method: "PUT", body });
       closeEventDialog();
-      await loadMessages();
+      await loadMessages(null, false);
       await refreshConversationList();
       toast("Évènement modifié.", "success");
     } else {
@@ -5056,6 +5126,77 @@ async function rasterFilePreview(file, data) {
   }
 }
 
+async function videoFilePreview(file, data) {
+  const mime = normalizedFileMIME(file.type, file.name);
+  const sourceURL = URL.createObjectURL(new Blob([data], { type: mime }));
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "metadata";
+  video.src = sourceURL;
+
+  let timeout;
+  const waitFor = (eventName, timeoutMs) => new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timeout);
+      video.removeEventListener(eventName, onEvent);
+      video.removeEventListener("error", onError);
+    };
+    const onEvent = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error("Vidéo illisible."));
+    };
+    timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Le chargement de la vidéo a expiré."));
+    }, timeoutMs);
+    video.addEventListener(eventName, onEvent, { once: true });
+    video.addEventListener("error", onError, { once: true });
+  });
+
+  try {
+    video.load();
+    if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
+      await waitFor("loadedmetadata", 12000);
+    }
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    if (!width || !height) return null;
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      await waitFor("loadeddata", 12000);
+    }
+    if (Number.isFinite(video.duration) && video.duration > 0.5) {
+      const target = Math.min(3, video.duration * 0.1);
+      try {
+        video.currentTime = target;
+        await waitFor("seeked", 3000);
+      } catch {
+        // La première image reste une miniature acceptable si la recherche
+        // d’une image plus représentative n’est pas supportée.
+      }
+    }
+    const scale = Math.min(1, 640 / width, 640 / height);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext("2d", { alpha: false });
+    context.fillStyle = "#000000";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvasJPEG(canvas, 0.78);
+  } finally {
+    clearTimeout(timeout);
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    URL.revokeObjectURL(sourceURL);
+  }
+}
+
 async function pdfFilePreview(data) {
   const pdfjs = await compatiblePDFJS();
   let loadingTask;
@@ -5110,6 +5251,8 @@ async function encryptedFilePreview(file, data, key) {
     let blob = null;
     if (/^image\/(avif|bmp|gif|jpeg|png|webp)$/i.test(mime)) {
       blob = await rasterFilePreview(file, data);
+    } else if (mime.startsWith("video/")) {
+      blob = await videoFilePreview(file, data);
     } else if (mime === "application/pdf") {
       blob = await pdfFilePreview(data);
     } else if (modernOfficeKind({ name: file.name, mime })) {
@@ -5124,8 +5267,15 @@ async function encryptedFilePreview(file, data, key) {
 }
 
 async function sendEncryptedFile(file, successMessage) {
-  if (file.size > 25 * 1024 * 1024) {
-    toast("Le fichier dépasse la limite de 25 Mo.", "error");
+  const maxFileSize = Number(state.fileQuotas?.max_file_size || 25 * 1024 * 1024);
+  const maxUserStorage = Number(state.fileQuotas?.max_user_storage || 1024 * 1024 * 1024);
+  const usedStorage = Number(state.fileQuotas?.used_storage || 0);
+  if (file.size > maxFileSize) {
+    toast(`Le fichier dépasse la limite de ${formatFileQuotaSize(maxFileSize)}.`, "error");
+    return false;
+  }
+  if (usedStorage > maxUserStorage || file.size + 16 > maxUserStorage - usedStorage) {
+    toast("Le quota total de fichiers de votre compte est atteint.", "error");
     return false;
   }
   const conversation = state.current;
@@ -5154,6 +5304,7 @@ async function sendEncryptedFile(file, successMessage) {
         expires_in_seconds: expiresInSeconds,
       },
     });
+    state.fileQuotas.used_storage = usedStorage + data.byteLength + 16;
     await appendMessage(message);
     await refreshConversationList();
     toast(successMessage, "success");
@@ -5162,6 +5313,11 @@ async function sendEncryptedFile(file, successMessage) {
     toast(frenchErrorMessage(error), "error");
     return false;
   }
+}
+
+function formatFileQuotaSize(bytes) {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(2).replace(/\.00$/, "")} Go`;
+  return `${(bytes / (1024 * 1024)).toFixed(2).replace(/\.00$/, "")} Mo`;
 }
 
 function setVoiceDraft(file) {
@@ -5446,7 +5602,7 @@ async function editMessage(message, clear, row) {
       method: "PUT",
       body: { encrypted_content: encrypted.data, iv: encrypted.iv },
     });
-    await loadMessages();
+    await loadMessages(null, false);
     toast("Message modifié.", "success");
   } catch (error) {
     row.classList.remove("action-pending");
@@ -5469,6 +5625,7 @@ async function deleteMessage(message, row) {
   row.classList.add("message-deleting");
   try {
     await api(`/api/messages/${message.id}`, { method: "DELETE" });
+    state.cache?.deleteMessage(message.conversation_id, message.id);
     if (message.file) {
       const cached = state.files.get(message.file.id);
       if (cached) URL.revokeObjectURL(cached.url);
@@ -5504,7 +5661,11 @@ async function loadDecryptedFile(message, key) {
   if (pending) return pending;
   const generation = state.fileCacheGeneration;
   const load = (async () => {
-    const payload = await api(`/api/files/${message.file.id}`);
+    let payload = await state.cache?.getFilePayload(message.file.id);
+    if (!payload) {
+      payload = await api(`/api/files/${message.file.id}`);
+      state.cache?.saveFilePayload(message.file.id, payload);
+    }
     const [name, mime, data] = await Promise.all([
       decryptEnvelope(key, payload.encrypted_name),
       decryptEnvelope(key, payload.encrypted_mime),
@@ -5536,7 +5697,11 @@ async function loadDecryptedFileThumbnail(message, key) {
   if (pending) return pending;
   const generation = state.fileCacheGeneration;
   const load = (async () => {
-    const payload = await api(`/api/files/${message.file.id}/preview`);
+    let payload = await state.cache?.getFilePreview(message.file.id);
+    if (!payload) {
+      payload = await api(`/api/files/${message.file.id}/preview`);
+      state.cache?.saveFilePreview(message.file.id, payload);
+    }
     const data = await decryptBytes(key, payload.encrypted_data, payload.iv);
     if (data.byteLength === 0 || data.byteLength > FILE_PREVIEW_MAX_BYTES) {
       throw new Error("L’aperçu du fichier est invalide.");
@@ -5574,14 +5739,41 @@ async function renderEncryptedFileThumbnail(message, container, key) {
     if (!container.isConnected) return false;
     const image = document.createElement("img");
     image.src = display.url;
-    image.alt = t("Aperçu");
+    image.alt = previewMIME.startsWith("video/") ? t("Aperçu de la vidéo") : t("Aperçu");
     image.decoding = "async";
     image.loading = "eager";
     if (previewMIME === "application/pdf" && !container.classList.contains("message-reply-file-thumb")) {
       markPDFFilePreview(container);
       fitPDFPreviewToAspect(container, display.width || image.naturalWidth, display.height || image.naturalHeight);
     }
-    container.replaceChildren(image);
+    if (previewMIME.startsWith("video/") && !container.classList.contains("message-reply-file-thumb")) {
+      const frame = document.createElement("div");
+      frame.className = "video-file-thumbnail";
+      const play = document.createElement("button");
+      play.type = "button";
+      play.className = "video-file-play-button";
+      play.textContent = "▶";
+      play.title = t("Lire la vidéo");
+      play.setAttribute("aria-label", t("Lire la vidéo"));
+      play.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        play.disabled = true;
+        play.setAttribute("aria-busy", "true");
+        try {
+          const file = await loadDecryptedFile(message, key);
+          if (container.isConnected) renderVideoPlayer(file, container, { poster: thumbnail.url, autoplay: true });
+        } catch (error) {
+          play.disabled = false;
+          play.removeAttribute("aria-busy");
+          toast(frenchErrorMessage(error, "Impossible de charger la vidéo."), "error");
+        }
+      });
+      frame.append(image, play);
+      container.replaceChildren(frame);
+    } else {
+      container.replaceChildren(image);
+    }
     return true;
   } catch (error) {
     console.warn("Chargement de l’aperçu chiffré impossible, utilisation du fichier original", error);
@@ -6071,6 +6263,20 @@ async function renderAudioPreview(file, container) {
   container.replaceChildren(audio);
 }
 
+function renderVideoPlayer(file, container, { poster = "", preload = "auto", autoplay = false } = {}) {
+  const video = document.createElement("video");
+  video.src = file.url;
+  video.controls = true;
+  video.preload = preload;
+  video.playsInline = true;
+  video.setAttribute("playsinline", "");
+  video.setAttribute("aria-label", t("Lire {name}", { name: file.name }));
+  if (poster) video.poster = poster;
+  container.replaceChildren(video);
+  if (autoplay) video.play().catch(() => {});
+  return video;
+}
+
 async function renderFilePreview(message, container, key) {
   try {
     if (await renderEncryptedFileThumbnail(message, container, key) || !container.isConnected) return;
@@ -6096,11 +6302,7 @@ async function renderFilePreview(message, container, key) {
       return;
     }
     if (mime.startsWith("video/")) {
-      const video = document.createElement("video");
-      video.src = file.url;
-      video.controls = true;
-      video.preload = "auto";
-      container.append(video);
+      renderVideoPlayer(file, container);
       return;
     }
     if (mime.startsWith("audio/")) {
@@ -6478,6 +6680,7 @@ async function handleSocketEvent(event) {
     sessionStorage.removeItem("crypto_phrase");
     location.href = "/login.html";
   } else if (event.type === "new_message") {
+    state.cache?.putMessages([event.message]);
     const isCallHistory = await isIncomingCallHistoryMessage(event.message).catch(() => false);
     const sentFromOwnAccount = sameID(event.message.sender_id, state.me.id);
     if (!isCallHistory && !sentFromOwnAccount) await showIncomingMessageNotification().catch(() => {});
@@ -6513,12 +6716,14 @@ async function handleSocketEvent(event) {
       state.keys.delete(event.conversation_id);
     }
     state.conversations = await api("/api/conversations");
+    state.cache?.saveConversations(state.conversations);
     await renderConversations();
+    if (event.deleted || event.removed) state.cache?.deleteConversation(event.conversation_id);
     if (!(event.deleted || event.removed) && sameID(currentID, event.conversation_id)) {
       await refreshCurrentConversationHeader(currentID);
     }
     if ((event.deleted_message_id || event.updated_message_id || event.reaction_message_id || event.pinned_message_id || event.poll_message_id || event.profile_updated) && sameID(currentID, event.conversation_id)) {
-      await loadMessages();
+      await loadMessages(null, false);
       if (event.pinned_message_id && !elements.pinnedPanel.hidden) await loadPinnedMessages();
     }
   } else if (event.type === "typing") {
