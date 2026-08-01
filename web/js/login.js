@@ -21,6 +21,7 @@ let retryLoginAfterInstanceUpdate = false;
 let registrationSettingsRequest = 0;
 let termsAcceptancePromise = null;
 const SHARE_RETURN_STORAGE_KEY = "vibration.file_share_return";
+const invitationLinkCode = new URLSearchParams(location.search).get("invitation")?.trim().toLowerCase() || "";
 
 function postAuthenticationDestination() {
   if (new URLSearchParams(location.search).get("return_share") !== "1") return "/";
@@ -184,9 +185,11 @@ function showRecoveryCode(code) {
 }
 
 function setInvitationCodeRequired(required) {
-  invitationCodeLabel.hidden = !required;
-  registerForm.elements.invitation_code.required = required;
-  if (!required) registerForm.elements.invitation_code.value = "";
+  const fromInvitationLink = Boolean(invitationLinkCode);
+  invitationCodeLabel.hidden = !required && !fromInvitationLink;
+  registerForm.elements.invitation_code.required = required || fromInvitationLink;
+  registerForm.elements.invitation_code.readOnly = fromInvitationLink;
+  registerForm.elements.invitation_code.value = fromInvitationLink ? invitationLinkCode : (required ? registerForm.elements.invitation_code.value : "");
 }
 
 let registrationSettingsTimer;
@@ -349,6 +352,7 @@ registerForm.addEventListener("submit", async (event) => {
         username: data.username.toLowerCase(),
         display_name: data.display_name,
         invitation_code: data.invitation_code,
+        invitation_link: Boolean(invitationLinkCode),
         password: data.password,
         desktop_client: isDesktopClient(),
         ...identity,

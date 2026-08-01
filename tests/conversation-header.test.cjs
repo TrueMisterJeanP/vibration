@@ -16,6 +16,7 @@ assert.ok(avatarPosition < titlePosition, "the avatar must appear before the con
 assert.match(html, /id="chat-title"[\s\S]*id="chat-description"/);
 assert.match(html, /button id="close-sidebar-logo"[\s\S]*aria-controls="profile-dialog"/);
 assert.match(html, /id="open-sidebar-logo"[\s\S]*header-conversation-initial/);
+assert.match(html, /id="group-avatar-preview" class="profile-avatar-preview"/);
 assert.doesNotMatch(
   html.slice(mobileButtonStart, mobileButtonEnd),
   /brand-mark/,
@@ -64,6 +65,9 @@ assert.match(css, /\.personal-note-avatar svg\s*\{/);
 assert.match(css, /--avatar-bg: #1b5260;[\s\S]*--avatar-fg: #a9fff4;/);
 assert.match(css, /\.brand-logo-button\.has-conversation-avatar\s*\{[^}]*background: var\(--avatar-bg\);[^}]*color: var\(--avatar-fg\);/);
 assert.match(css, /\.avatar\s*\{[^}]*background: var\(--avatar-bg\);[^}]*color: var\(--avatar-fg\);/);
+assert.match(css, /\.profile-avatar-preview\s*\{[^}]*background: var\(--avatar-bg\);/);
+assert.match(css, /\.group-avatar-preview-icon\s*\{[^}]*stroke: currentColor;/);
+assert.match(app, /function renderGroupAvatarPreview\(container, avatar\)/);
 assert.match(css, /:root\[data-theme="light"\]\s*\{ --avatar-bg: #c9e7e4; --avatar-fg: #075e57; \}/);
 assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.chat-conversation-avatar \{ display: none; \}/);
 

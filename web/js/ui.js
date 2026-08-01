@@ -426,7 +426,7 @@ export function bindSwipeActions(surface, row, distance = 104) {
   let offset = 0;
   let dragging = false;
   let horizontal = false;
-  let suppressClick = false;
+  let suppressClickUntil = 0;
   const apply = (value, animate = false) => {
     offset = Math.max(-distance, Math.min(0, value));
     surface.style.transition = animate ? "transform .18s ease" : "none";
@@ -450,11 +450,12 @@ export function bindSwipeActions(surface, row, distance = 104) {
     const deltaY = y - startY;
     if (!horizontal && Math.abs(deltaY) > Math.abs(deltaX) && Math.abs(deltaY) > 8) {
       dragging = false;
+      suppressClickUntil = Date.now() + 500;
       return;
     }
     if (Math.abs(deltaX - offset) > 6) horizontal = true;
     if (!horizontal) return;
-    suppressClick = true;
+    suppressClickUntil = Date.now() + 500;
     apply(deltaX);
   };
   const end = () => {
@@ -491,10 +492,10 @@ export function bindSwipeActions(surface, row, distance = 104) {
   surface.addEventListener("touchend", end);
   surface.addEventListener("touchcancel", end);
   surface.addEventListener("click", (event) => {
-    if (!suppressClick) return;
+    if (Date.now() >= suppressClickUntil) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    suppressClick = false;
+    suppressClickUntil = 0;
   }, true);
   row.addEventListener("swipe-close", () => apply(0, true));
   apply(0);

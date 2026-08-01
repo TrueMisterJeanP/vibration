@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"chat-pwa-go/internal/auth"
+	"chat-pwa-go/internal/carnet"
 	"chat-pwa-go/internal/httpx"
 )
 
@@ -143,6 +144,7 @@ func (h *Handler) CreatePrivate(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, "conversation creation failed")
 		return
 	}
+	_ = carnet.Ensure(h.DB, ownerID, input.UserID)
 	h.notifyMembers(id, "conversation_updated")
 	httpx.JSON(w, http.StatusCreated, map[string]any{"id": id})
 }
@@ -244,6 +246,8 @@ func (h *Handler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "group creation failed")
 		return
 	}
+	// Other members are pending until they accept the invitation. Their carnet
+	// is populated when the group membership becomes active.
 	h.notifyMembers(id, "conversation_updated")
 	if h.Federation != nil {
 		h.Federation.QueueGroupCreate(id)
@@ -471,6 +475,7 @@ func (h *Handler) Accept(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "conversation not found")
 		return
 	}
+	_ = carnet.Sync(h.DB, userID)
 	h.notifyMembers(conversationID, "conversation_updated")
 	if h.Federation != nil {
 		h.Federation.QueueGroupAccept(conversationID, userID)
@@ -575,6 +580,24 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "conversation not found")
 		return
 	}
+	rows, err := h.DB.Query(`SELECT user_id FROM conversation_members WHERE conversation_id=?`, conversationID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "conversation deletion failed")
+		return
+	}
+	var memberIDs []int64
+	for rows.Next() {
+		var memberID int64
+		if rows.Scan(&memberID) == nil {
+			memberIDs = append(memberIDs, memberID)
+		}
+	}
+	rows.Close()
+	for _, memberID := range memberIDs {
+		if memberID != userID {
+			_ = carnet.Ensure(h.DB, userID, memberID)
+		}
+	}
 	if kind == "group" && ownerID != userID {
 		if h.Federation != nil {
 			h.Federation.QueueGroupDelete(conversationID, userID)
@@ -593,19 +616,6 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	if kind == "group" && h.Federation != nil {
 		h.Federation.QueueGroupDelete(conversationID, userID)
 	}
-	rows, err := h.DB.Query(`SELECT user_id FROM conversation_members WHERE conversation_id=?`, conversationID)
-	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "conversation deletion failed")
-		return
-	}
-	var memberIDs []int64
-	for rows.Next() {
-		var memberID int64
-		if rows.Scan(&memberID) == nil {
-			memberIDs = append(memberIDs, memberID)
-		}
-	}
-	rows.Close()
 	if kind == "private" && len(memberIDs) == 1 && memberIDs[0] == userID {
 		httpx.Error(w, http.StatusForbidden, "personal conversation cannot be deleted")
 		return

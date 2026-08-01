@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"chat-pwa-go/internal/auth"
+	"chat-pwa-go/internal/carnet"
 	"chat-pwa-go/internal/httpx"
 )
 
@@ -30,6 +31,126 @@ type Contact struct {
 	Status         string  `json:"status"`
 	Direction      string  `json:"direction"`
 	CreatedAt      string  `json:"created_at"`
+}
+
+type CarnetEntry struct {
+	ID                    int64   `json:"id"`
+	ContactUserID         int64   `json:"contact_user_id"`
+	Username              string  `json:"username"`
+	DisplayName           string  `json:"display_name"`
+	Description           string  `json:"description"`
+	Avatar                *string `json:"avatar"`
+	IsRemote              bool    `json:"is_remote"`
+	RemoteInstanceID      *int64  `json:"remote_instance_id"`
+	RemoteUsername        *string `json:"remote_username"`
+	FederationInstanceURL *string `json:"federation_instance_url"`
+	Active                bool    `json:"active"`
+	CanResume             bool    `json:"can_resume"`
+}
+
+func (h *Handler) CarnetList(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserID(r)
+	if err := carnet.Sync(h.DB, userID); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "carnet synchronization failed")
+		return
+	}
+	rows, err := h.DB.Query(`SELECT b.id,b.contact_user_id,COALESCE(u.remote_username,u.username),u.display_name,u.description,u.avatar,
+		u.is_remote,u.remote_instance_id,u.remote_username,fi.base_url,
+		(SELECT COUNT(*) FROM conversation_members mine
+			JOIN conversations c ON c.id=mine.conversation_id AND c.type IN ('private','group')
+			JOIN conversation_members peer ON peer.conversation_id=mine.conversation_id
+			WHERE mine.user_id=? AND mine.role<>'pending' AND peer.user_id=b.contact_user_id AND peer.role<>'pending')
+		FROM carnet_entries b JOIN users u ON u.id=b.contact_user_id
+		LEFT JOIN federated_instances fi ON fi.id=u.remote_instance_id
+		WHERE b.owner_id=?
+		ORDER BY LOWER(COALESCE(u.remote_username,u.username)),LOWER(u.display_name)`, userID, userID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "carnet lookup failed")
+		return
+	}
+	defer rows.Close()
+	entries := make([]CarnetEntry, 0)
+	for rows.Next() {
+		var entry CarnetEntry
+		var remoteInstanceID sql.NullInt64
+		var remoteUsername, instanceURL sql.NullString
+		var activeCount int
+		if err := rows.Scan(&entry.ID, &entry.ContactUserID, &entry.Username, &entry.DisplayName, &entry.Description, &entry.Avatar,
+			&entry.IsRemote, &remoteInstanceID, &remoteUsername, &instanceURL, &activeCount); err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "carnet lookup failed")
+			return
+		}
+		if remoteInstanceID.Valid {
+			value := remoteInstanceID.Int64
+			entry.RemoteInstanceID = &value
+		}
+		if remoteUsername.Valid {
+			value := remoteUsername.String
+			entry.RemoteUsername = &value
+		}
+		if instanceURL.Valid {
+			value := instanceURL.String
+			entry.FederationInstanceURL = &value
+		}
+		entry.Active = activeCount > 0
+		entry.CanResume = !entry.IsRemote || entry.RemoteInstanceID != nil
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "carnet lookup failed")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, entries)
+}
+
+func (h *Handler) CarnetDelete(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathID(r, "id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	userID := auth.UserID(r)
+	var contactID int64
+	if err := h.DB.QueryRow(`SELECT contact_user_id FROM carnet_entries WHERE id=? AND owner_id=?`, id, userID).Scan(&contactID); err != nil {
+		httpx.Error(w, http.StatusNotFound, "carnet entry not found")
+		return
+	}
+	active, err := carnet.Active(h.DB, userID, contactID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "carnet status lookup failed")
+		return
+	}
+	if active {
+		httpx.Error(w, http.StatusConflict, "active carnet entry cannot be deleted")
+		return
+	}
+	result, err := h.DB.Exec(`DELETE FROM carnet_entries WHERE id=? AND owner_id=?`, id, userID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "carnet deletion failed")
+		return
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		httpx.Error(w, http.StatusNotFound, "carnet entry not found")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (h *Handler) CarnetDeleteAll(w http.ResponseWriter, r *http.Request) {
+	userID := auth.UserID(r)
+	result, err := h.DB.Exec(`DELETE FROM carnet_entries
+		WHERE owner_id=? AND NOT EXISTS(
+			SELECT 1 FROM conversation_members mine
+			JOIN conversations c ON c.id=mine.conversation_id AND c.type IN ('private','group')
+			JOIN conversation_members peer ON peer.conversation_id=mine.conversation_id
+			WHERE mine.user_id=? AND mine.role<>'pending' AND peer.user_id=carnet_entries.contact_user_id AND peer.role<>'pending')`, userID, userID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "carnet deletion failed")
+		return
+	}
+	deleted, _ := result.RowsAffected()
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": deleted})
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -203,6 +324,14 @@ func (h *Handler) deleteRelation(userID, otherID int64) ([]int64, error) {
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	if len(conversationIDs) > 0 {
+		if err := carnet.Ensure(h.DB, userID, otherID); err != nil {
+			return nil, err
+		}
+		if err := carnet.Ensure(h.DB, otherID, userID); err != nil {
+			return nil, err
+		}
+	}
 	return conversationIDs, nil
 }
 
@@ -238,6 +367,8 @@ func (h *Handler) accept(id, userID int64) (int64, bool) {
 	if tx.Commit() != nil {
 		return 0, false
 	}
+	_ = carnet.Ensure(h.DB, requesterID, userID)
+	_ = carnet.Ensure(h.DB, userID, requesterID)
 	h.notify(userID, requesterID)
 	return conversationID, true
 }

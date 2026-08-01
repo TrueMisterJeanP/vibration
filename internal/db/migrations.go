@@ -49,6 +49,13 @@ var migrations = []string{
 		created_at TEXT NOT NULL,
 		UNIQUE(owner_id, contact_user_id)
 	)`,
+	`CREATE TABLE IF NOT EXISTS carnet_entries (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		contact_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		created_at TEXT NOT NULL,
+		UNIQUE(owner_id, contact_user_id)
+	)`,
 	`CREATE TABLE IF NOT EXISTS conversations (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		type TEXT NOT NULL CHECK(type IN ('private','group')),
@@ -101,6 +108,29 @@ var migrations = []string{
 		message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
 		starts_at TEXT NOT NULL,
 		ends_at TEXT NOT NULL
+	)`,
+	`CREATE TABLE IF NOT EXISTS calendar_feeds (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		token_hash TEXT UNIQUE NOT NULL,
+		snapshot TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		revoked_at TEXT
+	)`,
+	`CREATE TABLE IF NOT EXISTS invitation_contacts (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		first_name TEXT NOT NULL DEFAULT '',
+		last_name TEXT NOT NULL DEFAULT '',
+		email TEXT NOT NULL DEFAULT '',
+		phone TEXT NOT NULL DEFAULT '',
+		code_hash TEXT UNIQUE NOT NULL,
+		expires_at TEXT NOT NULL,
+		used_at TEXT,
+		accepted_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		revoked_at TEXT,
+		created_at TEXT NOT NULL
 	)`,
 	`CREATE TABLE IF NOT EXISTS poll_options (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -233,11 +263,14 @@ var migrations = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_contacts_owner ON contacts(owner_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_carnet_entries_owner ON carnet_entries(owner_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_members_user ON conversation_members(user_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, id DESC)`,
 	`CREATE INDEX IF NOT EXISTS idx_message_reactions_message ON message_reactions(message_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_message_pins_user ON message_pins(user_id, created_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS idx_message_events_dates ON message_events(starts_at, ends_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_calendar_feeds_user ON calendar_feeds(user_id, revoked_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_invitation_contacts_status ON invitation_contacts(expires_at, revoked_at, used_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_poll_options_message ON poll_options(message_id, position)`,
 	`CREATE INDEX IF NOT EXISTS idx_poll_votes_message ON poll_votes(message_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_receipts_user ON message_receipts(user_id, status)`,

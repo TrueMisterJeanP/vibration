@@ -165,11 +165,12 @@ small { color: var(--muted); }
 .action-pending { opacity: .55; pointer-events: none; }
 .conversation-item > span:nth-child(2) { display: grid; min-width: 0; max-width: calc(100% - 3.35rem); }
 .conversation-item strong, .conversation-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.conversation-title-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: .45rem; min-width: 0; }
-.favorite-indicator { color: #f5bd3d; font-size: .92rem; line-height: 1; }
+.conversation-title-row { display: flex; align-items: center; gap: .45rem; min-width: 0; }
+.conversation-title-row > strong { min-width: 0; flex: 0 1 auto; }
+.favorite-indicator { flex: 0 0 auto; color: #f5bd3d; font-size: .92rem; line-height: 1; }
 .avatar .presence-indicator { position: absolute; right: .05rem; bottom: .05rem; width: .72rem; height: .72rem; border: 2px solid var(--panel); border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px rgb(32 199 181 / .16); }
-.unread-badge { min-width: 1.25rem; height: 1.25rem; padding: 0 .38rem; display: inline-grid; place-items: center; border-radius: 999px; background: var(--accent); color: #032f2c; font-size: .68rem; font-weight: 800; line-height: 1; }
-.call-conversation-badge { display: inline-grid; place-items: center; min-height: 1.25rem; padding: .12rem .42rem; border-radius: 999px; background: #62f4df; color: #032f2c; font-size: .66rem; font-weight: 900; line-height: 1; white-space: nowrap; }
+.unread-badge { min-width: 1.25rem; height: 1.25rem; margin-left: auto; padding: 0 .38rem; display: inline-grid; place-items: center; border-radius: 999px; background: var(--accent); color: #032f2c; font-size: .68rem; font-weight: 800; line-height: 1; }
+.call-conversation-badge { display: inline-grid; place-items: center; min-height: 1.25rem; margin-left: auto; padding: .12rem .42rem; border-radius: 999px; background: #62f4df; color: #032f2c; font-size: .66rem; font-weight: 900; line-height: 1; white-space: nowrap; }
 .conversation-item .conversation-description { display: -webkit-box; white-space: normal; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .conversation-item .conversation-description.typing { font-weight: inherit; }
 .conversation-item .conversation-description.call-description { color: #b9fff7; font-weight: 800; }
@@ -441,6 +442,23 @@ small { color: var(--muted); }
 .calendar-day-event-time { color: var(--accent); font-variant-numeric: tabular-nums; text-align: right; }
 .calendar-day-event-avatar, .global-file-conversation-avatar { display: grid; place-items: center; width: 1.15rem; height: 1.15rem; border-radius: 50%; background: #1b5260; color: #a9fff4; object-fit: cover; font-size: .62rem; font-weight: 700; line-height: 1; }
 .calendar-day-event-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.carnet-dialog { width: min(94vw, 760px); }
+.carnet-dialog > section { position: relative; display: grid; gap: .8rem; }
+.carnet-help { color: var(--muted); }
+.carnet-toolbar { display: flex; align-items: center; justify-content: space-between; gap: .8rem; padding: .65rem .75rem; border: 1px solid var(--line); border-radius: .7rem; background: var(--panel-2); }
+.carnet-toolbar button { flex: 0 0 auto; }
+.carnet-delete-all-button { display: grid; place-items: center; width: 2.4rem; height: 2.4rem; padding: 0; border-radius: 50%; }
+.carnet-list { display: grid; gap: .5rem; max-height: min(68vh, 620px); overflow-y: auto; }
+.carnet-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .7rem; min-width: 0; padding: .55rem; border: 1px solid var(--line); border-radius: .7rem; background: var(--panel-2); }
+.carnet-avatar { display: grid; place-items: center; width: 2.5rem; height: 2.5rem; overflow: hidden; border-radius: 50%; background: #1b5260; color: #a9fff4; font-size: .95rem; font-weight: 700; }
+.carnet-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.carnet-copy { display: grid; gap: .15rem; min-width: 0; }
+.carnet-copy strong, .carnet-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.carnet-copy small { color: var(--muted); }
+.carnet-active { color: var(--accent) !important; }
+.carnet-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: .35rem; }
+.carnet-actions button { padding: .45rem .6rem; font-size: .8rem; }
+.carnet-empty { padding: 1.5rem; color: var(--muted); text-align: center; }
 .global-files-dialog { width: min(94vw, 760px); }
 .global-files-dialog > section { position: relative; display: grid; gap: .8rem; }
 .global-files-status { color: var(--muted); }
@@ -485,7 +503,9 @@ fieldset { min-width: 0; border: 1px solid var(--line); border-radius: .8rem; }
 .profile-password { display: grid; gap: .8rem; }
 .profile-avatar-editor { display: grid; grid-template-columns: 5rem minmax(0, 1fr); gap: 1rem; align-items: center; min-width: 0; }
 .profile-avatar-editor > div { display: grid; gap: .55rem; }
-.profile-avatar-preview { width: 5rem; height: 5rem; border-radius: 50%; object-fit: cover; background: linear-gradient(135deg, var(--accent), #4dd9ff); border: 2px solid var(--line); }
+.profile-avatar-preview { display: grid; place-items: center; width: 5rem; height: 5rem; overflow: hidden; border-radius: 50%; object-fit: cover; background: var(--avatar-bg); color: var(--avatar-fg); border: 2px solid var(--line); }
+.profile-avatar-preview > img { display: block; width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+.group-avatar-preview-icon { width: 62%; height: 62%; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .conversation-info-dialog { width: min(92vw, 500px); }
 .conversation-info-card { display: grid; gap: 1rem; min-width: 0; }
 .conversation-info-card h3 { padding-right: 2.25rem; }
@@ -578,6 +598,16 @@ fieldset { min-width: 0; border: 1px solid var(--line); border-radius: .8rem; }
 .admin-row-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: .4rem; max-width: 100%; }
 .admin-row-actions button { padding: .5rem .65rem; font-size: .82rem; }
 .database-form { display: grid; gap: 1rem; min-width: 0; }
+.invitation-contact-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.invitation-import { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+.invitation-import small { flex: 1 1 18rem; color: var(--muted); }
+.invitation-created { display: grid; gap: .75rem; margin: 1rem 0; padding: 1rem; border: 1px solid var(--accent); border-radius: .8rem; background: rgb(13 118 110 / .12); }
+.invitation-created label { display: grid; gap: .35rem; }
+.invitation-created input { min-width: 0; }
+.invitation-share-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.invitation-share-actions button { flex: 1 1 9rem; }
+.admin-invitation-meta { display: grid; gap: .25rem; }
+.admin-invitation-destination { overflow-wrap: anywhere; }
 #file-quotas-form + #invitation-form { margin-top: 1.4rem; }
 .webrtc-settings-form { margin-top: 1.4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
 .webrtc-settings-form .dialog-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -595,6 +625,11 @@ fieldset { min-width: 0; border: 1px solid var(--line); border-radius: .8rem; }
 @media (max-width: 720px) {
   .event-date-fields { grid-template-columns: 1fr; }
   .calendar-dialog { width: calc(100dvw - .5rem); max-width: calc(100dvw - .5rem); }
+  .carnet-dialog { width: calc(100dvw - .5rem); max-width: calc(100dvw - .5rem); }
+  .carnet-toolbar { align-items: center; flex-direction: row; }
+  .carnet-row { grid-template-columns: auto minmax(0, 1fr); }
+  .carnet-actions { grid-column: 1 / -1; justify-content: stretch; }
+  .carnet-actions button { flex: 1 1 0; }
   .calendar-toolbar { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "previous label next" "today today today"; padding-right: 2rem; }
   #calendar-previous { grid-area: previous; }
   #calendar-month-label { grid-area: label; }
@@ -730,6 +765,7 @@ fieldset { min-width: 0; border: 1px solid var(--line); border-radius: .8rem; }
   .admin-row-actions button { width: 100%; min-height: 2.4rem; white-space: normal; }
   .admin-user-storage { width: 100%; }
   .admin-page .dialog-actions { grid-template-columns: 1fr; }
+  .invitation-contact-grid { grid-template-columns: 1fr; }
   .webrtc-settings-form .dialog-actions { grid-template-columns: 1fr; }
 }
 

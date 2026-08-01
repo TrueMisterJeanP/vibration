@@ -7,8 +7,10 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	database "chat-pwa-go/internal/db"
+	"chat-pwa-go/internal/invitationstore"
 	"chat-pwa-go/internal/settings"
 
 	"github.com/go-sql-driver/mysql"
@@ -79,6 +81,37 @@ func TestInvitationCodeCanBeConfiguredButNotRequired(t *testing.T) {
 	second := registerRequest(t, handler, "second_user")
 	if second.Code != http.StatusCreated {
 		t.Fatalf("second registration status=%d body=%s", second.Code, second.Body.String())
+	}
+}
+
+func TestIndividualInvitationBypassesGlobalCodeAndIsSingleUse(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := &Handler{DB: db}
+	if first := registerRequest(t, handler, "first_admin"); first.Code != http.StatusCreated {
+		t.Fatalf("first registration status=%d body=%s", first.Code, first.Body.String())
+	}
+	if err := settings.SetInvitationCode(db, "global-code-2026"); err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.SetInvitationCodeRequired(db, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO invitation_contacts(created_by,first_name,last_name,email,phone,code_hash,expires_at,created_at)
+		VALUES(?,?,?,?,?,?,?,?)`, 1, "Invited", "Member", "member@example.com", "", invitationstore.HashCode("team-2026"),
+		time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	accepted := registerRequestWithInvitationLink(t, handler, "invited_member", "team-2026")
+	if accepted.Code != http.StatusCreated {
+		t.Fatalf("individual invitation status=%d body=%s", accepted.Code, accepted.Body.String())
+	}
+	usedAgain := registerRequestWithInvitationLink(t, handler, "another_member", "team-2026")
+	if usedAgain.Code != http.StatusGone {
+		t.Fatalf("reused invitation status=%d body=%s", usedAgain.Code, usedAgain.Body.String())
 	}
 }
 
@@ -310,6 +343,26 @@ func registerRequest(t *testing.T, handler *Handler, username string) *httptest.
 
 func registerRequestWithInvitation(t *testing.T, handler *Handler, username, invitationCode string) *httptest.ResponseRecorder {
 	return registerRequestWithDisplayName(t, handler, username, username, invitationCode)
+}
+
+func registerRequestWithInvitationLink(t *testing.T, handler *Handler, username, invitationCode string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := []byte(`{
+		"username":"` + username + `",
+		"display_name":"` + username + `",
+		"password":"Password123!",
+		"invitation_code":"` + invitationCode + `",
+		"invitation_link":true,
+		"public_key":"public-key-placeholder-value",
+		"encrypted_private_key":"encrypted-private-key-value",
+		"crypto_salt":"crypto-salt-value"
+	}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/register", bytes.NewReader(body))
+	request.RemoteAddr = "127.0.0.1:12345"
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.Register(response, request)
+	return response
 }
 
 func registerRequestWithDisplayName(t *testing.T, handler *Handler, username, displayName, invitationCode string) *httptest.ResponseRecorder {

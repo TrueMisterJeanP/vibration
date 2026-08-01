@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"chat-pwa-go/internal/auth"
+	calendarfeed "chat-pwa-go/internal/calendar"
 	"chat-pwa-go/internal/config"
 	"chat-pwa-go/internal/contacts"
 	"chat-pwa-go/internal/conversations"
@@ -55,6 +56,7 @@ func main() {
 	federationHandler := newEditionFederation(db, hub, pushHandler, cfg.FederationBaseURL)
 	conversationHandler := &conversations.Handler{DB: db, Hub: hub, Federation: federationHandler}
 	messageHandler := &messages.Handler{DB: db, Hub: hub, Push: pushHandler, Federation: federationHandler}
+	calendarHandler := &calendarfeed.Handler{DB: db, AuthLimiter: auth.NewRateLimiter(cfg.AuthRateLimitPerMinute, time.Minute)}
 	fileHandler := &files.Handler{DB: db, Hub: hub, Push: pushHandler, Federation: federationHandler}
 	wsHandler := &ws.Handler{DB: db, Hub: hub, ClientOrigins: cfg.ClientOrigins, Federation: federationHandler}
 	webRTCDefaults := editionWebRTCDefaults(settings.WebRTCDefaults{ICEServers: cfg.WebRTCICEServers, PublicFallbackURLs: cfg.WebRTCPublicFallbacks})
@@ -85,6 +87,9 @@ func main() {
 	mux.Handle("POST /api/contacts", authHandler.Middleware(http.HandlerFunc(contactHandler.Create)))
 	mux.Handle("POST /api/contacts/{id}/accept", authHandler.Middleware(http.HandlerFunc(contactHandler.Accept)))
 	mux.Handle("DELETE /api/contacts/{id}", authHandler.Middleware(http.HandlerFunc(contactHandler.Delete)))
+	mux.Handle("GET /api/carnet", authHandler.Middleware(http.HandlerFunc(contactHandler.CarnetList)))
+	mux.Handle("DELETE /api/carnet", authHandler.Middleware(http.HandlerFunc(contactHandler.CarnetDeleteAll)))
+	mux.Handle("DELETE /api/carnet/{id}", authHandler.Middleware(http.HandlerFunc(contactHandler.CarnetDelete)))
 	mux.Handle("GET /api/conversations", authHandler.Middleware(http.HandlerFunc(conversationHandler.List)))
 	mux.Handle("POST /api/conversations/private", authHandler.Middleware(http.HandlerFunc(conversationHandler.CreatePrivate)))
 	mux.Handle("POST /api/conversations/personal", authHandler.Middleware(http.HandlerFunc(conversationHandler.CreatePersonal)))
@@ -103,6 +108,12 @@ func main() {
 	mux.Handle("POST /api/conversations/{id}/polls", authHandler.Middleware(http.HandlerFunc(messageHandler.CreatePoll)))
 	mux.Handle("POST /api/conversations/{id}/events", authHandler.Middleware(http.HandlerFunc(messageHandler.CreateEvent)))
 	mux.Handle("GET /api/events", authHandler.Middleware(http.HandlerFunc(messageHandler.ListEvents)))
+	mux.Handle("GET /api/calendar.ics", http.HandlerFunc(calendarHandler.Feed))
+	mux.Handle("POST /api/calendar/feeds", authHandler.Middleware(http.HandlerFunc(calendarHandler.CreateSharedFeed)))
+	mux.Handle("GET /api/calendar/feeds", authHandler.Middleware(http.HandlerFunc(calendarHandler.ListSharedFeeds)))
+	mux.Handle("PUT /api/calendar/feeds/{id}", authHandler.Middleware(http.HandlerFunc(calendarHandler.UpdateSharedFeed)))
+	mux.Handle("DELETE /api/calendar/feeds/{id}", authHandler.Middleware(http.HandlerFunc(calendarHandler.RevokeSharedFeed)))
+	mux.Handle("GET /api/calendar-feed/{token}/calendar.ics", http.HandlerFunc(calendarHandler.SharedFeed))
 	mux.Handle("POST /api/messages/{id}/read", authHandler.Middleware(http.HandlerFunc(messageHandler.Read)))
 	mux.Handle("POST /api/messages/{id}/reactions", authHandler.Middleware(http.HandlerFunc(messageHandler.React)))
 	mux.Handle("POST /api/messages/{id}/pin", authHandler.Middleware(http.HandlerFunc(messageHandler.Pin)))

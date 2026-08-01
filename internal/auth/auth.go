@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"chat-pwa-go/internal/httpx"
+	"chat-pwa-go/internal/invitationstore"
 	"chat-pwa-go/internal/settings"
 
 	"github.com/go-sql-driver/mysql"
@@ -45,6 +46,7 @@ type authRequest struct {
 	EncryptedPrivateKey string `json:"encrypted_private_key"`
 	CryptoSalt          string `json:"crypto_salt"`
 	InvitationCode      string `json:"invitation_code"`
+	InvitationLink      bool   `json:"invitation_link"`
 	RecoveryCode        string `json:"recovery_code"`
 	NewPassword         string `json:"new_password"`
 	RememberMe          bool   `json:"remember_me"`
@@ -122,6 +124,16 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	invitationID, invitationValid, err := invitationstore.ActiveID(h.DB, input.InvitationCode, time.Now().UTC())
+	if err != nil {
+		log.Printf("registration failed: individual invitation lookup: %v", err)
+		httpx.Error(w, http.StatusInternalServerError, "registration failed")
+		return
+	}
+	if input.InvitationLink && !invitationValid {
+		httpx.Error(w, http.StatusGone, "invitation unavailable")
+		return
+	}
 	if existingUsers > 0 && !h.DisableInvitationCode {
 		required, err := settings.InvitationCodeRequired(h.DB)
 		if err != nil {
@@ -129,7 +141,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusInternalServerError, "registration failed")
 			return
 		}
-		if required {
+		if required && !invitationValid {
 			valid, err := settings.VerifyInvitationCode(h.DB, input.InvitationCode)
 			if err != nil {
 				log.Printf("registration failed: invitation verification: %v", err)
@@ -196,6 +208,18 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := result.LastInsertId()
+	if invitationID != 0 {
+		consumed, err := invitationstore.Consume(tx, invitationID, id, time.Now().UTC())
+		if err != nil {
+			log.Printf("registration failed: consume invitation: %v", err)
+			httpx.Error(w, http.StatusInternalServerError, "registration failed")
+			return
+		}
+		if !consumed {
+			httpx.Error(w, http.StatusGone, "invitation unavailable")
+			return
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		log.Printf("registration failed: commit: %v", err)
 		httpx.Error(w, http.StatusInternalServerError, "registration failed")

@@ -6,7 +6,7 @@
   "scripts": {
     "test": "GOCACHE=/tmp/webtchat-go-cache go test -tags community ./...",
     "test:community": "GOCACHE=/tmp/webtchat-go-cache go test -tags community ./...",
-    "check:js": "for f in web/js/*.js; do node --check --input-type=module < \"$f\" || exit 1; done && node tests/i18n.test.cjs && node tests/keyed-task-guard.test.cjs && node tests/file-preview-image.test.cjs && node tests/file-preview-cache.test.cjs && node tests/encrypted-file-preview.test.cjs && node tests/pdf-preview-compat.test.cjs && node tests/office-preview.test.cjs && node tests/conversation-header.test.cjs && node tests/conversation-info.test.cjs && node tests/conversation-favorites.test.cjs && node tests/conversation-switch.test.cjs && node tests/mobile-video-fullscreen.test.cjs && node tests/registration-form.test.cjs"
+    "check:js": "for f in web/js/*.js; do node --check --input-type=module < \"$f\" || exit 1; done && node tests/i18n.test.cjs && node tests/keyed-task-guard.test.cjs && node tests/file-preview-image.test.cjs && node tests/file-preview-cache.test.cjs && node tests/encrypted-file-preview.test.cjs && node tests/pdf-preview-compat.test.cjs && node tests/office-preview.test.cjs && node tests/conversation-header.test.cjs && node tests/conversation-info.test.cjs && node tests/conversation-favorites.test.cjs && node tests/conversation-switch.test.cjs && node tests/mobile-video-fullscreen.test.cjs && node tests/registration-form.test.cjs && node tests/calendar-export.test.cjs"
   },
   "keywords": [],
   "author": "Jean-Pierre",

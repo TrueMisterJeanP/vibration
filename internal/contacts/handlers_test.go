@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"chat-pwa-go/internal/auth"
@@ -27,6 +28,9 @@ func TestContactRequestMustBeAccepted(t *testing.T) {
 	mux.Handle("POST /api/contacts", authHandler.Middleware(http.HandlerFunc(handler.Create)))
 	mux.Handle("POST /api/contacts/{id}/accept", authHandler.Middleware(http.HandlerFunc(handler.Accept)))
 	mux.Handle("DELETE /api/contacts/{id}", authHandler.Middleware(http.HandlerFunc(handler.Delete)))
+	mux.Handle("GET /api/carnet", authHandler.Middleware(http.HandlerFunc(handler.CarnetList)))
+	mux.Handle("DELETE /api/carnet", authHandler.Middleware(http.HandlerFunc(handler.CarnetDeleteAll)))
+	mux.Handle("DELETE /api/carnet/{id}", authHandler.Middleware(http.HandlerFunc(handler.CarnetDelete)))
 
 	created := contactRequest(t, mux, http.MethodPost, "/api/contacts", map[string]int64{"user_id": 2}, first)
 	if created.Code != http.StatusCreated {
@@ -84,6 +88,81 @@ func TestContactRequestMustBeAccepted(t *testing.T) {
 	var remainingConversations int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM conversations WHERE id=?`, acceptedBody.ConversationID).Scan(&remainingConversations); err != nil || remainingConversations != 0 {
 		t.Fatalf("remaining private conversation=%d err=%v", remainingConversations, err)
+	}
+	var carnetEntries int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM carnet_entries WHERE owner_id=1 AND contact_user_id=2`).Scan(&carnetEntries); err != nil || carnetEntries != 1 {
+		t.Fatalf("preserved carnet entry=%d err=%v", carnetEntries, err)
+	}
+}
+
+func TestCarnetProtectsCurrentGroupMembersAndDeletesOldEntries(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	handler := &Handler{DB: db}
+	first := registerContactUser(t, authHandler, "carnet_owner")
+	registerContactUser(t, authHandler, "carnet_member_one")
+	registerContactUser(t, authHandler, "carnet_member_two")
+
+	result, err := db.Exec(`INSERT INTO conversations(type,created_by,created_at) VALUES('group',1,?)`, "2026-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, userID := range []int64{1, 2, 3} {
+		if _, err := db.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at) VALUES(?,?,?,?,?)`,
+			conversationID, userID, "encrypted-key", "member", "2026-01-01T00:00:00Z"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/carnet", authHandler.Middleware(http.HandlerFunc(handler.CarnetList)))
+	mux.Handle("DELETE /api/carnet", authHandler.Middleware(http.HandlerFunc(handler.CarnetDeleteAll)))
+	mux.Handle("DELETE /api/carnet/{id}", authHandler.Middleware(http.HandlerFunc(handler.CarnetDelete)))
+	list := contactRequest(t, mux, http.MethodGet, "/api/carnet", nil, first)
+	if list.Code != http.StatusOK {
+		t.Fatalf("carnet list status=%d body=%s", list.Code, list.Body.String())
+	}
+	var entries []CarnetEntry
+	if err := json.Unmarshal(list.Body.Bytes(), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || !entries[0].Active || !entries[1].Active {
+		t.Fatalf("current group entries=%+v", entries)
+	}
+	blocked := contactRequest(t, mux, http.MethodDelete, "/api/carnet/1", nil, first)
+	if blocked.Code != http.StatusConflict {
+		t.Fatalf("active carnet deletion status=%d body=%s", blocked.Code, blocked.Body.String())
+	}
+	blockedAll := contactRequest(t, mux, http.MethodDelete, "/api/carnet", nil, first)
+	if blockedAll.Code != http.StatusOK || !strings.Contains(blockedAll.Body.String(), `"deleted":0`) {
+		t.Fatalf("active carnet bulk deletion status=%d body=%s", blockedAll.Code, blockedAll.Body.String())
+	}
+
+	if _, err := db.Exec(`DELETE FROM conversations WHERE id=?`, conversationID); err != nil {
+		t.Fatal(err)
+	}
+	old := contactRequest(t, mux, http.MethodGet, "/api/carnet", nil, first)
+	if old.Code != http.StatusOK {
+		t.Fatalf("old carnet list status=%d body=%s", old.Code, old.Body.String())
+	}
+	entries = nil
+	if err := json.Unmarshal(old.Body.Bytes(), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[0].Active || entries[1].Active {
+		t.Fatalf("old group entries=%+v", entries)
+	}
+	deleted := contactRequest(t, mux, http.MethodDelete, "/api/carnet", nil, first)
+	if deleted.Code != http.StatusOK || !strings.Contains(deleted.Body.String(), `"deleted":2`) {
+		t.Fatalf("old carnet bulk deletion status=%d body=%s", deleted.Code, deleted.Body.String())
 	}
 }
 

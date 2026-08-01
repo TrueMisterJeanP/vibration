@@ -33,7 +33,7 @@ import {
   testNotification,
 } from "./notifications.js";
 import { ChatSocket } from "./websocket.js?v=ios17-pdf-v199";
-import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios17-pdf-v199";
+import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios17-pdf-v211";
 import { locale, t } from "./i18n.js";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
 import { nonWhiteImageBounds } from "./file-preview-image.js?v=ios17-pdf-v199";
@@ -55,7 +55,7 @@ const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
 const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
 const FILE_PREVIEW_PREFETCH_BUDGET_BYTES = 8 * 1024 * 1024;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "ios17-pdf-v205";
+const APP_BUILD = "ios17-pdf-v211";
 
 window.VIBRATION_BUILD = APP_BUILD;
 console.info(`Vibration build ${APP_BUILD}`);
@@ -67,6 +67,7 @@ const state = {
   fileQuotas: null,
   privateKey: null,
   contacts: [],
+  carnet: [],
   conversations: [],
   current: null,
   keys: new Map(),
@@ -100,6 +101,7 @@ const state = {
   calendarMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   pendingFileShare: null,
   activeFileShareID: null,
+  sharedCalendarFeedID: null,
 };
 
 let profileAvatar = null;
@@ -107,6 +109,7 @@ let groupAvatar = null;
 let pdfJSModule;
 let ios17PDFJSModule;
 const pdfScriptLoads = new Map();
+const CALENDAR_FEED_TOKEN_KEY = "vibration.calendar_feed_token";
 let callPageExitHandled = false;
 let callVideoResumeTimer = null;
 
@@ -144,6 +147,7 @@ const elements = {
   audioCallButton: document.querySelector("#audio-call-button"),
   videoCallButton: document.querySelector("#video-call-button"),
   calendarButton: document.querySelector("#calendar-button"),
+  carnetButton: document.querySelector("#carnet-button"),
   globalFilesButton: document.querySelector("#global-files-button"),
   callBanner: document.querySelector("#call-banner"),
   callBannerLabel: document.querySelector("#call-banner-label"),
@@ -205,6 +209,10 @@ const elements = {
   calendarGrid: document.querySelector("#calendar-grid"),
   calendarMonthLabel: document.querySelector("#calendar-month-label"),
   calendarStatus: document.querySelector("#calendar-status"),
+  carnetDialog: document.querySelector("#carnet-dialog"),
+  carnetStatus: document.querySelector("#carnet-status"),
+  carnetList: document.querySelector("#carnet-list"),
+  carnetDeleteAll: document.querySelector("#carnet-delete-all"),
   globalFilesDialog: document.querySelector("#global-files-dialog"),
   globalFilesStatus: document.querySelector("#global-files-status"),
   globalFilesList: document.querySelector("#global-files-list"),
@@ -308,7 +316,7 @@ function bindEmojiPicker() {
 function actionDialog({
   title, message = "", inputLabel = "", value = "", maxLength = 200000, singleLine = false,
   secondaryLabel = "", secondaryValue = "", secondaryMaxLength = 280,
-  confirmLabel = "Confirmer", danger = false,
+  confirmLabel = "Confirmer", danger = false, messageValues = {},
 }) {
   const dialog = document.querySelector("#action-dialog");
   const form = document.querySelector("#action-form");
@@ -319,7 +327,7 @@ function actionDialog({
   const secondaryRow = document.querySelector("#action-secondary-label");
   const secondaryInput = document.querySelector("#action-secondary-input");
   document.querySelector("#action-title").textContent = t(title);
-  document.querySelector("#action-message").textContent = t(message);
+  document.querySelector("#action-message").textContent = t(message, messageValues);
   document.querySelector("#action-confirm").textContent = t(confirmLabel);
   document.querySelector("#action-confirm").classList.toggle("danger-button", danger);
   inputRow.hidden = !inputLabel;
@@ -377,7 +385,7 @@ function groupEditDialog({ name, description, avatar, contacts, members }) {
   const extraUsers = new Map();
 
   const updatePreview = () => {
-    avatarPreview.src = selectedAvatar || "/icons/group.svg";
+    renderGroupAvatarPreview(avatarPreview, selectedAvatar);
     removeButton.hidden = !selectedAvatar;
   };
   const renderMembers = () => renderGroupMemberPicker(memberList, contacts, {
@@ -720,6 +728,9 @@ function bindUI() {
     document.querySelector("#profile-display-name").value = state.me.display_name;
     document.querySelector("#profile-description").value = state.me.description || "";
     document.querySelector("#profile-instance-url").value = getInstanceURL();
+    document.querySelector("#profile-calendar-password").value = "";
+    document.querySelector("#profile-calendar-url").value = "";
+    document.querySelector("#profile-calendar-status").textContent = t("Vérification du flux calendrier…");
     document.querySelector("#profile-theme").value = window.ChatTheme?.getPreference() || "auto";
     document.querySelector("#profile-current-password").value = "";
     document.querySelector("#profile-new-password").value = "";
@@ -734,11 +745,16 @@ function bindUI() {
       refreshFileQuotas(),
       refreshRememberedKeyStatus(),
       refreshNotificationStatus(),
+      loadSharedCalendarFeedState(),
     ]);
   };
   document.querySelector("#profile-button").onclick = openProfileDialog;
   document.querySelector("#close-sidebar-logo").onclick = openProfileDialog;
   document.querySelector("#profile-close").onclick = () => profileDialog.close();
+  document.querySelector("#profile-calendar-copy").onclick = copyCalendarFeedURL;
+  document.querySelector("#profile-calendar-create").onclick = createSharedCalendarFeed;
+  document.querySelector("#profile-calendar-revoke").onclick = revokeSharedCalendarFeed;
+  document.querySelector("#profile-calendar-export").onclick = exportCalendarICalendar;
   document.querySelector("#conversation-info-close").onclick = () => elements.conversationInfoDialog.close();
   elements.chatAvatar.onclick = () => {
     openCurrentConversationInfo().catch((error) => {
@@ -857,11 +873,14 @@ function bindUI() {
   elements.pinnedWindowButton.addEventListener("click", () => setPinnedPanelOpen(elements.pinnedPanel.hidden));
   elements.closePinnedPanel.addEventListener("click", () => setPinnedPanelOpen(false));
   elements.calendarButton.addEventListener("click", () => openCalendar());
+  elements.carnetButton.addEventListener("click", () => openCarnet());
   elements.globalFilesButton.addEventListener("click", () => openGlobalFiles());
   document.querySelector("#event-form").addEventListener("submit", submitEvent);
   document.querySelector("#event-close").addEventListener("click", closeEventDialog);
   document.querySelector("#event-cancel").addEventListener("click", closeEventDialog);
   document.querySelector("#calendar-close").addEventListener("click", () => elements.calendarDialog.close());
+  document.querySelector("#carnet-close").addEventListener("click", () => elements.carnetDialog.close());
+  elements.carnetDeleteAll.addEventListener("click", deleteAllCarnetEntries);
   document.querySelector("#global-files-close").addEventListener("click", () => elements.globalFilesDialog.close());
   elements.fileShareForm.addEventListener("submit", createFileShare);
   document.querySelector("#file-share-close").addEventListener("click", closeFileShareDialog);
@@ -1289,8 +1308,33 @@ function updateProfileAvatarPreview() {
 }
 
 function updateGroupAvatarPreview() {
-  document.querySelector("#group-avatar-preview").src = groupAvatar || "/icons/group.svg";
+  renderGroupAvatarPreview(document.querySelector("#group-avatar-preview"), groupAvatar);
   document.querySelector("#group-avatar-remove").hidden = !groupAvatar;
+}
+
+function renderGroupAvatarPreview(container, avatar) {
+  container.replaceChildren();
+  if (avatar) {
+    const image = document.createElement("img");
+    image.src = avatar;
+    image.alt = "";
+    container.append(image);
+    return;
+  }
+  const namespace = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(namespace, "svg");
+  svg.classList.add("group-avatar-preview-icon");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const shape = (tag, attributes) => {
+    const element = document.createElementNS(namespace, tag);
+    for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+    svg.append(element);
+  };
+  shape("circle", { cx: "9", cy: "8", r: "3" });
+  shape("circle", { cx: "16.5", cy: "9.5", r: "2.5" });
+  shape("path", { d: "M3.5 20a5.5 5.5 0 0 1 11 0M13 20a4.5 4.5 0 0 1 8 0" });
+  container.append(svg);
 }
 
 async function resizeAvatar(file) {
@@ -1423,10 +1467,231 @@ async function updateProfile(event) {
 function switchInstance(instanceURL) {
   setInstanceURL(instanceURL);
   clearSessionToken();
+  localStorage.removeItem(CALENDAR_FEED_TOKEN_KEY);
   sessionStorage.removeItem("crypto_phrase");
   state.socket?.close();
   toast("Instance modifiée. Reconnexion nécessaire.", "success");
   setTimeout(() => { location.href = "/login.html"; }, 600);
+}
+
+function sharedCalendarFeedURL(token) {
+  return new URL(`/api/calendar-feed/${encodeURIComponent(token)}/calendar.ics`, `${getInstanceURL() || location.origin}/`).toString();
+}
+
+function renderSharedCalendarFeedState(feed, token = localStorage.getItem(CALENDAR_FEED_TOKEN_KEY) || "") {
+  const input = document.querySelector("#profile-calendar-url");
+  const copy = document.querySelector("#profile-calendar-copy");
+  const revoke = document.querySelector("#profile-calendar-revoke");
+  const status = document.querySelector("#profile-calendar-status");
+  const link = feed?.active && token ? sharedCalendarFeedURL(token) : "";
+  input.value = link;
+  copy.disabled = !link;
+  revoke.disabled = !feed?.active;
+  status.textContent = !feed?.active
+    ? t("Aucun flux partagé actif.")
+    : link
+      ? t("Flux calendrier actif et publié sur le serveur.")
+      : t("Flux actif, mais son adresse n’est pas disponible sur cet appareil. Créez un nouveau flux pour obtenir une adresse.");
+}
+
+async function loadSharedCalendarFeedState() {
+  try {
+    const feeds = await api("/api/calendar/feeds");
+    const active = feeds.find((feed) => feed.active) || null;
+    state.sharedCalendarFeedID = active?.id || null;
+    renderSharedCalendarFeedState(active);
+    return active;
+  } catch (error) {
+    state.sharedCalendarFeedID = null;
+    document.querySelector("#profile-calendar-status").textContent = frenchErrorMessage(error, "Impossible de consulter le flux calendrier.");
+    return null;
+  }
+}
+
+async function createSharedCalendarFeed() {
+  const button = document.querySelector("#profile-calendar-create");
+  const passwordInput = document.querySelector("#profile-calendar-password");
+  const password = passwordInput.value;
+  if (!password) {
+    document.querySelector("#profile-calendar-status").textContent = t("Le mot de passe du compte est requis.");
+    passwordInput.focus();
+    return;
+  }
+  setBusy(button, true, t("Publication…"));
+  try {
+    const items = await loadCalendarItems();
+    const exportable = items.filter((item) => item.decrypted && item.clear?.type === "event");
+    const result = await api("/api/calendar/feeds", {
+      method: "POST",
+      body: { password, snapshot: buildCalendarICalendar(exportable) },
+    });
+    state.sharedCalendarFeedID = result.id;
+    localStorage.setItem(CALENDAR_FEED_TOKEN_KEY, result.token);
+    passwordInput.value = "";
+    renderSharedCalendarFeedState({ active: true }, result.token);
+    toast(t("Flux calendrier créé et publié."), "success");
+  } catch (error) {
+    document.querySelector("#profile-calendar-status").textContent = frenchErrorMessage(error, "Impossible de créer le flux calendrier.");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function syncSharedCalendarFeed() {
+  const feeds = await api("/api/calendar/feeds");
+  const active = feeds.find((feed) => feed.active);
+  if (!active) {
+    state.sharedCalendarFeedID = null;
+    return false;
+  }
+  const items = await loadCalendarItems();
+  if (items.some((item) => !item.decrypted)) return false;
+  await api(`/api/calendar/feeds/${active.id}`, {
+    method: "PUT",
+    body: { snapshot: buildCalendarICalendar(items) },
+  });
+  state.sharedCalendarFeedID = active.id;
+  return true;
+}
+
+async function revokeSharedCalendarFeed() {
+  if (!state.sharedCalendarFeedID) {
+    await loadSharedCalendarFeedState();
+  }
+  if (!state.sharedCalendarFeedID) return;
+  const button = document.querySelector("#profile-calendar-revoke");
+  setBusy(button, true, t("Révocation…"));
+  try {
+    await api(`/api/calendar/feeds/${state.sharedCalendarFeedID}`, { method: "DELETE" });
+    state.sharedCalendarFeedID = null;
+    localStorage.removeItem(CALENDAR_FEED_TOKEN_KEY);
+    renderSharedCalendarFeedState(null);
+    toast(t("Flux calendrier révoqué."), "success");
+  } catch (error) {
+    document.querySelector("#profile-calendar-status").textContent = frenchErrorMessage(error, "Impossible de révoquer le flux calendrier.");
+  } finally {
+    setBusy(button, false);
+    button.disabled = !state.sharedCalendarFeedID;
+  }
+}
+
+async function copyCalendarFeedURL() {
+  const input = document.querySelector("#profile-calendar-url");
+  const link = input.value;
+  if (!link) return;
+  try {
+    await navigator.clipboard.writeText(link);
+  } catch {
+    input.focus();
+    input.select();
+    if (!document.execCommand("copy")) {
+      toast(t("Sélectionnez puis copiez l’adresse manuellement."), "error");
+      return;
+    }
+  }
+  toast(t("Adresse du calendrier copiée."), "success");
+}
+
+async function exportCalendarICalendar() {
+  const button = document.querySelector("#profile-calendar-export");
+  setBusy(button, true, t("Exportation…"));
+  try {
+    const items = await loadCalendarItems();
+    state.calendarItems = items;
+    const exportable = items.filter((item) => item.decrypted && item.clear?.type === "event");
+    if (!exportable.length) {
+      toast(t("Aucun évènement déchiffrable à exporter."), "error");
+      return;
+    }
+    const ical = buildCalendarICalendar(exportable);
+    const blob = new Blob([ical], { type: "text/calendar;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `vibration-calendar-${new Date().toISOString().slice(0, 10)}.ics`;
+    link.hidden = true;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(t("{count} évènements exportés.", { count: exportable.length }), "success");
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible d’exporter le calendrier."), "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+function buildCalendarICalendar(items) {
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Vibration//Local calendar export//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    `X-WR-CALNAME:${icalEscape(t("Calendrier Vibration"))}`,
+  ];
+  for (const item of items) {
+    const start = formatICalendarDate(item.message.event.starts_at);
+    const end = formatICalendarDate(item.message.event.ends_at);
+    const stamp = formatICalendarDate(item.message.updated_at || item.message.created_at) || formatICalendarDate(new Date());
+    if (!start || !end || !stamp) continue;
+    lines.push(
+      "BEGIN:VEVENT",
+      `UID:${calendarEventUID(item.message)}`,
+      `DTSTAMP:${stamp}`,
+      `DTSTART:${start}`,
+      `DTEND:${end}`,
+      `LAST-MODIFIED:${stamp}`,
+      `SUMMARY:${icalEscape(item.clear.name)}`,
+    );
+    if (item.clear.description) lines.push(`DESCRIPTION:${icalEscape(item.clear.description)}`);
+    if (item.clear.location) lines.push(`LOCATION:${icalEscape(item.clear.location)}`);
+    lines.push("STATUS:CONFIRMED", "SEQUENCE:0", "END:VEVENT");
+  }
+  lines.push("END:VCALENDAR");
+  return lines.flatMap(foldICalendarLine).join("\r\n") + "\r\n";
+}
+
+function calendarEventUID(message) {
+  let host = "vibration";
+  try {
+    host = new URL(getInstanceURL() || location.origin).host || host;
+  } catch {}
+  return `vibration-event-${message.id}@${host}`;
+}
+
+function formatICalendarDate(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+function icalEscape(value) {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/\r\n|\r|\n/g, "\\n")
+    .replace(/([;,])/g, "\\$1");
+}
+
+function foldICalendarLine(line) {
+  const characters = Array.from(String(line));
+  const encoder = new TextEncoder();
+  const result = [];
+  let chunk = "";
+  let first = true;
+  let limit = 75;
+  for (const character of characters) {
+    if (chunk && encoder.encode(chunk + character).length > limit) {
+      result.push(first ? chunk : ` ${chunk}`);
+      first = false;
+      limit = 74;
+      chunk = "";
+    }
+    chunk += character;
+  }
+  result.push(first ? chunk : ` ${chunk}`);
+  return result;
 }
 
 async function refreshNotificationStatus() {
@@ -1508,20 +1773,28 @@ async function refreshAll() {
       await renderConversations();
     }
   }
-  let [contacts, conversations] = await Promise.all([api("/api/contacts"), api("/api/conversations")]);
+  let [contacts, conversations, carnetEntries] = await Promise.all([
+    api("/api/contacts"),
+    api("/api/conversations"),
+    api("/api/carnet"),
+  ]);
   if (!conversations.some((conversation) => conversation.is_personal)) {
     await api("/api/conversations/personal", { method: "POST" });
     conversations = await api("/api/conversations");
   }
   state.contacts = contacts;
+  state.carnet = carnetEntries;
   state.conversations = conversations;
   state.members.clear();
   state.cache?.saveConversations(conversations);
   await renderConversations();
+  syncSharedCalendarFeed().catch(() => {});
 }
 
 async function refreshConversationList() {
-  state.conversations = await api("/api/conversations");
+  const [conversations, carnetEntries] = await Promise.all([api("/api/conversations"), api("/api/carnet")]);
+  state.conversations = conversations;
+  state.carnet = carnetEntries;
   state.cache?.saveConversations(state.conversations);
   await renderConversations();
 }
@@ -4625,12 +4898,14 @@ async function submitEvent(event) {
       closeEventDialog();
       await loadMessages(null, false);
       await refreshConversationList();
+      syncSharedCalendarFeed().catch(() => {});
       toast("Évènement modifié.", "success");
     } else {
       const message = await api(`/api/conversations/${state.current.id}/events`, { method: "POST", body });
       closeEventDialog();
       await appendMessage(message);
       await refreshConversationList();
+      syncSharedCalendarFeed().catch(() => {});
       toast("Évènement publié.", "success");
     }
   } catch (error) {
@@ -4808,36 +5083,7 @@ async function openCalendar() {
   elements.calendarGrid.setAttribute("aria-busy", "true");
   if (!elements.calendarDialog.open) elements.calendarDialog.showModal();
   try {
-    const messages = await api("/api/events");
-    const items = await Promise.all(messages.map(async (message) => {
-      const conversation = state.conversations.find((item) => sameID(item.id, message.conversation_id));
-      if (!conversation) return null;
-      try {
-        const key = await getConversationKey(conversation);
-        const clear = await decryptMessageContent(message, key);
-        const display = await resolveConversationDisplay(conversation);
-        return {
-          message,
-          clear,
-          conversation,
-          conversationTitle: display.title,
-          conversationAvatar: display.avatar || null,
-          conversationInitial: display.title.slice(0, 1).toUpperCase(),
-        };
-      } catch {
-        return {
-          message,
-          clear: { name: t("Évènement impossible à déchiffrer"), description: "", location: "" },
-          conversation,
-          conversationTitle: t("Conversation"),
-          conversationAvatar: null,
-          conversationInitial: conversation.is_personal ? "N" : conversation.type === "group" ? "G" : "@",
-        };
-      }
-    }));
-    state.calendarItems = items.filter(Boolean).sort((left, right) => (
-      Date.parse(left.message.event.starts_at) - Date.parse(right.message.event.starts_at)
-    ));
+    state.calendarItems = await loadCalendarItems();
     renderCalendarMonth();
   } catch (error) {
     state.calendarItems = [];
@@ -4846,6 +5092,209 @@ async function openCalendar() {
   } finally {
     elements.calendarGrid.removeAttribute("aria-busy");
   }
+}
+
+async function openCarnet() {
+  elements.carnetStatus.textContent = t("Chargement du carnet…");
+  elements.carnetList.replaceChildren();
+  elements.carnetList.setAttribute("aria-busy", "true");
+  if (!elements.carnetDialog.open) elements.carnetDialog.showModal();
+  try {
+    state.carnet = await api("/api/carnet");
+    renderCarnet();
+  } catch (error) {
+    elements.carnetStatus.textContent = frenchErrorMessage(error, "Impossible de charger le carnet.");
+    renderCarnet(false);
+  } finally {
+    elements.carnetList.removeAttribute("aria-busy");
+  }
+}
+
+function renderCarnet(loaded = true) {
+  const entries = loaded ? state.carnet : [];
+  const oldEntries = entries.filter((entry) => !entry.active);
+  elements.carnetStatus.textContent = loaded
+    ? t(entries.length === 1 ? "{count} contact dans votre carnet." : "{count} contacts dans votre carnet.", { count: entries.length })
+    : t("Impossible de charger le carnet.");
+  elements.carnetDeleteAll.disabled = oldEntries.length === 0;
+  elements.carnetList.replaceChildren();
+  if (!entries.length) {
+    const empty = document.createElement("p");
+    empty.className = "carnet-empty";
+    empty.textContent = t("Aucun contact ancien dans votre carnet.");
+    elements.carnetList.append(empty);
+    return;
+  }
+  for (const entry of entries) {
+    const row = document.createElement("article");
+    row.className = "carnet-row";
+    const avatar = createConversationBadge(entry.avatar, (entry.display_name || entry.username || "?").slice(0, 1).toUpperCase(), "carnet-avatar");
+    const copy = document.createElement("span");
+    copy.className = "carnet-copy";
+    const name = document.createElement("strong");
+    name.textContent = entry.display_name || entry.username;
+    const username = document.createElement("small");
+    username.textContent = `@${entry.username}`;
+    const status = document.createElement("small");
+    status.className = entry.active ? "carnet-active" : "";
+    status.textContent = entry.active ? t("Discussion actuelle") : t("Contact ancien");
+    copy.append(name, username, status);
+    const actions = document.createElement("span");
+    actions.className = "carnet-actions";
+    if (!entry.active && entry.can_resume) {
+      const resume = document.createElement("button");
+      resume.type = "button";
+      resume.className = "outline";
+      resume.textContent = t("Reprendre");
+      resume.title = t("Reprendre une discussion avec {name}", { name: entry.display_name || entry.username });
+      resume.setAttribute("aria-label", resume.title);
+      resume.onclick = () => resumeCarnetEntry(entry, resume);
+      actions.append(resume);
+    }
+    if (!entry.active) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "outline danger-text";
+      remove.textContent = t("Supprimer");
+      remove.title = t("Supprimer {name} du carnet", { name: entry.display_name || entry.username });
+      remove.setAttribute("aria-label", remove.title);
+      remove.onclick = () => deleteCarnetEntry(entry, remove);
+      actions.append(remove);
+    }
+    row.append(avatar, copy, actions);
+    elements.carnetList.append(row);
+  }
+}
+
+async function deleteCarnetEntry(entry, button) {
+  const name = entry.display_name || entry.username;
+  const confirmed = await actionDialog({
+    title: "Supprimer du carnet",
+    message: "Supprimer {name} du carnet ? Cette personne pourra être ajoutée à nouveau plus tard.",
+    messageValues: { name },
+    confirmLabel: "Supprimer",
+    danger: true,
+  });
+  if (!confirmed) return;
+  setBusy(button, true);
+  try {
+    await api(`/api/carnet/${entry.id}`, { method: "DELETE" });
+    state.carnet = state.carnet.filter((item) => !sameID(item.id, entry.id));
+    renderCarnet();
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible de supprimer ce contact du carnet."), "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function deleteAllCarnetEntries() {
+  const oldCount = state.carnet.filter((entry) => !entry.active).length;
+  if (!oldCount) return;
+  const confirmed = await actionDialog({
+    title: "Supprimer les anciens contacts",
+    message: "Supprimer les {count} anciens contacts du carnet ? Les discussions actuelles seront conservées.",
+    messageValues: { count: oldCount },
+    confirmLabel: "Supprimer",
+    danger: true,
+  });
+  if (!confirmed) return;
+  elements.carnetDeleteAll.disabled = true;
+  elements.carnetDeleteAll.setAttribute("aria-busy", "true");
+  try {
+    await api("/api/carnet", { method: "DELETE" });
+    state.carnet = state.carnet.filter((entry) => entry.active);
+    renderCarnet();
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible de supprimer les anciens contacts."), "error");
+  } finally {
+    elements.carnetDeleteAll.removeAttribute("aria-busy");
+    elements.carnetDeleteAll.disabled = state.carnet.every((entry) => entry.active);
+  }
+}
+
+async function resumeCarnetEntry(entry, button) {
+  setBusy(button, true);
+  try {
+    let conversation;
+    if (entry.is_remote) {
+      conversation = await api("/api/conversations/federated/private", {
+        method: "POST",
+        body: { instance_id: entry.remote_instance_id, username: entry.remote_username || entry.username },
+      });
+    } else {
+      try {
+        conversation = await api("/api/conversations/private", { method: "POST", body: { user_id: entry.contact_user_id } });
+      } catch (error) {
+        if (![403, 404].includes(error.status)) throw error;
+        await api("/api/contacts", { method: "POST", body: { user_id: entry.contact_user_id } });
+        await refreshAll();
+        let contact = state.contacts.find((item) => sameID(item.contact_user_id, entry.contact_user_id));
+        if (contact?.status !== "accepted" && contact?.direction === "incoming") {
+          await api(`/api/contacts/${contact.id}/accept`, { method: "POST" });
+          await refreshAll();
+          contact = state.contacts.find((item) => sameID(item.contact_user_id, entry.contact_user_id));
+        }
+        if (contact?.status !== "accepted") {
+          elements.carnetDialog.close();
+          toast(t("Demande envoyée. La discussion sera disponible après acceptation."), "success");
+          return;
+        }
+        conversation = await api("/api/conversations/private", { method: "POST", body: { user_id: entry.contact_user_id } });
+      }
+    }
+    elements.carnetDialog.close();
+    await refreshAll();
+    const selected = state.conversations.find((item) => sameID(item.id, conversation.id));
+    if (selected) await selectConversation(selected);
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible de reprendre cette discussion."), "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function loadCalendarItems() {
+  const messages = await api("/api/events");
+  const items = await Promise.all(messages.map(async (message) => {
+    const conversation = state.conversations.find((item) => sameID(item.id, message.conversation_id));
+    if (!conversation) return null;
+    try {
+      const key = await getConversationKey(conversation);
+      const clear = await decryptMessageContent(message, key);
+      let display;
+      try {
+        display = await resolveConversationDisplay(conversation);
+      } catch {
+        display = {
+          title: t("Conversation"),
+          avatar: null,
+        };
+      }
+      return {
+        message,
+        clear,
+        decrypted: clear?.type === "event",
+        conversation,
+        conversationTitle: display.title,
+        conversationAvatar: display.avatar || null,
+        conversationInitial: display.title.slice(0, 1).toUpperCase(),
+      };
+    } catch {
+      return {
+        message,
+        clear: { name: t("Évènement impossible à déchiffrer"), description: "", location: "" },
+        decrypted: false,
+        conversation,
+        conversationTitle: t("Conversation"),
+        conversationAvatar: null,
+        conversationInitial: conversation.is_personal ? "N" : conversation.type === "group" ? "G" : "@",
+      };
+    }
+  }));
+  return items.filter(Boolean).sort((left, right) => (
+    Date.parse(left.message.event.starts_at) - Date.parse(right.message.event.starts_at)
+  ));
 }
 
 function renderCalendarMonth(updateStatus = true) {
@@ -6518,7 +6967,17 @@ async function searchContacts(event) {
   try {
     const endpoint = state.edition.federation && query.includes("@") ? "/api/federation/search" : "/api/users/search";
     const users = await api(`${endpoint}?q=${encodeURIComponent(query)}`);
-    for (const user of users) {
+    const availableUsers = users.filter((user) => !state.contacts.some((contact) => (
+      contact.status === "accepted" && sameID(contact.contact_user_id, user.id)
+    )));
+    if (!availableUsers.length) {
+      const empty = document.createElement("p");
+      empty.className = "picker-empty";
+      empty.textContent = "Aucun nouveau contact trouvé.";
+      results.append(empty);
+      return;
+    }
+    for (const user of availableUsers) {
       const row = document.createElement("button");
       row.type = "button";
       row.className = "picker-row";
@@ -6751,8 +7210,10 @@ async function handleSocketEvent(event) {
       await refreshAll();
     }
     await refreshTypingIndicators(event.message.conversation_id);
+    if (event.message.event) syncSharedCalendarFeed().catch(() => {});
   } else if (event.type === "message_deleted") {
     await expireRenderedMessage(event.conversation_id, event.message_id);
+    syncSharedCalendarFeed().catch(() => {});
   } else if (event.type === "contact_updated") {
     await refreshAll();
     await refreshCurrentConversationHeader();
@@ -6784,6 +7245,7 @@ async function handleSocketEvent(event) {
       await loadMessages(null, false);
       if (event.pinned_message_id && !elements.pinnedPanel.hidden) await loadPinnedMessages();
     }
+    if (event.deleted_message_id || event.updated_message_id) syncSharedCalendarFeed().catch(() => {});
   } else if (event.type === "typing") {
     await setTypingUser(event.conversation_id, event.user_id, event.typing);
   } else if (event.type?.startsWith("call_") || event.type === "ice_candidate") {

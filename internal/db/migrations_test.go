@@ -17,7 +17,7 @@ func TestOpenCreatesRequiredTables(t *testing.T) {
 
 	required := []string{
 		"users", "sessions", "contacts", "conversations", "conversation_members",
-		"messages", "message_events", "message_reactions", "message_pins", "poll_options", "poll_votes", "message_receipts", "files", "push_subscriptions", "admin_actions", "app_settings", "user_terms_acceptances",
+		"messages", "message_events", "message_reactions", "message_pins", "poll_options", "poll_votes", "message_receipts", "files", "push_subscriptions", "admin_actions", "app_settings", "user_terms_acceptances", "calendar_feeds", "invitation_contacts", "carnet_entries",
 		"federated_instances", "federation_replays", "federated_conversations", "federated_message_map", "federation_outbox",
 	}
 	for _, table := range required {
