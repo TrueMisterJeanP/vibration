@@ -55,7 +55,7 @@ const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
 const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
 const FILE_PREVIEW_PREFETCH_BUDGET_BYTES = 8 * 1024 * 1024;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "ios17-pdf-v204";
+const APP_BUILD = "ios17-pdf-v205";
 
 window.VIBRATION_BUILD = APP_BUILD;
 console.info(`Vibration build ${APP_BUILD}`);
@@ -813,7 +813,16 @@ function bindUI() {
     updateGroupAvatarPreview();
   };
   const sidebarButton = document.querySelector("#open-sidebar-logo");
+  const pauseMessageVideos = () => {
+    elements.messages.querySelectorAll("video").forEach((video) => {
+      const fullscreen = video === document.fullscreenElement
+        || video === document.webkitFullscreenElement
+        || video.webkitDisplayingFullscreen;
+      if (!fullscreen) video.pause();
+    });
+  };
   const setSidebarOpen = (open) => {
+    if (open) pauseMessageVideos();
     elements.shell.classList.toggle("sidebar-open", open);
     sidebarButton.setAttribute("aria-expanded", String(open));
     sidebarButton.setAttribute("aria-label", t(open
@@ -823,7 +832,7 @@ function bindUI() {
   };
   const mobileLayout = window.matchMedia("(max-width: 720px)");
   const syncResponsiveLayout = ({ matches }) => {
-    if (matches) setSidebarOpen(true);
+    if (matches && !state.current) setSidebarOpen(true);
     if (state.current) {
       refreshCurrentConversationHeader(state.current.id).catch((error) => {
         console.warn("Actualisation de l’avatar responsive impossible", error);
