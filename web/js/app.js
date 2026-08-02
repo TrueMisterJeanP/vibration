@@ -1796,8 +1796,16 @@ function prepareAdminNavigation(event) {
   if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   sessionStorage.setItem(ADMIN_RETURN_HISTORY_KEY, location.href);
   handleCallPageExit();
+  clearConversationSelectionForAdmin();
   state.socket?.close();
   window.removeEventListener("beforeunload", handleCallPageExit);
+}
+
+function clearConversationSelectionForAdmin() {
+  const currentConversationID = state.current?.id;
+  if (currentConversationID != null) closeCurrentConversation(currentConversationID);
+  elements.personalConversationButton.classList.remove("active");
+  elements.conversations.querySelectorAll(".conversation-item.active").forEach((item) => item.classList.remove("active"));
 }
 
 function restoreChatFromHistory(event) {
