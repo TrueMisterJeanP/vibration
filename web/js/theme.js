@@ -7,30 +7,53 @@
     || navigator.standalone === true;
   const isAppStart = location.pathname === "/" || location.pathname === "/index.html";
   if (isIOS && isStandalone && isAppStart) {
-    const screenWidth = window.screen.width || window.innerWidth;
-    const screenHeight = window.screen.height || window.innerHeight;
     const splashSymbolSize = 120;
-    document.documentElement.style.setProperty("--startup-screen-width", `${screenWidth}px`);
-    document.documentElement.style.setProperty("--startup-screen-height", `${screenHeight}px`);
-    document.documentElement.style.setProperty("--startup-symbol-x", `${(screenWidth - splashSymbolSize) / 2}px`);
+    const viewportSize = () => ({
+      width: window.visualViewport?.width || window.innerWidth,
+      height: window.visualViewport?.height || window.innerHeight,
+    });
+    const screenSizeForViewport = (viewportWidth, viewportHeight) => {
+      let width = window.screen.width || viewportWidth;
+      let height = window.screen.height || viewportHeight;
+      // iPadOS can keep screen.width/screen.height in their portrait order
+      // after a PWA has started in landscape. Match them to the live viewport.
+      const viewportIsLandscape = viewportWidth > viewportHeight;
+      const screenIsLandscape = width > height;
+      if (viewportIsLandscape !== screenIsLandscape) [width, height] = [height, width];
+      return { width, height };
+    };
+    const applyStartupScreenSize = (viewportWidth, viewportHeight) => {
+      const screenSize = screenSizeForViewport(viewportWidth, viewportHeight);
+      document.documentElement.style.setProperty("--startup-screen-width", `${screenSize.width}px`);
+      document.documentElement.style.setProperty("--startup-screen-height", `${screenSize.height}px`);
+      document.documentElement.style.setProperty(
+        "--startup-symbol-x",
+        `${(screenSize.width - splashSymbolSize) / 2}px`,
+      );
+      return screenSize;
+    };
+    const initialViewport = viewportSize();
+    applyStartupScreenSize(initialViewport.width, initialViewport.height);
     document.documentElement.classList.add("ios-pwa-starting");
 
-    let previousViewportHeight = null;
+    let previousViewport = null;
     let measurementCount = 0;
     const positionStartupSymbol = () => {
-      const viewportHeight = window.visualViewport?.height || window.innerHeight;
+      const viewport = viewportSize();
       measurementCount++;
-      const heightIsStable = previousViewportHeight !== null
-        && Math.abs(viewportHeight - previousViewportHeight) < 0.5;
-      if (!heightIsStable && measurementCount < 6) {
-        previousViewportHeight = viewportHeight;
+      const viewportIsStable = previousViewport !== null
+        && Math.abs(viewport.width - previousViewport.width) < 0.5
+        && Math.abs(viewport.height - previousViewport.height) < 0.5;
+      if (!viewportIsStable && measurementCount < 6) {
+        previousViewport = viewport;
         requestAnimationFrame(positionStartupSymbol);
         return;
       }
-      const pageTopOffset = Math.max(0, screenHeight - viewportHeight);
+      const screenSize = applyStartupScreenSize(viewport.width, viewport.height);
+      const pageTopOffset = Math.max(0, screenSize.height - viewport.height);
       document.documentElement.style.setProperty(
         "--startup-symbol-y",
-        `${(screenHeight - splashSymbolSize) / 2 - pageTopOffset}px`,
+        `${(screenSize.height - splashSymbolSize) / 2 - pageTopOffset}px`,
       );
       document.documentElement.classList.add("ios-pwa-splash-positioned");
     };
