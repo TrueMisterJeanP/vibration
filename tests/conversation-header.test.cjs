@@ -47,6 +47,14 @@ const mobileAvatarRenderer = app.slice(
   app.indexOf("function renderMobileNavigationAvatar"),
   app.indexOf("function replaceAvatarContent"),
 );
+const socketEventHandler = app.slice(
+  app.indexOf("async function handleSocketEvent"),
+  app.indexOf("function sendTyping"),
+);
+const conversationUpdatedHandler = socketEventHandler.slice(
+  socketEventHandler.indexOf('event.type === "conversation_updated"'),
+  socketEventHandler.indexOf('event.type === "typing"'),
+);
 assert.doesNotMatch(
   mobileAvatarRenderer,
   /\/icons\/(?:group|person)\.svg/,
@@ -56,6 +64,16 @@ assert.match(app, /replaceAvatarContent\([\s\S]*elements\.chatAvatar,[\s\S]*disp
 assert.match(app, /replaceAvatarContent\([\s\S]*avatar,[\s\S]*display\.avatar,[\s\S]*conversationAvatarFallback\(display, conversation\),[\s\S]*\[presence\]/);
 assert.match(app, /elements\.description\.textContent = display\.description/);
 assert.match(app, /await refreshCurrentConversationHeader\(currentID\)/);
+assert.match(
+  socketEventHandler,
+  /if \(event\.profile_updated\) \{\s*await getMembers\(event\.conversation_id, \{ fresh: true \}\);\s*\}/,
+  "a contact profile update must refresh member data before rerendering the conversation header",
+);
+assert.ok(
+  conversationUpdatedHandler.indexOf("await getMembers(event.conversation_id, { fresh: true })")
+    < conversationUpdatedHandler.indexOf("await renderConversations()"),
+  "the fresh contact profile must be available before conversations and the active header are rerendered",
+);
 
 assert.match(css, /\.chat-conversation-avatar\s*\{[^}]*background: var\(--avatar-bg\);[^}]*color: var\(--avatar-fg\);/);
 assert.match(css, /\.chat-conversation-avatar img\s*\{/);
