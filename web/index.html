@@ -3,16 +3,29 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#0f766e">
-  <meta name="vibration-build" content="carnet-v221">
-  <script src="/js/theme.js"></script>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1b5260">
+  <meta name="vibration-build" content="startup-preload-v246">
+  <style>
+    :root { --avatar-bg: #1b5260; --avatar-fg: #a9fff4; }
+    html[data-theme="light"] { --avatar-bg: #c9e7e4; --avatar-fg: #075e57; }
+    #startup-splash { display: none; }
+    html.ios-pwa-starting #startup-splash:not([hidden]) { position: fixed; z-index: 100; top: 0; left: 0; display: block; width: var(--startup-screen-width, 100vw); height: var(--startup-screen-height, 100vh); overflow: hidden; background: var(--avatar-bg); }
+    #startup-splash svg { position: absolute; top: var(--startup-symbol-y, 0); left: var(--startup-symbol-x, calc((100vw - 120px) / 2)); display: block; width: 120px; height: 120px; visibility: hidden; fill: none; stroke: var(--avatar-fg); stroke-width: 1.25; stroke-linejoin: miter; animation: none; transition: none; }
+    html.ios-pwa-splash-positioned #startup-splash svg { visibility: visible; }
+  </style>
+  <script src="/js/theme.js?v=startup-preload-v246"></script>
   <title>Vibration</title>
-  <link rel="manifest" href="/manifest.json">
+  <link rel="manifest" href="/manifest.json?v=startup-preload-v246">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=carnet-v214">
+  <link rel="stylesheet" href="/css/style.css?v=startup-preload-v246">
 </head>
 <body>
+  <div id="startup-splash" role="status" aria-label="Chargement de Vibration">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 20 12 12 20 4 12Z"></path></svg>
+  </div>
   <main id="app-shell" class="sidebar-open" hidden>
     <aside id="sidebar">
       <header class="sidebar-header">
@@ -28,7 +41,7 @@
         <button id="logout-button" class="icon-button" title="Déconnexion" aria-label="Déconnexion"><svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="M16 17l5-5-5-5"></path><path d="M21 12H9"></path></svg></button>
       </header>
       <div class="connection-row"><span id="ws-dot"></span><span id="ws-label">Hors ligne</span></div>
-      <a id="admin-link" class="admin-link" href="/admin.html" hidden>Administration</a>
+      <a id="admin-link" class="admin-link" href="/admin.html?from=chat" hidden>Administration</a>
       <div class="actions">
         <button id="contact-button" class="outline">+ Contact</button>
         <button id="group-button" class="outline">+ Groupe</button>
@@ -449,6 +462,6 @@
     </form>
   </dialog>
   <div id="toasts" aria-live="polite"></div>
-  <script type="module" src="/js/app.js?v=carnet-v221"></script>
+  <script type="module" src="/js/app.js?v=startup-preload-v246"></script>
 </body>
 </html>

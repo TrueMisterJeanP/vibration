@@ -16,8 +16,12 @@ assert.match(app, /let conversationRenderVersion = 0;/);
 assert.match(app, /let appReady = false;/);
 assert.match(app, /await renderConversations\(\{ freshMembers: true \}\);/);
 assert.ok(
+  refreshAll.indexOf("await renderConversations();") < refreshAll.indexOf("Promise.all"),
+  "refreshAll renders cached conversations before the initial network load",
+);
+assert.ok(
   refreshAll.indexOf("Promise.all") < refreshAll.indexOf("await renderConversations({ freshMembers: true })"),
-  "refreshAll renders only after the initial network load",
+  "refreshAll replaces the cached list after the network load",
 );
 assert.match(renderConversations, /const renderVersion = \+\+conversationRenderVersion;/);
 assert.match(renderConversations, /const list = document\.createDocumentFragment\(\);/);

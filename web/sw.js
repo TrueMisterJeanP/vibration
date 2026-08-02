@@ -1,8 +1,8 @@
-const CACHE = "chat-pwa-go-v214";
+const CACHE = "chat-pwa-go-v246";
 const SHELL = [
-  "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=carnet-v214",
-  "/js/app.js?v=carnet-v221", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios17-pdf-v199", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js",
-  "/js/notifications.js?v=carnet-v221", "/js/device-vault.js", "/js/i18n.js", "/js/ui.js?v=ios17-pdf-v211", "/js/share.js?v=ios17-pdf-v199", "/js/login.js", "/manifest.json",
+  "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=startup-preload-v246",
+  "/js/app.js?v=startup-preload-v246", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios17-pdf-v199", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=startup-preload-v246",
+  "/js/notifications.js?v=carnet-v221", "/js/device-vault.js", "/js/i18n.js", "/js/ui.js?v=ios17-pdf-v211", "/js/share.js?v=ios17-pdf-v199", "/js/login.js", "/manifest.json?v=startup-preload-v246",
   "/js/pdf-preview-compat.js?v=ios17-pdf-v199",
   "/js/conversation-cache.js?v=cache-v1",
   "/js/file-preview-image.js?v=ios17-pdf-v199",
@@ -19,7 +19,8 @@ const SHELL = [
   "/vendor/pptx-preview/pptx-preview.umd.js?v=ios17-pdf-v199",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/person.svg", "/icons/group.svg",
 ];
-const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=ios17-pdf-v212"];
+const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=startup-preload-v246"];
+const STARTUP_CACHE_PATHS = new Set(["/", "/index.html", "/css/style.css", "/js/theme.js"]);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then(async (cache) => {
@@ -35,7 +36,21 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET" || new URL(event.request.url).pathname.startsWith("/api/")) return;
+  const url = new URL(event.request.url);
+  if (event.request.method !== "GET" || url.pathname.startsWith("/api/")) return;
+  if (STARTUP_CACHE_PATHS.has(url.pathname)) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => {
+        if (cached) return cached;
+        return fetch(event.request).then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+          return response;
+        });
+      }),
+    );
+    return;
+  }
   event.respondWith(
     fetch(event.request)
       .then((response) => {

@@ -18,6 +18,8 @@ turnserver.conf
 docker-compose.override.yml
 src-tauri/
 /tests/admin-file-storage.test.cjs
+/tests/admin-invitations.test.cjs
+/tests/admin-return-navigation.test.cjs
 editions/community.package.json
 editions/community.package-lock.json
 SiteWeb/
