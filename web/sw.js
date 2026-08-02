@@ -1,8 +1,8 @@
-const CACHE = "chat-pwa-go-v246";
+const CACHE = "chat-pwa-go-v247";
 const SHELL = [
-  "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=startup-preload-v246",
-  "/js/app.js?v=startup-preload-v246", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios17-pdf-v199", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=startup-preload-v246",
-  "/js/notifications.js?v=carnet-v221", "/js/device-vault.js", "/js/i18n.js", "/js/ui.js?v=ios17-pdf-v211", "/js/share.js?v=ios17-pdf-v199", "/js/login.js", "/manifest.json?v=startup-preload-v246",
+  "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=startup-preload-v247",
+  "/js/app.js?v=startup-preload-v247", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios17-pdf-v199", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=startup-preload-v247",
+  "/js/notifications.js?v=carnet-v221", "/js/device-vault.js", "/js/i18n.js", "/js/ui.js?v=ios17-pdf-v211", "/js/share.js?v=ios17-pdf-v199", "/js/login.js", "/manifest.json?v=startup-preload-v247",
   "/js/pdf-preview-compat.js?v=ios17-pdf-v199",
   "/js/conversation-cache.js?v=cache-v1",
   "/js/file-preview-image.js?v=ios17-pdf-v199",
@@ -19,7 +19,7 @@ const SHELL = [
   "/vendor/pptx-preview/pptx-preview.umd.js?v=ios17-pdf-v199",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/person.svg", "/icons/group.svg",
 ];
-const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=startup-preload-v246"];
+const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=startup-preload-v247"];
 const STARTUP_CACHE_PATHS = new Set(["/", "/index.html", "/css/style.css", "/js/theme.js"]);
 
 self.addEventListener("install", (event) => {

@@ -54,7 +54,7 @@ func main() {
 	userHandler := &users.Handler{DB: db, Hub: hub}
 	contactHandler := &contacts.Handler{DB: db, Hub: hub}
 	federationHandler := newEditionFederation(db, hub, pushHandler, cfg.FederationBaseURL)
-	conversationHandler := &conversations.Handler{DB: db, Hub: hub, Federation: federationHandler}
+	conversationHandler := &conversations.Handler{DB: db, Hub: hub, Push: pushHandler, Federation: federationHandler}
 	messageHandler := &messages.Handler{DB: db, Hub: hub, Push: pushHandler, Federation: federationHandler}
 	calendarHandler := &calendarfeed.Handler{DB: db, AuthLimiter: auth.NewRateLimiter(cfg.AuthRateLimitPerMinute, time.Minute)}
 	fileHandler := &files.Handler{DB: db, Hub: hub, Push: pushHandler, Federation: federationHandler}

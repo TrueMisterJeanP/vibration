@@ -150,7 +150,8 @@ export async function unwrapGroupKey(envelopeText, privateKey, senderPublicKey) 
     wrappingKey,
     base64ToBytes(envelope.data),
   );
-  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
+  // The owner must be able to wrap this same group key for members added later.
+  return crypto.subtle.importKey("raw", raw, "AES-GCM", true, ["encrypt", "decrypt"]);
 }
 
 export async function encryptBytes(key, bytes) {

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"chat-pwa-go/internal/auth"
 	database "chat-pwa-go/internal/db"
@@ -17,6 +18,36 @@ import (
 type testHub struct{}
 
 func (testHub) SendToUser(int64, any) bool { return false }
+
+type capturedRemovalEvent struct {
+	userID int64
+	event  any
+}
+
+type removalHub struct {
+	sent []capturedRemovalEvent
+}
+
+func (h *removalHub) SendToUser(userID int64, event any) bool {
+	h.sent = append(h.sent, capturedRemovalEvent{userID: userID, event: event})
+	return true
+}
+
+type removalPushEvent struct {
+	userID int64
+	title  string
+	body   string
+	url    string
+	tag    string
+}
+
+type removalPush struct {
+	sent chan removalPushEvent
+}
+
+func (p *removalPush) NotifyUserWithContent(userID int64, title, body, url, tag string) {
+	p.sent <- removalPushEvent{userID: userID, title: title, body: body, url: url, tag: tag}
+}
 
 func TestDeletePrivateConversationRemovesItForBothMembers(t *testing.T) {
 	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
@@ -102,6 +133,47 @@ func TestListIncludesUnreadCount(t *testing.T) {
 	}
 	if conversations[0].LastMessageHasFile {
 		t.Fatal("last_message_has_file=true")
+	}
+}
+
+func TestNewConversationSortsAboveAnOlderConversationWithMessages(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	handler := &Handler{DB: db, Hub: testHub{}}
+	owner := registerUser(t, authHandler, "recent_conversation_owner")
+	registerUser(t, authHandler, "older_conversation_member")
+	registerUser(t, authHandler, "new_conversation_member")
+	mux := conversationMux(authHandler, handler)
+	ensureAcceptedContact(t, db, 1, 2)
+	ensureAcceptedContact(t, db, 1, 3)
+
+	olderID := createPrivateConversation(t, mux, owner, 2)
+	if _, err := db.Exec(`UPDATE conversations SET created_at='2026-01-01T00:00:00Z' WHERE id=?`, olderID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE conversation_members SET created_at='2026-01-01T00:00:00Z' WHERE conversation_id=?`, olderID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,created_at)
+		VALUES(?,2,'older-message','message-iv','2026-02-01T00:00:00Z')`, olderID); err != nil {
+		t.Fatal(err)
+	}
+	newID := createPrivateConversation(t, mux, owner, 3)
+
+	list := request(t, mux, http.MethodGet, "/api/conversations", nil, owner)
+	if list.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", list.Code, list.Body.String())
+	}
+	var conversations []Conversation
+	if err := json.Unmarshal(list.Body.Bytes(), &conversations); err != nil {
+		t.Fatal(err)
+	}
+	if len(conversations) != 2 || formatID(conversations[0].ID) != newID || formatID(conversations[1].ID) != olderID {
+		t.Fatalf("new conversation should be first: %#v", conversations)
 	}
 }
 
@@ -390,6 +462,60 @@ func TestAddGroupMemberDoesNotRequireAcceptedContact(t *testing.T) {
 	}
 }
 
+func TestRemoveGroupMemberNotifiesRemovedUser(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	owner := registerUser(t, authHandler, "removal_owner")
+	registerUser(t, authHandler, "removal_member")
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := db.Exec(`INSERT INTO conversations(type,encrypted_title,created_by,created_at) VALUES('group','encrypted-title',1,?)`, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationID, _ := result.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
+		VALUES(?,1,'owner-key','owner',?),(?,2,'member-key','member',?)`, conversationID, now, conversationID, now); err != nil {
+		t.Fatal(err)
+	}
+
+	hub := &removalHub{}
+	push := &removalPush{sent: make(chan removalPushEvent, 1)}
+	handler := &Handler{DB: db, Hub: hub, Push: push}
+	mux := conversationMux(authHandler, handler)
+	response := request(t, mux, http.MethodDelete,
+		"/api/conversations/"+formatID(conversationID)+"/members/2", nil, owner)
+	if response.Code != http.StatusOK {
+		t.Fatalf("remove member status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	foundRemovalNotice := false
+	for _, sent := range hub.sent {
+		payload, ok := sent.event.(map[string]any)
+		if sent.userID == 2 && ok && payload["removed"] == true && payload["removal_notice"] == true {
+			foundRemovalNotice = true
+			break
+		}
+	}
+	if !foundRemovalNotice {
+		t.Fatalf("removed member did not receive a removal notice: %#v", hub.sent)
+	}
+
+	select {
+	case notification := <-push.sent:
+		if notification.userID != 2 || notification.title != "Retrait d’un groupe" ||
+			notification.body != "Vous ne faites plus partie de ce groupe." || notification.url != "/" ||
+			notification.tag != "group-removal-"+formatID(conversationID) {
+			t.Fatalf("unexpected removal push: %#v", notification)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("removed member did not receive a push notification")
+	}
+}
+
 func conversationMux(authHandler *auth.Handler, handler *Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/conversations", authHandler.Middleware(http.HandlerFunc(handler.List)))
@@ -401,6 +527,7 @@ func conversationMux(authHandler *auth.Handler, handler *Handler) *http.ServeMux
 	mux.Handle("PUT /api/conversations/{id}", authHandler.Middleware(http.HandlerFunc(handler.Update)))
 	mux.Handle("DELETE /api/conversations/{id}", authHandler.Middleware(http.HandlerFunc(handler.Delete)))
 	mux.Handle("POST /api/conversations/{id}/members", authHandler.Middleware(http.HandlerFunc(handler.AddMember)))
+	mux.Handle("DELETE /api/conversations/{id}/members/{user_id}", authHandler.Middleware(http.HandlerFunc(handler.RemoveMember)))
 	return mux
 }
 

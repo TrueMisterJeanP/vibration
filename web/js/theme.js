@@ -42,7 +42,11 @@
   }
 
   function apply(value = preference()) {
-    const resolved = value === "auto" ? (media.matches ? "light" : "dark") : value;
+    // Recreate the media query when the app resumes: an installed iPad PWA can
+    // be suspended while iPadOS changes appearance, leaving the original
+    // MediaQueryList event (and sometimes its cached state) behind.
+    const systemIsLight = window.matchMedia("(prefers-color-scheme: light)").matches;
+    const resolved = value === "auto" ? (systemIsLight ? "light" : "dark") : value;
     document.documentElement.dataset.theme = resolved;
     document.documentElement.style.colorScheme = resolved;
     const themeColor = document.querySelector('meta[name="theme-color"]');
@@ -64,9 +68,20 @@
     },
   };
 
-  media.addEventListener("change", () => {
+  const refreshAutomaticTheme = () => {
     if (preference() === "auto") apply("auto");
+  };
+  if (typeof media.addEventListener === "function") {
+    media.addEventListener("change", refreshAutomaticTheme);
+  } else if (typeof media.addListener === "function") {
+    // iPadOS 13 and older Safari versions expose the legacy MediaQueryList API.
+    media.addListener(refreshAutomaticTheme);
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshAutomaticTheme();
   });
+  window.addEventListener("pageshow", refreshAutomaticTheme);
+  window.addEventListener("focus", refreshAutomaticTheme);
   window.addEventListener("storage", (event) => {
     if (event.key === storageKey) apply();
   });

@@ -34,18 +34,19 @@ type Contact struct {
 }
 
 type CarnetEntry struct {
-	ID                    int64   `json:"id"`
-	ContactUserID         int64   `json:"contact_user_id"`
-	Username              string  `json:"username"`
-	DisplayName           string  `json:"display_name"`
-	Description           string  `json:"description"`
-	Avatar                *string `json:"avatar"`
-	IsRemote              bool    `json:"is_remote"`
-	RemoteInstanceID      *int64  `json:"remote_instance_id"`
-	RemoteUsername        *string `json:"remote_username"`
-	FederationInstanceURL *string `json:"federation_instance_url"`
-	Active                bool    `json:"active"`
-	CanResume             bool    `json:"can_resume"`
+	ID                     int64   `json:"id"`
+	ContactUserID          int64   `json:"contact_user_id"`
+	Username               string  `json:"username"`
+	DisplayName            string  `json:"display_name"`
+	Description            string  `json:"description"`
+	Avatar                 *string `json:"avatar"`
+	IsRemote               bool    `json:"is_remote"`
+	RemoteInstanceID       *int64  `json:"remote_instance_id"`
+	RemoteUsername         *string `json:"remote_username"`
+	FederationInstanceURL  *string `json:"federation_instance_url"`
+	Active                 bool    `json:"active"`
+	HasPrivateConversation bool    `json:"has_private_conversation"`
+	CanResume              bool    `json:"can_resume"`
 }
 
 func (h *Handler) CarnetList(w http.ResponseWriter, r *http.Request) {
@@ -59,11 +60,15 @@ func (h *Handler) CarnetList(w http.ResponseWriter, r *http.Request) {
 		(SELECT COUNT(*) FROM conversation_members mine
 			JOIN conversations c ON c.id=mine.conversation_id AND c.type IN ('private','group')
 			JOIN conversation_members peer ON peer.conversation_id=mine.conversation_id
+			WHERE mine.user_id=? AND mine.role<>'pending' AND peer.user_id=b.contact_user_id AND peer.role<>'pending'),
+		(SELECT COUNT(*) FROM conversation_members mine
+			JOIN conversations c ON c.id=mine.conversation_id AND c.type='private'
+			JOIN conversation_members peer ON peer.conversation_id=mine.conversation_id
 			WHERE mine.user_id=? AND mine.role<>'pending' AND peer.user_id=b.contact_user_id AND peer.role<>'pending')
 		FROM carnet_entries b JOIN users u ON u.id=b.contact_user_id
 		LEFT JOIN federated_instances fi ON fi.id=u.remote_instance_id
 		WHERE b.owner_id=?
-		ORDER BY LOWER(COALESCE(u.remote_username,u.username)),LOWER(u.display_name)`, userID, userID)
+		ORDER BY LOWER(COALESCE(u.remote_username,u.username)),LOWER(u.display_name)`, userID, userID, userID)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "carnet lookup failed")
 		return
@@ -74,9 +79,9 @@ func (h *Handler) CarnetList(w http.ResponseWriter, r *http.Request) {
 		var entry CarnetEntry
 		var remoteInstanceID sql.NullInt64
 		var remoteUsername, instanceURL sql.NullString
-		var activeCount int
+		var activeCount, privateConversationCount int
 		if err := rows.Scan(&entry.ID, &entry.ContactUserID, &entry.Username, &entry.DisplayName, &entry.Description, &entry.Avatar,
-			&entry.IsRemote, &remoteInstanceID, &remoteUsername, &instanceURL, &activeCount); err != nil {
+			&entry.IsRemote, &remoteInstanceID, &remoteUsername, &instanceURL, &activeCount, &privateConversationCount); err != nil {
 			httpx.Error(w, http.StatusInternalServerError, "carnet lookup failed")
 			return
 		}
@@ -93,6 +98,7 @@ func (h *Handler) CarnetList(w http.ResponseWriter, r *http.Request) {
 			entry.FederationInstanceURL = &value
 		}
 		entry.Active = activeCount > 0
+		entry.HasPrivateConversation = privateConversationCount > 0
 		entry.CanResume = !entry.IsRemote || entry.RemoteInstanceID != nil
 		entries = append(entries, entry)
 	}

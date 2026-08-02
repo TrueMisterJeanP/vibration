@@ -17,6 +17,7 @@ type Broadcaster interface {
 
 type PushSender interface {
 	NotifyUser(userID int64)
+	NotifyUserWithContent(userID int64, title, body, url, tag string)
 }
 
 type FederationRouter interface {

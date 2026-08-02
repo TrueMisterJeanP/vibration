@@ -25,6 +25,7 @@ import {
   enableNotifications,
   notificationStatus,
   registerServiceWorker,
+  showGroupRemovalNotification,
   renewPushSubscription,
   showIncomingCallNotification,
   showIncomingMessageNotification,
@@ -61,7 +62,7 @@ const BACKGROUND_THUMBNAIL_PRELOAD_BUDGET_BYTES = 4 * 1024 * 1024;
 const BACKGROUND_PRELOAD_TTL_MS = 2 * 60 * 1000;
 const BACKGROUND_PRELOAD_NETWORK_FRESH_MS = 15 * 1000;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "startup-preload-v246";
+const APP_BUILD = "startup-preload-v247";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 
 window.VIBRATION_BUILD = APP_BUILD;
@@ -5492,15 +5493,17 @@ function renderCarnet(loaded = true) {
     copy.append(name, username, status);
     const actions = document.createElement("span");
     actions.className = "carnet-actions";
-    if (!entry.active && entry.can_resume) {
-      const resume = document.createElement("button");
-      resume.type = "button";
-      resume.className = "outline";
-      resume.textContent = t("Reprendre");
-      resume.title = t("Reprendre une discussion avec {name}", { name: entry.display_name || entry.username });
-      resume.setAttribute("aria-label", resume.title);
-      resume.onclick = () => resumeCarnetEntry(entry, resume);
-      actions.append(resume);
+    if (entry.can_resume) {
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "outline";
+      open.textContent = t(entry.has_private_conversation ? "Ouvrir" : "Contacter");
+      open.title = entry.has_private_conversation
+        ? t("Ouvrir une discussion avec {name}", { name: entry.display_name || entry.username })
+        : t("Contacter {name}", { name: entry.display_name || entry.username });
+      open.setAttribute("aria-label", open.title);
+      open.onclick = () => resumeCarnetEntry(entry, open);
+      actions.append(open);
     }
     if (!entry.active) {
       const remove = document.createElement("button");
@@ -5565,6 +5568,9 @@ async function deleteAllCarnetEntries() {
 }
 
 async function resumeCarnetEntry(entry, button) {
+  const row = button.closest(".carnet-row");
+  if (row?.dataset.busy === "true") return;
+  if (row) row.dataset.busy = "true";
   setBusy(button, true);
   try {
     let conversation;
@@ -5574,25 +5580,23 @@ async function resumeCarnetEntry(entry, button) {
         body: { instance_id: entry.remote_instance_id, username: entry.remote_username || entry.username },
       });
     } else {
-      try {
-        conversation = await api("/api/conversations/private", { method: "POST", body: { user_id: entry.contact_user_id } });
-      } catch (error) {
-        if (![403, 404].includes(error.status)) throw error;
+      let contact = state.contacts.find((item) => sameID(item.contact_user_id, entry.contact_user_id));
+      if (!contact) {
         await api("/api/contacts", { method: "POST", body: { user_id: entry.contact_user_id } });
         await refreshAll();
-        let contact = state.contacts.find((item) => sameID(item.contact_user_id, entry.contact_user_id));
-        if (contact?.status !== "accepted" && contact?.direction === "incoming") {
-          await api(`/api/contacts/${contact.id}/accept`, { method: "POST" });
-          await refreshAll();
-          contact = state.contacts.find((item) => sameID(item.contact_user_id, entry.contact_user_id));
-        }
-        if (contact?.status !== "accepted") {
-          elements.carnetDialog.close();
-          toast(t("Demande envoyée. La discussion sera disponible après acceptation."), "success");
-          return;
-        }
-        conversation = await api("/api/conversations/private", { method: "POST", body: { user_id: entry.contact_user_id } });
+        contact = state.contacts.find((item) => sameID(item.contact_user_id, entry.contact_user_id));
       }
+      if (contact?.status !== "accepted" && contact?.direction === "incoming") {
+        await api(`/api/contacts/${contact.id}/accept`, { method: "POST" });
+        await refreshAll();
+        contact = state.contacts.find((item) => sameID(item.contact_user_id, entry.contact_user_id));
+      }
+      if (contact?.status !== "accepted") {
+        elements.carnetDialog.close();
+        toast(t("Demande envoyée. La discussion sera disponible après acceptation."), "success");
+        return;
+      }
+      conversation = await api("/api/conversations/private", { method: "POST", body: { user_id: entry.contact_user_id } });
     }
     elements.carnetDialog.close();
     await refreshAll();
@@ -5602,6 +5606,7 @@ async function resumeCarnetEntry(entry, button) {
     toast(frenchErrorMessage(error, "Impossible de reprendre cette discussion."), "error");
   } finally {
     setBusy(button, false);
+    if (row) delete row.dataset.busy;
   }
 }
 
@@ -7583,6 +7588,12 @@ async function handleSocketEvent(event) {
     invalidateConversationPreload(event.conversation_id);
     const currentID = state.current?.id;
     state.members.delete(event.conversation_id);
+    if (event.removal_notice) {
+      const title = t("Retrait d’un groupe");
+      const body = t("Vous ne faites plus partie de ce groupe.");
+      await showGroupRemovalNotification(title, body, event.conversation_id).catch(() => {});
+      toast(body);
+    }
     if ((event.deleted || event.removed) && sameID(currentID, event.conversation_id)) {
       closeCurrentConversation(event.conversation_id);
       state.keys.delete(event.conversation_id);

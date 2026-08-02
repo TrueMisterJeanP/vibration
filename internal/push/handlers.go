@@ -37,6 +37,19 @@ type DeliveryResult struct {
 	Failures      []string `json:"failures"`
 }
 
+type notificationContent struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+	URL   string `json:"url"`
+	Tag   string `json:"tag,omitempty"`
+}
+
+var newMessageNotification = notificationContent{
+	Title: "Nouveau message",
+	Body:  "Ouvrez l’application pour le lire.",
+	URL:   "/",
+}
+
 func New(database *sql.DB, dataDir, subject string) (*Handler, error) {
 	keys, err := config.LoadOrCreateJSON(filepath.Join(dataDir, "vapid.json"), func() (Keys, error) {
 		privateKey, publicKey, err := webpush.GenerateVAPIDKeys()
@@ -115,7 +128,7 @@ func (h *Handler) Unsubscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Test(w http.ResponseWriter, r *http.Request) {
-	httpx.JSON(w, http.StatusOK, h.notify(auth.UserID(r)))
+	httpx.JSON(w, http.StatusOK, h.notify(auth.UserID(r), newMessageNotification))
 }
 
 func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
@@ -138,14 +151,22 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) NotifyUser(userID int64) {
-	result := h.notify(userID)
+	h.notifyAndLog(userID, newMessageNotification)
+}
+
+func (h *Handler) NotifyUserWithContent(userID int64, title, body, url, tag string) {
+	h.notifyAndLog(userID, notificationContent{Title: title, Body: body, URL: url, Tag: tag})
+}
+
+func (h *Handler) notifyAndLog(userID int64, content notificationContent) {
+	result := h.notify(userID, content)
 	if result.Subscriptions == 0 || len(result.Failures) > 0 {
 		log.Printf("push delivery user_id=%d subscriptions=%d attempted=%d sent=%d removed=%d failures=%v",
 			userID, result.Subscriptions, result.Attempted, result.Sent, result.Removed, result.Failures)
 	}
 }
 
-func (h *Handler) notify(userID int64) DeliveryResult {
+func (h *Handler) notify(userID int64, content notificationContent) DeliveryResult {
 	result := DeliveryResult{Failures: make([]string, 0)}
 	rows, err := h.DB.Query(`SELECT id,endpoint,p256dh,auth FROM push_subscriptions WHERE user_id=?`, userID)
 	if err != nil {
@@ -165,11 +186,7 @@ func (h *Handler) notify(userID int64) DeliveryResult {
 	}
 	rows.Close()
 	result.Subscriptions = len(subscriptions)
-	payload, _ := json.Marshal(map[string]string{
-		"title": "Nouveau message",
-		"body":  "Ouvrez l’application pour le lire.",
-		"url":   "/",
-	})
+	payload, _ := json.Marshal(content)
 	for _, item := range subscriptions {
 		result.Attempted++
 		response, err := webpush.SendNotification(payload, &item.subscription, &webpush.Options{

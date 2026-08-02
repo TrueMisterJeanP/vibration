@@ -76,6 +76,17 @@ func TestContactRequestMustBeAccepted(t *testing.T) {
 			t.Fatalf("conversation member user=%d count=%d err=%v", userID, count, err)
 		}
 	}
+	carnetList := contactRequest(t, mux, http.MethodGet, "/api/carnet", nil, first)
+	if carnetList.Code != http.StatusOK {
+		t.Fatalf("carnet list status=%d body=%s", carnetList.Code, carnetList.Body.String())
+	}
+	var carnet []CarnetEntry
+	if err := json.Unmarshal(carnetList.Body.Bytes(), &carnet); err != nil {
+		t.Fatal(err)
+	}
+	if len(carnet) != 1 || !carnet[0].HasPrivateConversation {
+		t.Fatalf("private conversation should be exposed in carnet: %+v", carnet)
+	}
 
 	deleted := contactRequest(t, mux, http.MethodDelete, "/api/contacts/2", nil, second)
 	if deleted.Code != http.StatusOK {
@@ -134,7 +145,7 @@ func TestCarnetProtectsCurrentGroupMembersAndDeletesOldEntries(t *testing.T) {
 	if err := json.Unmarshal(list.Body.Bytes(), &entries); err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 || !entries[0].Active || !entries[1].Active {
+	if len(entries) != 2 || !entries[0].Active || !entries[1].Active || entries[0].HasPrivateConversation || entries[1].HasPrivateConversation {
 		t.Fatalf("current group entries=%+v", entries)
 	}
 	blocked := contactRequest(t, mux, http.MethodDelete, "/api/carnet/1", nil, first)

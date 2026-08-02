@@ -18,6 +18,10 @@ type Broadcaster interface {
 	SendToUser(userID int64, event any) bool
 }
 
+type PushSender interface {
+	NotifyUserWithContent(userID int64, title, body, url, tag string)
+}
+
 type FederationRouter interface {
 	QueueGroupCreate(conversationID int64)
 	QueueGroupAccept(conversationID, userID int64)
@@ -30,6 +34,7 @@ type FederationRouter interface {
 type Handler struct {
 	DB         *sql.DB
 	Hub        Broadcaster
+	Push       PushSender
 	Federation FederationRouter
 	personalMu sync.Mutex
 }
@@ -87,7 +92,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN users ru ON ru.id=fc.remote_user_id
 		WHERE cm.user_id=?
 		ORDER BY CASE WHEN cm.favorite_at IS NULL THEN 1 ELSE 0 END,cm.favorite_at DESC,
-			COALESCE((SELECT MAX(id) FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?)),0) DESC,c.id DESC`,
+			COALESCE((SELECT MAX(created_at) FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?)),cm.created_at,c.created_at) DESC,c.id DESC`,
 		now, now, now, now, auth.UserID(r), now, auth.UserID(r), now)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "conversation lookup failed")
@@ -511,7 +516,20 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "member not found")
 		return
 	}
-	h.Hub.SendToUser(memberID, map[string]any{"type": "conversation_updated", "conversation_id": conversationID, "removed": true})
+	if h.Hub != nil {
+		h.Hub.SendToUser(memberID, map[string]any{
+			"type": "conversation_updated", "conversation_id": conversationID, "removed": true, "removal_notice": true,
+		})
+	}
+	if h.Push != nil {
+		go h.Push.NotifyUserWithContent(
+			memberID,
+			"Retrait d’un groupe",
+			"Vous ne faites plus partie de ce groupe.",
+			"/",
+			"group-removal-"+strconv.FormatInt(conversationID, 10),
+		)
+	}
 	h.notifyMembers(conversationID, "conversation_updated")
 	if h.Federation != nil {
 		h.Federation.QueueGroupMemberRemove(conversationID, memberID)

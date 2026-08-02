@@ -91,6 +91,8 @@ func (p *testPush) NotifyUser(userID int64) {
 	p.users <- userID
 }
 
+func (p *testPush) NotifyUserWithContent(int64, string, string, string, string) {}
+
 func TestBroadcastNotifiesPushEvenWhenRecipientOnline(t *testing.T) {
 	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
 	if err != nil {

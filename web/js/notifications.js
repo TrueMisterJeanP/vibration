@@ -308,6 +308,30 @@ export async function showIncomingMessageNotification() {
   return true;
 }
 
+export async function showGroupRemovalNotification(title, body, conversationID) {
+  const native = tauriNotificationAPI();
+  if (native) {
+    if (!document.hidden || !await native.isPermissionGranted()) return false;
+    native.sendNotification({ title, body });
+    return true;
+  }
+  if (!document.hidden || !("Notification" in window) || Notification.permission !== "granted") return false;
+  const registration = await registerServiceWorker();
+  if (!registration) return false;
+  await registration.showNotification(title, {
+    body,
+    icon: "/icons/icon-192.png",
+    badge: "/icons/icon-192.png",
+    tag: `group-removal-${conversationID}`,
+    renotify: true,
+    requireInteraction: true,
+    timestamp: Date.now(),
+    vibrate: [180, 80, 180],
+    data: { url: "/" },
+  });
+  return true;
+}
+
 export async function showIncomingCallNotification(title, body) {
   const native = tauriNotificationAPI();
   if (native) {

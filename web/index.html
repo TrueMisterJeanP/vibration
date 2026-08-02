@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1b5260">
-  <meta name="vibration-build" content="startup-preload-v246">
+  <meta name="vibration-build" content="startup-preload-v247">
   <style>
     :root { --avatar-bg: #1b5260; --avatar-fg: #a9fff4; }
     html[data-theme="light"] { --avatar-bg: #c9e7e4; --avatar-fg: #075e57; }
@@ -15,12 +15,12 @@
     #startup-splash svg { position: absolute; top: var(--startup-symbol-y, 0); left: var(--startup-symbol-x, calc((100vw - 120px) / 2)); display: block; width: 120px; height: 120px; visibility: hidden; fill: none; stroke: var(--avatar-fg); stroke-width: 1.25; stroke-linejoin: miter; animation: none; transition: none; }
     html.ios-pwa-splash-positioned #startup-splash svg { visibility: visible; }
   </style>
-  <script src="/js/theme.js?v=startup-preload-v246"></script>
+  <script src="/js/theme.js?v=startup-preload-v247"></script>
   <title>Vibration</title>
-  <link rel="manifest" href="/manifest.json?v=startup-preload-v246">
+  <link rel="manifest" href="/manifest.json?v=startup-preload-v247">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=startup-preload-v246">
+  <link rel="stylesheet" href="/css/style.css?v=startup-preload-v247">
 </head>
 <body>
   <div id="startup-splash" role="status" aria-label="Chargement de Vibration">
@@ -264,10 +264,10 @@
   <dialog id="carnet-dialog" class="carnet-dialog">
     <section>
       <button id="carnet-close" class="dialog-close" type="button" aria-label="Fermer">×</button>
-      <h3>Carnet de contacts</h3>
+      <h3>Carnet</h3>
       <p id="carnet-status" class="carnet-help" aria-live="polite">Contacts rencontrés dans vos discussions.</p>
       <div class="carnet-toolbar">
-        <strong>Anciens contacts</strong>
+        <strong>Supprimer les anciens contacts du carnet</strong>
         <button id="carnet-delete-all" class="icon-button carnet-delete-all-button danger-text" type="button" title="Supprimer les anciens contacts" aria-label="Supprimer les anciens contacts" disabled>
           <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 15H6L5 6"></path><path d="M10 10v7M14 10v7"></path></svg>
         </button>
@@ -462,6 +462,6 @@
     </form>
   </dialog>
   <div id="toasts" aria-live="polite"></div>
-  <script type="module" src="/js/app.js?v=startup-preload-v246"></script>
+  <script type="module" src="/js/app.js?v=startup-preload-v247"></script>
 </body>
 </html>
