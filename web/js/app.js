@@ -31,7 +31,7 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js";
+} from "./notifications.js?v=carnet-v221";
 import { ChatSocket } from "./websocket.js?v=ios17-pdf-v199";
 import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios17-pdf-v211";
 import { locale, t } from "./i18n.js";
@@ -108,6 +108,9 @@ let profileAvatar = null;
 let groupAvatar = null;
 let pdfJSModule;
 let ios17PDFJSModule;
+let conversationRenderVersion = 0;
+let conversationListRenderKey = "";
+let appReady = false;
 const pdfScriptLoads = new Map();
 const CALENDAR_FEED_TOKEN_KEY = "vibration.calendar_feed_token";
 let callPageExitHandled = false;
@@ -631,6 +634,7 @@ async function boot() {
   bindUI();
   connectSocket();
   await refreshAll();
+  appReady = true;
   initializeNotificationsAfterBoot();
 }
 
@@ -1754,13 +1758,13 @@ function connectSocket() {
     if (detail) {
       clearCallSignalLossTimer();
       resumePendingCallIceRestarts();
-      if (state.conversations.length) {
+      if (appReady && state.conversations.length) {
         refreshConversationList().catch(() => {});
         if (state.current) loadMessages(null, false).catch(() => {});
       }
     } else {
       state.onlineUsers.clear();
-      renderConversations().catch(() => {});
+      if (appReady) renderConversations().catch(() => {});
       scheduleCallInterruptForSignalLoss();
     }
     updateCallButtons();
@@ -1770,29 +1774,32 @@ function connectSocket() {
 }
 
 async function refreshAll() {
-  if (!state.conversations.length) {
-    const cachedConversations = await state.cache?.getConversations();
-    if (cachedConversations?.length) {
-      state.conversations = cachedConversations;
-      await renderConversations();
+  const cachedConversations = !state.conversations.length
+    ? await state.cache?.getConversations()
+    : null;
+  try {
+    let [contacts, conversations, carnetEntries] = await Promise.all([
+      api("/api/contacts"),
+      api("/api/conversations"),
+      api("/api/carnet"),
+    ]);
+    if (!conversations.some((conversation) => conversation.is_personal)) {
+      await api("/api/conversations/personal", { method: "POST" });
+      conversations = await api("/api/conversations");
     }
+    state.contacts = contacts;
+    state.carnet = carnetEntries;
+    state.conversations = conversations;
+    state.members.clear();
+    state.cache?.saveConversations(conversations);
+    await renderConversations({ freshMembers: true });
+    syncSharedCalendarFeed().catch(() => {});
+  } catch (error) {
+    if (!cachedConversations?.length) throw error;
+    state.conversations = cachedConversations;
+    state.members.clear();
+    await renderConversations();
   }
-  let [contacts, conversations, carnetEntries] = await Promise.all([
-    api("/api/contacts"),
-    api("/api/conversations"),
-    api("/api/carnet"),
-  ]);
-  if (!conversations.some((conversation) => conversation.is_personal)) {
-    await api("/api/conversations/personal", { method: "POST" });
-    conversations = await api("/api/conversations");
-  }
-  state.contacts = contacts;
-  state.carnet = carnetEntries;
-  state.conversations = conversations;
-  state.members.clear();
-  state.cache?.saveConversations(conversations);
-  await renderConversations();
-  syncSharedCalendarFeed().catch(() => {});
 }
 
 async function refreshConversationList() {
@@ -1800,7 +1807,7 @@ async function refreshConversationList() {
   state.conversations = conversations;
   state.carnet = carnetEntries;
   state.cache?.saveConversations(state.conversations);
-  await renderConversations();
+  await renderConversations({ freshMembers: true });
 }
 
 async function toggleConversationFavorite(conversation, button) {
@@ -1823,7 +1830,7 @@ async function toggleConversationFavorite(conversation, button) {
 }
 
 function refreshConversationListOnForeground() {
-  if (!state.me) return;
+  if (!state.me || !appReady) return;
   refreshConversationList().catch((error) => {
     console.warn("Actualisation des conversations au retour impossible", error);
   });
@@ -1842,7 +1849,7 @@ function conversationCallState(conversation) {
 }
 
 function refreshConversationCallIndicators() {
-  if (!state.me) return;
+  if (!state.me || !appReady) return;
   renderConversations().catch((error) => {
     console.warn("Actualisation de l’indicateur d’appel impossible", error);
   });
@@ -1854,48 +1861,109 @@ function conversationListActiveID() {
   return mobileSidebarOpen ? null : state.current?.id;
 }
 
-async function renderPersonalConversation() {
+async function renderPersonalConversation(isCurrentRender = () => true) {
   const conversation = state.conversations.find((item) => item.is_personal);
-  elements.personalConversationButton.hidden = !conversation;
-  if (!conversation) return;
-  elements.personalConversationButton.classList.toggle("active", sameID(conversationListActiveID(), conversation.id));
+  if (!conversation) {
+    if (isCurrentRender()) elements.personalConversationButton.hidden = true;
+    return;
+  }
   const unreadCount = Number(conversation.unread_count || 0);
+  let preview;
+  try {
+    preview = await conversationListPreview(conversation, {
+      description: t("Messages et fichiers personnels"),
+    });
+  } catch {
+    preview = t("Messages et fichiers personnels");
+  }
+  if (!isCurrentRender()) return;
+  elements.personalConversationButton.hidden = false;
+  elements.personalConversationButton.classList.toggle("active", sameID(conversationListActiveID(), conversation.id));
   elements.personalConversationUnread.hidden = unreadCount === 0;
   elements.personalConversationUnread.textContent = unreadCount > 99 ? "99+" : String(unreadCount || "");
   elements.personalConversationUnread.setAttribute("aria-label", t(
     unreadCount === 1 ? "{count} message non lu" : "{count} messages non lus",
     { count: unreadCount },
   ));
-  try {
-    elements.personalConversationPreview.textContent = await conversationListPreview(conversation, {
-      description: t("Messages et fichiers personnels"),
-    });
-  } catch {
-    elements.personalConversationPreview.textContent = t("Messages et fichiers personnels");
-  }
+  elements.personalConversationPreview.textContent = preview;
 }
 
-async function renderConversations() {
-  elements.conversations.replaceChildren();
-  await renderPersonalConversation();
+async function renderConversations({ freshMembers = false } = {}) {
+  const renderVersion = ++conversationRenderVersion;
+  const isCurrentRender = () => renderVersion === conversationRenderVersion;
+  await renderPersonalConversation(isCurrentRender);
+  if (!isCurrentRender()) return;
   const pendingContacts = state.contacts.filter((contact) => contact.status === "pending");
-  for (const contact of pendingContacts) {
-    elements.conversations.append(renderContactRequest(contact));
-  }
   const listedConversations = state.conversations.filter((conversation) => !conversation.is_personal);
+  const displays = await Promise.all(listedConversations.map(async (conversation) => {
+    try {
+      return await resolveConversationDisplay(conversation, { freshMembers });
+    } catch {
+      return null;
+    }
+  }));
+  if (!isCurrentRender()) return;
+  const details = await Promise.all(listedConversations.map(async (conversation, index) => {
+    const display = displays[index];
+    const callState = conversationCallState(conversation);
+    const [typing, online] = await Promise.all([
+      typingIndicator(conversation).catch(() => null),
+      conversationOnline(conversation).catch(() => false),
+    ]);
+    let preview = "";
+    if (display && !typing && !callState) {
+      preview = await conversationListPreview(conversation, display).catch(() => "");
+    }
+    return { conversation, display, callState, typing, online, preview };
+  }));
+  if (!isCurrentRender()) return;
+  const activeID = conversationListActiveID();
+  const renderKey = JSON.stringify({
+    activeID,
+    personalVisible: !elements.personalConversationButton.hidden,
+    pendingContacts: pendingContacts.map((contact) => [
+      contact.id,
+      contact.status,
+      contact.direction,
+      contact.display_name,
+      contact.username,
+      contact.avatar,
+    ]),
+    conversations: details.map(({ conversation, display, callState, typing, online, preview }) => [
+      conversation.id,
+      conversation.type,
+      conversation.role,
+      conversation.unread_count,
+      conversation.favorite_at,
+      display?.title || "",
+      display?.avatar || "",
+      callState?.media || "",
+      callState?.incoming || false,
+      callState?.outgoing || false,
+      typing?.label || "",
+      online,
+      preview,
+    ]),
+  });
+  if (renderKey === conversationListRenderKey) return;
+  const list = document.createDocumentFragment();
+  for (const contact of pendingContacts) {
+    list.append(renderContactRequest(contact));
+  }
   if (!listedConversations.length && !pendingContacts.length && elements.personalConversationButton.hidden) {
     const empty = document.createElement("p");
     empty.className = "muted sidebar-empty";
     empty.textContent = t("Aucune conversation");
-    elements.conversations.append(empty);
+    list.append(empty);
+    conversationListRenderKey = renderKey;
+    elements.conversations.replaceChildren(list);
     return;
   }
-  for (const conversation of listedConversations) {
+  for (const { conversation, display, callState, typing, online, preview } of details) {
     if (conversation.type === "group" && conversation.role === "pending") {
-      elements.conversations.append(renderGroupInvitation(conversation));
+      list.append(renderGroupInvitation(conversation, display));
       continue;
     }
-    const callState = conversationCallState(conversation);
     const row = document.createElement("div");
     row.className = "conversation-row swipe-row";
     const actions = document.createElement("div");
@@ -1904,7 +1972,7 @@ async function renderConversations() {
     button.className = [
       "conversation-item",
       "swipe-surface",
-      sameID(conversationListActiveID(), conversation.id) ? "active" : "",
+      sameID(activeID, conversation.id) ? "active" : "",
       callState ? "call-highlight" : "",
       callState?.incoming ? "call-incoming" : "",
     ].filter(Boolean).join(" ");
@@ -1915,7 +1983,8 @@ async function renderConversations() {
     const titleRow = document.createElement("span");
     titleRow.className = "conversation-title-row";
     const title = document.createElement("strong");
-    title.textContent = t(conversation.type === "group" ? "Groupe chiffré" : "Conversation privée");
+    title.textContent = display?.title || "";
+    title.hidden = !display?.title;
     const presence = document.createElement("span");
     presence.className = "presence-indicator";
     presence.hidden = true;
@@ -1935,7 +2004,17 @@ async function renderConversations() {
         : "Appel en cours";
     const subtitle = document.createElement("small");
     subtitle.className = "conversation-description";
-    subtitle.textContent = t(conversation.type === "group" ? "Groupe" : "Contact");
+    if (typing) {
+      renderTypingIndicator(subtitle, typing);
+    } else if (callState?.incoming) {
+      subtitle.textContent = `${callLabel(callState.media)} entrant. Touchez ici pour répondre.`;
+      subtitle.classList.add("call-description");
+    } else if (callState) {
+      subtitle.textContent = `${callLabel(callState.media)} ${callState.outgoing ? "en attente" : "en cours"}.`;
+      subtitle.classList.add("call-description");
+    } else {
+      subtitle.textContent = preview;
+    }
     const favoriteIndicator = document.createElement("span");
     favoriteIndicator.className = "favorite-indicator";
     favoriteIndicator.textContent = "★";
@@ -1990,40 +2069,24 @@ async function renderConversations() {
       swipe.toggle();
     };
     row.append(toggle);
-    elements.conversations.append(row);
-    resolveConversationDisplay(conversation).then(async (display) => {
-      const typing = await typingIndicator(conversation);
-      applyConversationPresence(presence, await conversationOnline(conversation));
-      title.textContent = display.title;
-      if (typing) {
-        renderTypingIndicator(subtitle, typing);
-      } else if (callState?.incoming) {
-        subtitle.textContent = `${callLabel(callState.media)} entrant. Touchez ici pour répondre.`;
-        subtitle.classList.add("call-description");
-        subtitle.classList.remove("typing");
-        subtitle.removeAttribute("aria-label");
-      } else if (callState) {
-        subtitle.textContent = `${callLabel(callState.media)} ${callState.outgoing ? "en attente" : "en cours"}.`;
-        subtitle.classList.add("call-description");
-        subtitle.classList.remove("typing");
-        subtitle.removeAttribute("aria-label");
-      } else {
-        subtitle.textContent = await conversationListPreview(conversation, display);
-        subtitle.classList.remove("call-description");
-        subtitle.classList.remove("typing");
-        subtitle.removeAttribute("aria-label");
-      }
+    list.append(row);
+    if (display) {
       replaceAvatarContent(
         avatar,
         display.avatar,
         conversationAvatarFallback(display, conversation),
         [presence],
       );
-    }).catch(() => { title.textContent = t("Conversation verrouillée"); });
+    }
+    applyConversationPresence(presence, online);
+  }
+  if (isCurrentRender()) {
+    conversationListRenderKey = renderKey;
+    elements.conversations.replaceChildren(list);
   }
 }
 
-function renderGroupInvitation(conversation) {
+function renderGroupInvitation(conversation, display = null) {
   const row = document.createElement("div");
   row.className = "contact-request-row";
   const avatar = document.createElement("span");
@@ -2031,9 +2094,10 @@ function renderGroupInvitation(conversation) {
   avatar.textContent = "G";
   const copy = document.createElement("span");
   const title = document.createElement("strong");
-  title.textContent = t("Invitation de groupe");
+  title.textContent = display?.title || "";
+  title.hidden = !display?.title;
   const subtitle = document.createElement("small");
-  subtitle.textContent = t("En attente de votre acceptation");
+  subtitle.textContent = display ? t("Invitation de groupe") : t("En attente de votre acceptation");
   copy.append(title, subtitle);
   const actions = document.createElement("span");
   actions.className = "contact-request-actions";
@@ -2048,16 +2112,12 @@ function renderGroupInvitation(conversation) {
   refuse.onclick = () => refuseGroupInvitation(conversation, refuse);
   actions.append(accept, refuse);
   row.append(avatar, copy, actions);
-  resolveConversationDisplay(conversation).then((display) => {
-    title.textContent = display.title;
-    subtitle.textContent = t("Invitation de groupe");
-    if (display.avatar) {
-      const image = document.createElement("img");
-      image.src = display.avatar;
-      image.alt = "";
-      avatar.replaceChildren(image);
-    }
-  }).catch(() => {});
+  if (display?.avatar) {
+    const image = document.createElement("img");
+    image.src = display.avatar;
+    image.alt = "";
+    avatar.replaceChildren(image);
+  }
   return row;
 }
 
@@ -2326,7 +2386,23 @@ async function deleteConversation(conversation, button) {
   }
 }
 
-async function getMembers(conversationID) {
+async function getMembers(conversationID, { fresh = false } = {}) {
+  if (fresh) {
+    try {
+      const members = await api(`/api/conversations/${conversationID}/members`);
+      state.members.set(conversationID, members);
+      state.cache?.saveMembers(conversationID, members);
+      return members;
+    } catch (error) {
+      if (state.members.has(conversationID)) return state.members.get(conversationID);
+      const cached = await state.cache?.getMembers(conversationID);
+      if (cached?.length) {
+        state.members.set(conversationID, cached);
+        return cached;
+      }
+      throw error;
+    }
+  }
   if (!state.members.has(conversationID)) {
     const cached = await state.cache?.getMembers(conversationID);
     if (cached?.length) {
@@ -2470,8 +2546,8 @@ async function resolveConversationTitle(conversation) {
   return (await resolveConversationDisplay(conversation)).title;
 }
 
-async function resolveConversationDisplay(conversation) {
-  const members = await getMembers(conversation.id);
+async function resolveConversationDisplay(conversation, { freshMembers = false } = {}) {
+  const members = await getMembers(conversation.id, { fresh: freshMembers });
   if (conversation.is_personal) {
     return {
       title: t("Mes notes"),
@@ -2483,7 +2559,7 @@ async function resolveConversationDisplay(conversation) {
   if (conversation.type === "private") {
     const peer = members.find((member) => member.user_id !== state.me.id);
     return {
-      title: peer?.display_name || peer?.username || "Conversation privée",
+      title: peer?.display_name || peer?.username || "",
       description: conversation.federation_instance_url
         ? `${peer?.username || conversation.remote_username}@${new URL(conversation.federation_instance_url).host}`
         : peer?.description || "",

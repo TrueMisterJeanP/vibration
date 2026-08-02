@@ -4,7 +4,7 @@ import { recordSuccessfulLogin } from "./device-vault.js";
 import {
   registerServiceWorker,
   requestNotificationPermissionOnSignIn,
-} from "./notifications.js";
+} from "./notifications.js?v=carnet-v221";
 import { frenchErrorMessage } from "./ui.js";
 import { t, translateMultiline } from "./i18n.js";
 

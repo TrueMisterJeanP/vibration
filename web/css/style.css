@@ -141,7 +141,8 @@ small { color: var(--muted); }
 .swipe-row, .message-row { --swipe-offset: 0px; position: relative; overflow: visible; touch-action: pan-y; }
 .conversation-row { margin-bottom: .25rem; border-radius: .7rem; }
 .conversation-item { width: 100%; min-width: 0; display: flex; align-items: center; gap: .75rem; text-align: left; background: var(--panel); color: var(--text); padding: .75rem 2.85rem .75rem .75rem; -webkit-touch-callout: none; user-select: none; }
-.conversation-item:hover, .conversation-item.active { background: var(--panel-2); filter: none; }
+.conversation-item:hover { filter: none; }
+.conversation-item.active { background: var(--panel-2); filter: none; }
 .conversation-item.call-highlight { border: 1px solid rgb(32 199 181 / .52); background: #123845; box-shadow: 0 0 0 3px rgb(32 199 181 / .10); }
 .conversation-item.call-incoming { border-color: #62f4df; background: #164d58; box-shadow: 0 0 0 3px rgb(98 244 223 / .16), 0 10px 28px rgb(0 0 0 / .22); }
 .swipe-surface { position: relative; z-index: 1; touch-action: pan-y; }
