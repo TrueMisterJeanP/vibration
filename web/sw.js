@@ -1,22 +1,22 @@
-const CACHE = "chat-pwa-go-v250";
+const CACHE = "chat-pwa-go-v259";
 const SHELL = [
-  "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=startup-preload-v250",
-  "/js/app.js?v=startup-preload-v250", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios17-pdf-v199", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=startup-preload-v250",
-  "/js/notifications.js?v=carnet-v221", "/js/device-vault.js", "/js/i18n.js", "/js/ui.js?v=ios17-pdf-v211", "/js/share.js?v=ios17-pdf-v199", "/js/login.js", "/manifest.json?v=startup-preload-v250",
+  "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=modal-files-dialog-v259",
+  "/js/app.js?v=modal-files-dialog-v259", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios17-pdf-v199", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=startup-preload-v250",
+  "/js/notifications.js?v=modal-files-dialog-v259", "/js/device-vault.js", "/js/i18n.js", "/js/ui.js?v=ios17-pdf-v211", "/js/share.js?v=ios17-pdf-v199", "/js/login.js", "/manifest.json?v=startup-preload-v250",
   "/js/pdf-preview-compat.js?v=ios17-pdf-v199",
   "/js/conversation-cache.js?v=cache-v1",
   "/js/file-preview-image.js?v=ios17-pdf-v199",
-  "/js/office-preview.js?v=ios17-pdf-v199",
+  "/js/office-preview.js?v=safari-office-hit-test-v258",
   "/vendor/pdfjs/pdf.compat.mjs?v=ios17-pdf-v199",
   "/vendor/pdfjs/pdf.min.mjs?v=ios17-pdf-v199",
   "/vendor/pdfjs/pdf.worker.compat.mjs?v=ios17-pdf-v199",
   "/vendor/pdfjs/pdf.worker.min.mjs",
   "/vendor/pdfjs-ios17/pdf.min.js?v=ios17-pdf-v199",
   "/vendor/pdfjs-ios17/pdf.worker.min.js?v=ios17-pdf-v199",
-  "/vendor/jszip/jszip.min.js?v=ios17-pdf-v199",
-  "/vendor/docx-preview/docx-preview.min.js?v=ios17-pdf-v199",
-  "/vendor/exceljs/exceljs.min.js?v=ios17-pdf-v199",
-  "/vendor/pptx-preview/pptx-preview.umd.js?v=ios17-pdf-v199",
+  "/vendor/jszip/jszip.min.js?v=office-preview-v254",
+  "/vendor/docx-preview/docx-preview.min.js?v=office-preview-v254",
+  "/vendor/exceljs/exceljs.min.js?v=office-preview-v254",
+  "/vendor/pptx-preview/pptx-preview.umd.js?v=office-preview-v254",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/person.svg", "/icons/group.svg",
 ];
 const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=startup-preload-v250"];

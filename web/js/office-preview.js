@@ -1,4 +1,4 @@
-const OFFICE_PREVIEW_BUILD = "ios17-pdf-v199";
+const OFFICE_PREVIEW_BUILD = "office-preview-v254";
 const scriptLoads = new Map();
 const previewCleanups = new Set();
 
@@ -193,12 +193,27 @@ async function tryRasterizeOfficeElement(element, width, height) {
 }
 
 function fitOfficeDOMPreview(frame, content, width, height, container) {
-  const availableWidth = Math.max(1, container.getBoundingClientRect().width || width);
+  const frameWidth = frame.getBoundingClientRect().width;
+  const containerWidth = container.getBoundingClientRect().width;
+  const computedMaxWidth = cssPixelLength(getComputedStyle(frame).maxWidth);
+  // The Office frame is capped at 460px while its parent can be wider. Safari
+  // frequently uses this DOM fallback, so scaling against the parent would
+  // create a surface wider than the frame and clip its right edge.
+  const availableWidth = Math.max(1, frameWidth || Math.min(
+    containerWidth || width,
+    computedMaxWidth || containerWidth || width,
+    width,
+  ));
   const scale = Math.min(1, availableWidth / width);
+  const scaledWidth = Math.max(1, Math.ceil(width * scale));
+  frame.style.width = `${scaledWidth}px`;
   frame.style.height = `${Math.max(1, Math.ceil(height * scale))}px`;
   frame.style.aspectRatio = `${width} / ${height}`;
+  frame.style.marginLeft = "auto";
+  frame.style.marginRight = "auto";
   content.style.width = `${width}px`;
   content.style.height = `${height}px`;
+  content.style.left = "0";
   content.style.transform = `scale(${scale})`;
 }
 
@@ -213,7 +228,27 @@ function appendOfficeImagePreview(container, preview) {
   image.loading = "eager";
   image.draggable = false;
   image.style.aspectRatio = `${preview.width} / ${preview.height}`;
+  image.style.marginLeft = "auto";
+  image.style.marginRight = "auto";
+  image.style.objectPosition = "center center";
   container.replaceChildren(image);
+}
+
+export function officeDataURLPreview(source, width, height) {
+  const match = /^data:([^;,]+)?(;base64)?,([\s\S]*)$/i.exec(String(source || ""));
+  if (!match) return null;
+  try {
+    const binary = match[2] ? atob(match[3]) : decodeURIComponent(match[3]);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return {
+      blob: new Blob([bytes], { type: match[1] || "application/octet-stream" }),
+      width: Math.max(1, Math.round(width)),
+      height: Math.max(1, Math.round(height)),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function loadScript(source, available) {
@@ -262,6 +297,10 @@ async function excelRenderer() {
 
 async function powerpointRenderer() {
   await loadScript(
+    `/vendor/jszip/jszip.min.js?v=${OFFICE_PREVIEW_BUILD}`,
+    () => typeof globalThis.JSZip === "function",
+  );
+  await loadScript(
     `/vendor/pptx-preview/pptx-preview.umd.js?v=${OFFICE_PREVIEW_BUILD}`,
     () => typeof globalThis.pptxPreview?.init === "function",
   );
@@ -304,6 +343,329 @@ function appendLimitNote(container, text) {
   container.append(note);
 }
 
+function cssPixelLength(value) {
+  const length = Number.parseFloat(value);
+  return Number.isFinite(length) && length > 0 ? length : 0;
+}
+
+function xmlAttribute(source, name) {
+  const match = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}\\s*=\\s*(["'])(.*?)\\1`, "i")
+    .exec(source);
+  if (!match) return "";
+  return match[2]
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&amp;/gi, "&");
+}
+
+function relationshipPartPath(partPath) {
+  const separator = partPath.lastIndexOf("/");
+  const directory = separator >= 0 ? partPath.slice(0, separator + 1) : "";
+  const filename = partPath.slice(separator + 1);
+  return `${directory}_rels/${filename}.rels`;
+}
+
+function resolvedOfficePartPath(sourcePart, target) {
+  const cleanTarget = String(target || "").replace(/\\/g, "/");
+  const sourceDirectory = sourcePart.slice(0, Math.max(0, sourcePart.lastIndexOf("/") + 1));
+  const segments = (cleanTarget.startsWith("/") ? cleanTarget.slice(1) : sourceDirectory + cleanTarget).split("/");
+  const resolved = [];
+  for (const segment of segments) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") {
+      resolved.pop();
+    } else {
+      resolved.push(segment);
+    }
+  }
+  return resolved.join("/");
+}
+
+function parsedRelationships(xml, sourcePart) {
+  return [...String(xml || "").matchAll(/<(?:[A-Za-z_][\w.-]*:)?Relationship\b[^>]*>/gi)].map((match) => ({
+    id: xmlAttribute(match[0], "Id"),
+    type: xmlAttribute(match[0], "Type"),
+    target: resolvedOfficePartPath(sourcePart, xmlAttribute(match[0], "Target")),
+  }));
+}
+
+function naturalOfficePartOrder(left, right) {
+  return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
+}
+
+async function relatedOfficePart(archive, sourcePart, typeSuffix) {
+  const relationshipFile = archive.file(relationshipPartPath(sourcePart));
+  if (!relationshipFile) return "";
+  const relationships = parsedRelationships(await relationshipFile.async("text"), sourcePart);
+  const normalizedSuffix = typeSuffix.toLowerCase();
+  return relationships.find((relationship) => {
+    const type = relationship.type.toLowerCase();
+    return type === normalizedSuffix || type.endsWith(`/${normalizedSuffix}`);
+  })?.target || "";
+}
+
+async function firstPresentationSlidePath(archive, slidePaths) {
+  const presentationFile = archive.file("ppt/presentation.xml");
+  const relationshipsFile = archive.file("ppt/_rels/presentation.xml.rels");
+  if (!presentationFile || !relationshipsFile) return slidePaths[0] || "";
+  const presentationXML = await presentationFile.async("text");
+  const firstSlideTag = /<(?:[A-Za-z_][\w.-]*:)?sldId\b[^>]*>/i.exec(presentationXML)?.[0] || "";
+  const relationshipID = xmlAttribute(firstSlideTag, "r:id") || xmlAttribute(firstSlideTag, "id");
+  if (!relationshipID) return slidePaths[0] || "";
+  const relationships = parsedRelationships(await relationshipsFile.async("text"), "ppt/presentation.xml");
+  return relationships.find((relationship) => relationship.id === relationshipID)?.target || slidePaths[0] || "";
+}
+
+function escapedXMLAttribute(value) {
+  return String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+export async function firstSlidePowerPointArchive(data) {
+  const JSZip = globalThis.JSZip;
+  if (typeof JSZip !== "function") return null;
+  const archive = await JSZip.loadAsync(copiedArrayBuffer(data));
+  const paths = Object.keys(archive.files);
+  const slidePaths = paths.filter((path) => /^ppt\/slides\/slide\d+\.xml$/i.test(path)).sort(naturalOfficePartOrder);
+  if (!slidePaths.length) return null;
+
+  const slidePath = await firstPresentationSlidePath(archive, slidePaths);
+  const layoutPaths = paths.filter((path) => /^ppt\/slideLayouts\/slideLayout\d+\.xml$/i.test(path)).sort(naturalOfficePartOrder);
+  const masterPaths = paths.filter((path) => /^ppt\/slideMasters\/slideMaster\d+\.xml$/i.test(path)).sort(naturalOfficePartOrder);
+  const themePaths = paths.filter((path) => /^ppt\/theme\/theme\d+\.xml$/i.test(path)).sort(naturalOfficePartOrder);
+  const layoutPath = await relatedOfficePart(archive, slidePath, "slideLayout") || layoutPaths[0] || "";
+  const masterPath = layoutPath ? await relatedOfficePart(archive, layoutPath, "slideMaster") || masterPaths[0] || "" : masterPaths[0] || "";
+  const themePath = masterPath ? await relatedOfficePart(archive, masterPath, "theme") || themePaths[0] || "" : themePaths[0] || "";
+
+  const contentTypesFile = archive.file("[Content_Types].xml");
+  if (!contentTypesFile) return null;
+  let contentTypes = await contentTypesFile.async("text");
+  const renderPartPattern = /^ppt\/(?:slides\/slide\d+|slideLayouts\/slideLayout\d+|slideMasters\/slideMaster\d+|theme\/theme\d+)\.xml$/i;
+  contentTypes = contentTypes.replace(/<Override\b[^>]*\/?\s*>/gi, (override) => {
+    const partName = xmlAttribute(override, "PartName").replace(/^\//, "");
+    return renderPartPattern.test(partName) ? "" : override;
+  });
+  const overrides = [
+    [slidePath, "application/vnd.openxmlformats-officedocument.presentationml.slide+xml"],
+    [layoutPath, "application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"],
+    [masterPath, "application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"],
+    [themePath, "application/vnd.openxmlformats-officedocument.theme+xml"],
+  ].filter(([path]) => path && archive.file(path));
+  const overrideXML = overrides.map(([path, contentType]) => (
+    `<Override PartName="/${escapedXMLAttribute(path)}" ContentType="${contentType}"/>`
+  )).join("");
+  if (!/<\/Types\s*>/i.test(contentTypes)) return null;
+  contentTypes = contentTypes.replace(/<\/Types\s*>/i, `${overrideXML}</Types>`);
+  archive.file("[Content_Types].xml", contentTypes);
+  return {
+    data: await archive.generateAsync({
+      type: "arraybuffer",
+      compression: "DEFLATE",
+      compressionOptions: { level: 1 },
+    }),
+    originalSlideCount: slidePaths.length,
+    slidePath,
+  };
+}
+
+function decodedXMLText(value) {
+  return String(value || "")
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(Number.parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number.parseInt(code, 10)))
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&amp;/gi, "&");
+}
+
+function powerpointImageMIME(path) {
+  const extension = path.split(".").pop()?.toLowerCase();
+  return {
+    gif: "image/gif",
+    jpeg: "image/jpeg",
+    jpg: "image/jpeg",
+    png: "image/png",
+    webp: "image/webp",
+  }[extension] || "";
+}
+
+async function rasterizedPowerPointImage(blob, width, height) {
+  const sourceURL = URL.createObjectURL(blob);
+  try {
+    const source = new Image();
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("L’image de la première diapositive a expiré.")), 5000);
+      source.onload = () => {
+        clearTimeout(timeout);
+        resolve();
+      };
+      source.onerror = () => {
+        clearTimeout(timeout);
+        reject(new Error("L’image de la première diapositive est illisible."));
+      };
+      source.src = sourceURL;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) return null;
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
+    const scale = Math.min(width / source.naturalWidth, height / source.naturalHeight);
+    const renderedWidth = source.naturalWidth * scale;
+    const renderedHeight = source.naturalHeight * scale;
+    context.drawImage(source, (width - renderedWidth) / 2, (height - renderedHeight) / 2, renderedWidth, renderedHeight);
+    const rendered = await officeCanvasJPEG(canvas);
+    return rendered ? { blob: rendered, width, height } : null;
+  } finally {
+    URL.revokeObjectURL(sourceURL);
+  }
+}
+
+async function extractedFirstPowerPointSlide(data, width, height) {
+  const JSZip = globalThis.JSZip;
+  if (typeof JSZip !== "function") return null;
+  const archive = await JSZip.loadAsync(copiedArrayBuffer(data));
+  const slidePaths = Object.keys(archive.files)
+    .filter((path) => /^ppt\/slides\/slide\d+\.xml$/i.test(path))
+    .sort(naturalOfficePartOrder);
+  if (!slidePaths.length) return null;
+  const slidePath = await firstPresentationSlidePath(archive, slidePaths);
+  const slideFile = archive.file(slidePath);
+  if (!slideFile) return null;
+  const slideXML = await slideFile.async("text");
+  const text = [...slideXML.matchAll(/<(?:[A-Za-z_][\w.-]*:)?t\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?t\s*>/gi)]
+    .map((match) => decodedXMLText(match[1]).trim())
+    .filter(Boolean);
+
+  const relationshipFile = archive.file(relationshipPartPath(slidePath));
+  let image = null;
+  if (relationshipFile) {
+    const relationships = parsedRelationships(await relationshipFile.async("text"), slidePath)
+      .filter((relationship) => relationship.type.toLowerCase().endsWith("/image"));
+    const candidates = [];
+    for (const relationship of relationships) {
+      const mime = powerpointImageMIME(relationship.target);
+      const imageFile = mime ? archive.file(relationship.target) : null;
+      if (!imageFile) continue;
+      const bytes = await imageFile.async("uint8array");
+      candidates.push({ blob: new Blob([bytes], { type: mime }), size: bytes.byteLength });
+    }
+    candidates.sort((left, right) => right.size - left.size);
+    if (candidates[0]) {
+      image = await rasterizedPowerPointImage(candidates[0].blob, width, height).catch(() => null);
+      if (!image) image = { blob: candidates[0].blob, width, height };
+    }
+  }
+  return { image, text };
+}
+
+async function renderExtractedPowerPointSlide(file, container, frame, content, slideHeight, compact, translate, rasterOnly) {
+  const extracted = await extractedFirstPowerPointSlide(file.data, 960, slideHeight);
+  if (!extracted) throw new Error("Impossible de lire la première diapositive PowerPoint.");
+  if (extracted.image) {
+    if (!rasterOnly) {
+      appendOfficeImagePreview(container, extracted.image);
+      if (!compact) appendLimitNote(container, translate("Aperçu limité à la première diapositive."));
+    }
+    return extracted.image;
+  }
+
+  content.replaceChildren();
+  content.classList.add("office-powerpoint-extracted-content");
+  content.style.boxSizing = "border-box";
+  content.style.display = "flex";
+  content.style.flexDirection = "column";
+  content.style.justifyContent = "center";
+  content.style.gap = "24px";
+  content.style.padding = "72px";
+  content.style.overflow = "hidden";
+  content.style.background = "#ffffff";
+  content.style.color = "#172124";
+  const title = document.createElement("strong");
+  title.style.font = "700 42px/1.15 system-ui, sans-serif";
+  title.textContent = extracted.text[0] || "";
+  const body = document.createElement("div");
+  body.style.font = "28px/1.35 system-ui, sans-serif";
+  body.style.whiteSpace = "pre-wrap";
+  body.textContent = extracted.text.slice(1).join("\n") || (extracted.text[0] ? "" : " ");
+  content.append(title, body);
+  await nextFrame();
+  const preview = await tryRasterizeOfficeElement(content, 960, slideHeight);
+  if (rasterOnly) return preview;
+  if (preview) {
+    appendOfficeImagePreview(container, preview);
+  } else {
+    fitOfficeDOMPreview(frame, content, 960, slideHeight, container);
+  }
+  if (!compact) appendLimitNote(container, translate("Aperçu limité à la première diapositive."));
+  return preview;
+}
+
+function preparedPowerPointSlide(content, fallbackWidth, fallbackHeight) {
+  const slide = content.querySelector(".pptx-preview-slide-wrapper");
+  if (!slide) return { element: content, width: fallbackWidth, height: fallbackHeight };
+  const bounds = slide.getBoundingClientRect();
+  const computed = getComputedStyle(slide);
+  const width = Math.max(1, Math.ceil(
+    cssPixelLength(computed.width) || bounds.width || slide.offsetWidth || fallbackWidth,
+  ));
+  const height = Math.max(1, Math.ceil(
+    cssPixelLength(computed.height) || bounds.height || slide.offsetHeight || fallbackHeight,
+  ));
+  // The renderer positions the slide absolutely with left:auto and auto
+  // margins. Those static-position rules can shift the serialized capture and
+  // clip its right edge. Anchor the slide at the capture origin instead.
+  slide.style.position = "relative";
+  slide.style.inset = "0 auto auto 0";
+  slide.style.margin = "0";
+  slide.style.width = `${width}px`;
+  slide.style.height = `${height}px`;
+  const wrapper = slide.parentElement;
+  if (wrapper) {
+    wrapper.style.width = `${width}px`;
+    wrapper.style.height = `${height}px`;
+    wrapper.style.overflow = "hidden";
+  }
+  return { element: slide, width, height };
+}
+
+export function wordPageViewport(page) {
+  const computed = getComputedStyle(page);
+  const bounds = page.getBoundingClientRect();
+  const width = Math.max(1, Math.ceil(
+    cssPixelLength(computed.width) || bounds.width || page.scrollWidth || 816,
+  ));
+  // docx-preview uses min-height for the physical sheet. The section's actual
+  // height can include the entire flowing document when Word did not persist
+  // automatic page breaks, so it must not be used as the preview height.
+  const declaredHeight = cssPixelLength(computed.minHeight) || cssPixelLength(page.style.height);
+  const height = Math.max(1, Math.ceil(declaredHeight || width * (1056 / 816)));
+  return { width, height };
+}
+
+function cropWordDOMToFirstPage(page, bodyContainer, width, height) {
+  page.style.width = `${width}px`;
+  page.style.height = `${height}px`;
+  page.style.minHeight = `${height}px`;
+  page.style.maxHeight = `${height}px`;
+  page.style.overflow = "hidden";
+  const wrapper = page.parentElement;
+  if (wrapper) {
+    wrapper.style.width = `${width}px`;
+    wrapper.style.height = `${height}px`;
+    wrapper.style.maxHeight = `${height}px`;
+    wrapper.style.overflow = "hidden";
+  }
+  bodyContainer.style.width = `${width}px`;
+  bodyContainer.style.height = `${height}px`;
+  bodyContainer.style.maxHeight = `${height}px`;
+  bodyContainer.style.overflow = "hidden";
+}
+
 async function renderWordPreview(file, container, compact, translate, rasterOnly) {
   const docx = await wordRenderer();
   const frame = document.createElement("div");
@@ -337,14 +699,11 @@ async function renderWordPreview(file, container, compact, translate, rasterOnly
   sanitizeRenderedDocument(bodyContainer);
   const pages = [...bodyContainer.querySelectorAll("section.docx")];
   pages.slice(1).forEach((page) => page.remove());
-  await nextFrame();
   const page = pages[0] || bodyContainer.firstElementChild;
   if (!page) throw new Error("Le document Word est vide.");
-  const bounds = page.getBoundingClientRect();
-  const naturalWidth = Math.max(1, Math.ceil(bounds.width || page.scrollWidth || 816));
-  const naturalHeight = Math.max(1, Math.ceil(bounds.height || page.scrollHeight || 1056));
-  bodyContainer.style.width = `${naturalWidth}px`;
-  bodyContainer.style.height = `${naturalHeight}px`;
+  const { width: naturalWidth, height: naturalHeight } = wordPageViewport(page);
+  cropWordDOMToFirstPage(page, bodyContainer, naturalWidth, naturalHeight);
+  await nextFrame();
   const preview = await tryRasterizeOfficeElement(page, naturalWidth, naturalHeight);
   if (!preview) {
     if (rasterOnly) return null;
@@ -424,24 +783,91 @@ async function renderPowerPointPreview(file, container, compact, translate, rast
 
   const previewer = pptx.init(content, { width: 960, height: 540, mode: "slide" });
   try {
-    const presentation = await previewer.load(copiedArrayBuffer(file.data));
-    if (!presentation?.slides?.length) throw new Error("La présentation PowerPoint est vide.");
-    previewer.renderSingleSlide(0);
+    let presentation = null;
+    let slideCount = 0;
+    try {
+      presentation = await previewer.load(copiedArrayBuffer(file.data));
+      slideCount = Number(previewer.slideCount) || presentation?.slides?.length || 0;
+    } catch (error) {
+      console.warn("Lecture directe de la présentation PowerPoint impossible", error);
+    }
+    if (!slideCount) {
+      try {
+        const firstSlideArchive = await firstSlidePowerPointArchive(file.data);
+        if (firstSlideArchive) {
+          presentation = await previewer.load(firstSlideArchive.data);
+          slideCount = Number(previewer.slideCount) || presentation?.slides?.length || 0;
+        }
+      } catch (error) {
+        console.warn("Récupération de la première diapositive PowerPoint impossible", error);
+      }
+    }
+    const presentationWidth = Number(presentation?.width) || 960;
+    const presentationHeight = Number(presentation?.height) || 540;
+    const slideHeight = Math.max(1, Math.round(960 * (presentationHeight / presentationWidth)));
+    frame.style.aspectRatio = `960 / ${slideHeight}`;
+    content.style.height = `${slideHeight}px`;
+    previewer.wrapper.style.height = `${slideHeight}px`;
+    if (previewer.htmlRender?.options?.viewPort) {
+      previewer.htmlRender.options.viewPort.height = slideHeight;
+    }
+    const thumbnail = officeDataURLPreview(presentation?.thumbnail, 960, slideHeight);
+    if (!slideCount) {
+      // pptx-preview silently turns some valid OOXML parsing failures into an
+      // empty slides array. PowerPoint's embedded thumbnail is still the first
+      // slide and provides a useful, faithful fallback in that case.
+      if (thumbnail) {
+        if (!rasterOnly) {
+          appendOfficeImagePreview(container, thumbnail);
+          if (!compact) appendLimitNote(container, translate("Aperçu limité à la première diapositive."));
+        }
+        return thumbnail;
+      }
+      return renderExtractedPowerPointSlide(
+        file,
+        container,
+        frame,
+        content,
+        slideHeight,
+        compact,
+        translate,
+        rasterOnly,
+      );
+    }
+    try {
+      previewer.renderSingleSlide(0);
+    } catch (error) {
+      if (!thumbnail) throw error;
+      if (!rasterOnly) {
+        appendOfficeImagePreview(container, thumbnail);
+        if (!compact) appendLimitNote(container, translate("Aperçu limité à la première diapositive."));
+      }
+      return thumbnail;
+    }
+    await nextFrame();
     sanitizeRenderedDocument(content);
-    const preview = await tryRasterizeOfficeElement(content, 960, 540);
+    const renderedSlide = preparedPowerPointSlide(content, 960, slideHeight);
+    frame.style.aspectRatio = `${renderedSlide.width} / ${renderedSlide.height}`;
+    const preview = await tryRasterizeOfficeElement(
+      renderedSlide.element,
+      renderedSlide.width,
+      renderedSlide.height,
+    );
     if (!preview) {
-      if (rasterOnly) return null;
-      fitOfficeDOMPreview(frame, content, 960, 540, container);
+      if (rasterOnly) return thumbnail;
+      if (!thumbnail) {
+        fitOfficeDOMPreview(frame, content, renderedSlide.width, renderedSlide.height, container);
+      }
     }
     if (!rasterOnly) {
-      if (preview) {
-        appendOfficeImagePreview(container, preview);
+      if (preview || thumbnail) {
+        appendOfficeImagePreview(container, preview || thumbnail);
         if (!compact) appendLimitNote(container, translate("Aperçu limité à la première diapositive."));
       } else if (!compact) {
         appendLimitNote(container, translate("Aperçu affiché dans le document Office."));
       }
     }
-    return preview;
+    return preview || thumbnail;
   } finally {
     previewer.destroy?.();
   }
@@ -459,6 +885,12 @@ export async function renderModernOfficePreview(file, container, options = {}) {
   loading.textContent = translate("Chargement…");
   container.append(loading);
   container.classList.add("office-file-preview", `office-${kind}-file-preview`);
+  // Les aperçus Office sont uniquement visuels. Dans Safari, le contenu DOCX/PPTX
+  // de secours est une grande couche DOM mise à l’échelle avec transform. WebKit
+  // peut conserver sa zone de hit-test d’origine au-delà du cadre visible et bloquer
+  // des commandes voisines, notamment le lien Administration de la barre latérale.
+  container.inert = true;
+  container.style.pointerEvents = "none";
   try {
     if (kind === "word") {
       return (await renderWordPreview(file, container, compact, translate, rasterOnly))?.blob || null;

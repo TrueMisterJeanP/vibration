@@ -32,7 +32,7 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=carnet-v221";
+} from "./notifications.js?v=modal-files-dialog-v259";
 import { ChatSocket } from "./websocket.js?v=ios17-pdf-v199";
 import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios17-pdf-v211";
 import { locale, t } from "./i18n.js";
@@ -47,7 +47,7 @@ import {
   modernOfficeKind,
   preloadModernOfficePreview,
   renderModernOfficePreview,
-} from "./office-preview.js?v=ios17-pdf-v199";
+} from "./office-preview.js?v=safari-office-hit-test-v258";
 import { openConversationCache } from "./conversation-cache.js?v=cache-v1";
 
 const CALL_INVITE_TIMEOUT_MS = 45000;
@@ -62,7 +62,7 @@ const BACKGROUND_THUMBNAIL_PRELOAD_BUDGET_BYTES = 4 * 1024 * 1024;
 const BACKGROUND_PRELOAD_TTL_MS = 2 * 60 * 1000;
 const BACKGROUND_PRELOAD_NETWORK_FRESH_MS = 15 * 1000;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "startup-preload-v250";
+const APP_BUILD = "modal-files-dialog-v259";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 
 window.VIBRATION_BUILD = APP_BUILD;
@@ -1793,13 +1793,30 @@ function connectSocket() {
   state.socket.connect();
 }
 
+let adminNavigationPending = false;
+
 function prepareAdminNavigation(event) {
-  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-  sessionStorage.setItem(ADMIN_RETURN_HISTORY_KEY, location.href);
-  handleCallPageExit();
-  clearConversationSelectionForAdmin();
-  state.socket?.close();
-  window.removeEventListener("beforeunload", handleCallPageExit);
+  const nonPrimaryClick = typeof event.button === "number" && event.button !== 0;
+  if (event.defaultPrevented || nonPrimaryClick || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  adminNavigationPending = true;
+  try {
+    sessionStorage.setItem(ADMIN_RETURN_HISTORY_KEY, location.href);
+  } catch (error) {
+    console.warn("Mémorisation du retour depuis l’administration impossible", error);
+  }
+}
+
+function finishAdminNavigation() {
+  if (!adminNavigationPending) return;
+  adminNavigationPending = false;
+  try {
+    handleCallPageExit();
+    clearConversationSelectionForAdmin();
+    state.socket?.close();
+    window.removeEventListener("beforeunload", handleCallPageExit);
+  } catch (error) {
+    console.warn("Préparation de la page d’administration incomplète", error);
+  }
 }
 
 function clearConversationSelectionForAdmin() {
@@ -4664,12 +4681,12 @@ async function renderMessages(messages, conversation, preparedDecrypted = null) 
   prewarmFilePreviewRenderers(decrypted);
   prefetchRecentFullFilePreviews(decrypted, key);
   const clearByID = messageClearCache(conversationID);
-  for (const { message, clear } of decrypted) {
+  for (const { message, clear } of [...decrypted].reverse()) {
     clearByID.set(message.id, clear);
   }
   const fragment = document.createDocumentFragment();
   const previews = [];
-  for (const { message, clear } of [...decrypted].reverse()) {
+  for (const { message, clear } of decrypted) {
     if (!scheduleMessageExpiration(message)) continue;
     const displayMessage = withReplyPreview(messageWithCurrentUserProfile(message), clearByID);
     renderMessage(
@@ -5277,7 +5294,10 @@ function datetimeLocalValue(value) {
 async function openGlobalFiles() {
   elements.globalFilesStatus.textContent = t("Chargement des fichiers…");
   elements.globalFilesList.replaceChildren();
-  if (!elements.globalFilesDialog.open) elements.globalFilesDialog.showModal();
+  if (!elements.globalFilesDialog.open) {
+    elements.globalFilesDialog.showModal();
+    document.querySelector("#global-files-close").focus({ preventScroll: true });
+  }
   try {
     const messages = await api("/api/files");
     const items = await Promise.all(messages.map(async (message) => {
@@ -7666,3 +7686,4 @@ boot().catch((error) => {
 });
 
 window.addEventListener("pageshow", restoreChatFromHistory);
+window.addEventListener("pagehide", finishAdminNavigation);

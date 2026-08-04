@@ -1,6 +1,6 @@
 {
   "name": "vibration-community",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Edition Community de Vibration pour tester la philosophie et les principales fonctions de la messagerie web/PWA.",
   "main": "index.js",
   "scripts": {
