@@ -71,6 +71,8 @@ type Member struct {
 	DisplayName              string  `json:"display_name"`
 	Description              string  `json:"description"`
 	PublicKey                string  `json:"public_key"`
+	SigningPublicKey         string  `json:"signing_public_key"`
+	SigningKeyID             string  `json:"signing_key_id"`
 	Avatar                   *string `json:"avatar"`
 	IsRemote                 bool    `json:"is_remote"`
 	FederationInstanceURL    *string `json:"federation_instance_url"`
@@ -409,7 +411,7 @@ func (h *Handler) Members(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "conversation not found")
 		return
 	}
-	rows, err := h.DB.Query(`SELECT u.id,COALESCE(u.remote_username,u.username),u.display_name,u.description,u.public_key,u.avatar,u.is_remote,fi.base_url,u.remote_username,cm.encrypted_conversation_key,cm.role
+	rows, err := h.DB.Query(`SELECT u.id,COALESCE(u.remote_username,u.username),u.display_name,u.description,u.public_key,u.signing_public_key,u.signing_key_id,u.avatar,u.is_remote,fi.base_url,u.remote_username,cm.encrypted_conversation_key,cm.role
 		FROM conversation_members cm JOIN users u ON u.id=cm.user_id
 		LEFT JOIN federated_instances fi ON fi.id=u.remote_instance_id
 		WHERE cm.conversation_id=? ORDER BY u.username`, id)
@@ -421,7 +423,7 @@ func (h *Handler) Members(w http.ResponseWriter, r *http.Request) {
 	members := make([]Member, 0)
 	for rows.Next() {
 		var member Member
-		if rows.Scan(&member.UserID, &member.Username, &member.DisplayName, &member.Description, &member.PublicKey, &member.Avatar,
+		if rows.Scan(&member.UserID, &member.Username, &member.DisplayName, &member.Description, &member.PublicKey, &member.SigningPublicKey, &member.SigningKeyID, &member.Avatar,
 			&member.IsRemote, &member.FederationInstanceURL, &member.RemoteUsername, &member.EncryptedConversationKey, &member.Role) == nil {
 			members = append(members, member)
 		}

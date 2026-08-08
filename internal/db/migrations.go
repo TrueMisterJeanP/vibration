@@ -18,6 +18,8 @@ var migrations = []string{
 		public_key TEXT NOT NULL,
 		encrypted_private_key TEXT NOT NULL,
 		crypto_salt TEXT NOT NULL,
+		signing_public_key TEXT NOT NULL DEFAULT '',
+		signing_key_id TEXT NOT NULL DEFAULT '',
 		avatar TEXT,
 		is_remote INTEGER NOT NULL DEFAULT 0,
 		remote_instance_id INTEGER REFERENCES federated_instances(id),
@@ -28,6 +30,14 @@ var migrations = []string{
 		banned_reason TEXT,
 		banned_at TEXT,
 		created_at TEXT NOT NULL
+	)`,
+	`CREATE TABLE IF NOT EXISTS user_signing_keys (
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		key_id TEXT NOT NULL,
+		public_key TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		revoked_at TEXT,
+		PRIMARY KEY(user_id, key_id)
 	)`,
 	`CREATE TABLE IF NOT EXISTS sessions (
 		id TEXT PRIMARY KEY,
@@ -101,6 +111,15 @@ var migrations = []string{
 		pinned_at TEXT,
 		created_at TEXT NOT NULL,
 		updated_at TEXT
+		,client_message_id TEXT
+		,signature_conversation_id TEXT
+		,signature_sender_id TEXT
+		,signature_reply_to TEXT
+		,signature_version INTEGER NOT NULL DEFAULT 0
+		,signing_key_id TEXT
+		,signature TEXT
+		,message_kind TEXT NOT NULL DEFAULT 'legacy'
+		,revision INTEGER NOT NULL DEFAULT 1
 	)`,
 	`CREATE TABLE IF NOT EXISTS message_reactions (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -178,6 +197,8 @@ var migrations = []string{
 		encrypted_preview_data BLOB,
 		preview_iv TEXT,
 		preview_size INTEGER,
+		ciphertext_sha256 TEXT,
+		preview_sha256 TEXT,
 		created_at TEXT NOT NULL
 	)`,
 	`CREATE TABLE IF NOT EXISTS file_shares (
@@ -317,6 +338,8 @@ func Migrate(database *sql.DB) error {
 		{"is_remote", "INTEGER NOT NULL DEFAULT 0"},
 		{"remote_instance_id", "INTEGER REFERENCES federated_instances(id)"},
 		{"remote_username", "TEXT"},
+		{"signing_public_key", "TEXT NOT NULL DEFAULT ''"},
+		{"signing_key_id", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		exists, err := columnExists(tx, "users", column.name)
 		if err != nil {
@@ -335,6 +358,8 @@ func Migrate(database *sql.DB) error {
 		{"encrypted_preview_data", "BLOB"},
 		{"preview_iv", "TEXT"},
 		{"preview_size", "INTEGER"},
+		{"ciphertext_sha256", "TEXT"},
+		{"preview_sha256", "TEXT"},
 	} {
 		exists, err := columnExists(tx, "files", column.name)
 		if err != nil {
@@ -440,6 +465,15 @@ func Migrate(database *sql.DB) error {
 		{"pinned_by", "INTEGER REFERENCES users(id)"},
 		{"pinned_at", "TEXT"},
 		{"key_epoch", "INTEGER NOT NULL DEFAULT 1"},
+		{"client_message_id", "TEXT"},
+		{"signature_conversation_id", "TEXT"},
+		{"signature_sender_id", "TEXT"},
+		{"signature_reply_to", "TEXT"},
+		{"signature_version", "INTEGER NOT NULL DEFAULT 0"},
+		{"signing_key_id", "TEXT"},
+		{"signature", "TEXT"},
+		{"message_kind", "TEXT NOT NULL DEFAULT 'legacy'"},
+		{"revision", "INTEGER NOT NULL DEFAULT 1"},
 	} {
 		exists, err := columnExists(tx, "messages", column.name)
 		if err != nil {
@@ -452,6 +486,14 @@ func Migrate(database *sql.DB) error {
 		}
 	}
 	for _, statement := range []string{
+		`CREATE TABLE IF NOT EXISTS user_signing_keys (
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			key_id TEXT NOT NULL,
+			public_key TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			revoked_at TEXT,
+			PRIMARY KEY(user_id, key_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS conversation_key_envelopes (
 			conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
 			key_epoch INTEGER NOT NULL,
@@ -500,6 +542,7 @@ func Migrate(database *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_federation_outbox_due ON federation_outbox(sent_at, next_attempt_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_federation_outbox_ready ON federation_outbox(sent_at, next_attempt_at, locked_until_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages(expires_at)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_sender_client_id ON messages(sender_id,client_message_id) WHERE client_message_id IS NOT NULL`,
 		`CREATE INDEX IF NOT EXISTS idx_message_reactions_message ON message_reactions(message_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_message_pins_user ON message_pins(user_id, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_message_events_dates ON message_events(starts_at, ends_at)`,

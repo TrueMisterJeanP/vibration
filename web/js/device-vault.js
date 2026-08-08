@@ -1,8 +1,8 @@
 import {
   base64ToBytes,
   bytesToBase64,
-  decryptIdentityJWK,
-  importIdentityJWK,
+  decryptIdentityBundle,
+  importIdentityBundle,
 } from "./crypto.js";
 
 const DB_NAME = "chat-secure-device-vault";
@@ -92,23 +92,28 @@ function validVerificationThreshold(value) {
 }
 
 export async function rememberIdentity(user, phrase) {
-  const privateJWK = await decryptIdentityJWK(user, phrase);
+  const bundle = await decryptIdentityBundle(user, phrase);
+  return rememberIdentityBundle(user, bundle);
+}
+
+export async function rememberIdentityBundle(user, bundle) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deviceKey();
-  const clear = new TextEncoder().encode(JSON.stringify(privateJWK));
+  const clear = new TextEncoder().encode(JSON.stringify(bundle));
   const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, clear);
   await writeRecord({
     id: identityID(user.id),
     publicKey: user.public_key,
+    signingKeyID: user.signing_key_id || bundle.signing_key_id || "",
     iv: bytesToBase64(iv),
     data: bytesToBase64(encrypted),
   });
-  return importIdentityJWK(privateJWK);
+  return importIdentityBundle(bundle);
 }
 
 export async function loadRememberedIdentity(user) {
   const saved = await readRecord(identityID(user.id));
-  if (!saved || saved.publicKey !== user.public_key) return null;
+  if (!saved || saved.publicKey !== user.public_key || (user.signing_key_id || "") !== (saved.signingKeyID || "")) return null;
   try {
     const key = await deviceKey();
     const clear = await crypto.subtle.decrypt(
@@ -116,7 +121,11 @@ export async function loadRememberedIdentity(user) {
       key,
       base64ToBytes(saved.data),
     );
-    return importIdentityJWK(JSON.parse(new TextDecoder().decode(clear)));
+    const stored = JSON.parse(new TextDecoder().decode(clear));
+    const bundle = stored?.encryption_private_key
+      ? stored
+      : { v: 1, encryption_private_key: stored, signing_private_key: null, signing_key_id: "" };
+    return importIdentityBundle(bundle);
   } catch {
     await deleteRecord(identityID(user.id));
     return null;

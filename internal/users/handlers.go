@@ -24,12 +24,14 @@ type Handler struct {
 var usernamePattern = regexp.MustCompile(`^[a-z0-9_]{3,32}$`)
 
 type User struct {
-	ID          int64   `json:"id"`
-	Username    string  `json:"username"`
-	DisplayName string  `json:"display_name"`
-	Description string  `json:"description"`
-	PublicKey   string  `json:"public_key"`
-	Avatar      *string `json:"avatar"`
+	ID               int64   `json:"id"`
+	Username         string  `json:"username"`
+	DisplayName      string  `json:"display_name"`
+	Description      string  `json:"description"`
+	PublicKey        string  `json:"public_key"`
+	SigningPublicKey string  `json:"signing_public_key"`
+	SigningKeyID     string  `json:"signing_key_id"`
+	Avatar           *string `json:"avatar"`
 }
 
 func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
@@ -107,8 +109,8 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var user User
-	if err := h.DB.QueryRow(`SELECT id,username,display_name,description,public_key,avatar FROM users WHERE id=?`, userID).
-		Scan(&user.ID, &user.Username, &user.DisplayName, &user.Description, &user.PublicKey, &user.Avatar); err != nil {
+	if err := h.DB.QueryRow(`SELECT id,username,display_name,description,public_key,signing_public_key,signing_key_id,avatar FROM users WHERE id=?`, userID).
+		Scan(&user.ID, &user.Username, &user.DisplayName, &user.Description, &user.PublicKey, &user.SigningPublicKey, &user.SigningKeyID, &user.Avatar); err != nil {
 		httpx.Error(w, http.StatusNotFound, "user not found")
 		return
 	}
@@ -144,7 +146,7 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 		httpx.JSON(w, http.StatusOK, []User{})
 		return
 	}
-	rows, err := h.DB.Query(`SELECT id,username,display_name,description,public_key,avatar FROM users
+	rows, err := h.DB.Query(`SELECT id,username,display_name,description,public_key,signing_public_key,signing_key_id,avatar FROM users
 		WHERE id<>? AND is_remote=0 AND username LIKE ? ORDER BY username LIMIT 20`, auth.UserID(r), query+"%")
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "search failed")
@@ -154,7 +156,7 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	result := make([]User, 0)
 	for rows.Next() {
 		var user User
-		if rows.Scan(&user.ID, &user.Username, &user.DisplayName, &user.Description, &user.PublicKey, &user.Avatar) == nil {
+		if rows.Scan(&user.ID, &user.Username, &user.DisplayName, &user.Description, &user.PublicKey, &user.SigningPublicKey, &user.SigningKeyID, &user.Avatar) == nil {
 			result = append(result, user)
 		}
 	}

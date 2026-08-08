@@ -1,5 +1,6 @@
 import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js?v=ios17-pdf-v199";
 import {
+  base64ToBytes,
   decryptBytes,
   decryptEnvelope,
   decryptText,
@@ -9,8 +10,12 @@ import {
   exportShareKey,
   generateGroupKey,
   generateShareKey,
+  importIdentityBundle,
   privateConversationKey,
-  unlockIdentity,
+  sha256Hex,
+  signMessagePayload,
+  upgradeIdentityEnvelope,
+  verifyMessagePayload,
   unwrapGroupKey,
   wrapGroupKey,
 } from "./crypto.js";
@@ -18,7 +23,7 @@ import {
   forgetRememberedIdentity,
   hasRememberedIdentity,
   loadRememberedIdentity,
-  rememberIdentity,
+  rememberIdentityBundle,
   resetLoginVerificationCounter,
 } from "./device-vault.js";
 import {
@@ -72,7 +77,7 @@ const BACKGROUND_THUMBNAIL_PRELOAD_BUDGET_BYTES = 4 * 1024 * 1024;
 const BACKGROUND_PRELOAD_TTL_MS = 2 * 60 * 1000;
 const BACKGROUND_PRELOAD_NETWORK_FRESH_MS = 15 * 1000;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "passphrase-strength-v276";
+const APP_BUILD = "identity-signatures-v277";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 
 window.VIBRATION_BUILD = APP_BUILD;
@@ -84,6 +89,8 @@ const state = {
   cache: null,
   fileQuotas: null,
   privateKey: null,
+  signingPrivateKey: null,
+  signingKeyID: "",
   contacts: [],
   carnet: [],
   conversations: [],
@@ -696,16 +703,52 @@ async function unlock() {
   const error = document.querySelector("#unlock-error");
   const forceVerification = sessionStorage.getItem("force_identity_verification") === "true";
   const attempt = async (phrase, remember = false) => {
-    state.privateKey = remember
-      ? await rememberIdentity(state.me, phrase)
-      : await unlockIdentity(state.me, phrase);
+    const wasLegacyIdentity = !state.me.signing_key_id;
+    let { bundle, update } = await upgradeIdentityEnvelope(state.me, phrase);
+    if (update) {
+      try {
+        const identity = await api("/api/me/identity", { method: "PUT", body: update });
+        state.me = { ...state.me, ...identity };
+      } catch (migrationError) {
+        // Another device may have completed the same one-time migration first.
+        // Reloading the server envelope makes that race recoverable with the
+        // same existing phrase instead of generating another signing key.
+        const latestIdentity = await api("/api/me").catch(() => null);
+        if (!latestIdentity?.signing_key_id) throw migrationError;
+        const latest = await upgradeIdentityEnvelope(latestIdentity, phrase);
+        if (latest.update) throw migrationError;
+        state.me = latestIdentity;
+        bundle = latest.bundle;
+        update = null;
+      }
+    }
+    if (wasLegacyIdentity && state.me.signing_public_key) {
+      const trustInput = identityTrustInput(state.me);
+      const observed = await observeIdentityKey(trustInput);
+      if (observed.status === "changed" && !observed.record.signingPublicKey &&
+          observed.record.pendingSigningPublicKey === canonicalPublicKey(state.me.signing_public_key) &&
+          observed.record.pendingPublicKey === canonicalPublicKey(state.me.public_key)) {
+        const preserveVerification = Boolean(observed.record.verifiedAt);
+        const accepted = await acceptPendingIdentity(trustInput, observed.record.pendingFingerprint);
+        if (preserveVerification) await markIdentityVerified(trustInput, accepted.record.fingerprint);
+      }
+    }
+    const unlocked = remember
+      ? await rememberIdentityBundle(state.me, bundle)
+      : await importIdentityBundle(bundle);
+    state.privateKey = unlocked.privateKey;
+    state.signingPrivateKey = unlocked.signingPrivateKey;
+    state.signingKeyID = unlocked.signingKeyID;
     if (remember) sessionStorage.removeItem("crypto_phrase");
     else sessionStorage.setItem("crypto_phrase", phrase);
   };
-  if (!forceVerification) {
+  if (!forceVerification && state.me.signing_key_id) {
     try {
-      state.privateKey = await loadRememberedIdentity(state.me);
-      if (state.privateKey) {
+      const unlocked = await loadRememberedIdentity(state.me);
+      if (unlocked?.privateKey && unlocked?.signingPrivateKey) {
+        state.privateKey = unlocked.privateKey;
+        state.signingPrivateKey = unlocked.signingPrivateKey;
+        state.signingKeyID = unlocked.signingKeyID;
         sessionStorage.removeItem("crypto_phrase");
         sessionStorage.removeItem("remember_encryption_key");
         return;
@@ -725,12 +768,14 @@ async function unlock() {
       sessionStorage.removeItem("remember_encryption_key");
     }
   }
-  document.querySelector("#unlock-dialog h3").textContent = forceVerification
+  document.querySelector("#unlock-dialog h3").textContent = t(forceVerification
     ? "Vérification périodique de sécurité"
-    : "Déverrouiller les messages";
-  document.querySelector("#unlock-dialog p").textContent = forceVerification
+    : (state.me.signing_key_id ? "Déverrouiller les messages" : "Mettre à niveau la sécurité"));
+  document.querySelector("#unlock-dialog p").textContent = t(forceVerification
     ? "Pour protéger votre identité, saisissez votre phrase secrète. Cette vérification est demandée à la première connexion puis périodiquement."
-    : "Entrez votre phrase secrète de chiffrement. Elle n’est jamais envoyée au serveur.";
+    : (state.me.signing_key_id
+      ? "Entrez votre phrase secrète de chiffrement. Elle n’est jamais envoyée au serveur."
+      : "Saisissez votre phrase secrète actuelle. Votre identité sera protégée par Argon2id et dotée d’une clé de signature, sans modifier votre phrase."));
   document.querySelector("#unlock-remember").checked = true;
   document.querySelector("#unlock-remember-label").hidden = forceVerification;
   dialog.showModal();
@@ -1222,13 +1267,18 @@ function conversationContactAddress(username, instance) {
 
 function identityTrustInput(identity) {
   const userID = identity?.user_id ?? identity?.contact_user_id ?? identity?.id;
-  return {
+  const input = {
     instanceURL: getInstanceURL(),
     userID,
     username: identity?.remote_username || identity?.username || "",
     displayName: identity?.display_name || "",
     publicKey: identity?.public_key,
   };
+  if (Object.prototype.hasOwnProperty.call(identity || {}, "signing_public_key")) {
+    input.signingPublicKey = identity.signing_public_key || "";
+    input.signingKeyID = identity.signing_key_id || "";
+  }
+  return input;
 }
 
 function identityTrustLabel(identity) {
@@ -1260,14 +1310,14 @@ function reportIdentitySecurityError(error) {
   return true;
 }
 
-async function updateAcceptedIdentityPublicKey(userID, publicKey) {
-  if (sameID(state.me?.id, userID)) state.me.public_key = publicKey;
+async function updateAcceptedIdentityPublicKey(userID, publicKey, signingPublicKey = "", signingKeyID = "") {
+  if (sameID(state.me?.id, userID)) Object.assign(state.me, { public_key: publicKey, signing_public_key: signingPublicKey, signing_key_id: signingKeyID });
   state.contacts = state.contacts.map((contact) => (
-    sameID(contact.contact_user_id, userID) ? { ...contact, public_key: publicKey } : contact
+    sameID(contact.contact_user_id, userID) ? { ...contact, public_key: publicKey, signing_public_key: signingPublicKey, signing_key_id: signingKeyID } : contact
   ));
   for (const [conversationID, members] of state.members) {
     const updated = members.map((member) => (
-      sameID(member.user_id, userID) ? { ...member, public_key: publicKey } : member
+      sameID(member.user_id, userID) ? { ...member, public_key: publicKey, signing_public_key: signingPublicKey, signing_key_id: signingKeyID } : member
     ));
     state.members.set(conversationID, updated);
     await state.cache?.saveMembers(conversationID, updated);
@@ -1298,7 +1348,7 @@ async function confirmIdentityKeyChange(result, identity) {
     });
     if (!confirmed) throw identitySecurityError(current, identity);
     const accepted = await acceptPendingIdentity(identityTrustInput(identity), current.record.pendingFingerprint);
-    await updateAcceptedIdentityPublicKey(accepted.record.userID, accepted.record.publicKey);
+    await updateAcceptedIdentityPublicKey(accepted.record.userID, accepted.record.publicKey, accepted.record.signingPublicKey, accepted.record.signingKeyID);
     state.identityWarnings.delete(accepted.record.id);
     toast(t("Nouvelle clé acceptée. Vérifiez son empreinte dès que possible."), "success");
     return accepted.record.publicKey;
@@ -1318,7 +1368,11 @@ async function trustedPublicKey(identity, { interactive = false } = {}) {
     error.identity = identity;
     throw error;
   }
-  if (result.status !== "changed") return result.record.publicKey;
+  if (result.status !== "changed") {
+    identity.signing_public_key = result.record.signingPublicKey || "";
+    identity.signing_key_id = result.record.signingKeyID || "";
+    return result.record.publicKey;
+  }
   state.keys.clear();
   state.keyEnvelopes.clear();
   state.keyEnvelopeLoads.clear();
@@ -1330,7 +1384,8 @@ async function trustedPublicKey(identity, { interactive = false } = {}) {
 async function trustMembers(members, options = {}) {
   const trusted = [];
   for (const member of members || []) {
-    trusted.push({ ...member, public_key: await trustedPublicKey(member, options) });
+    const publicKey = await trustedPublicKey(member, options);
+    trusted.push({ ...member, public_key: publicKey, signing_public_key: member.signing_public_key || "", signing_key_id: member.signing_key_id || "" });
   }
   return trusted;
 }
@@ -3595,6 +3650,10 @@ async function sendCallHistoryMessage(conversationID, text) {
   if (!conversation || !text) return;
   const key = await getConversationKey(conversation);
   const encrypted = await encryptText(key, text);
+  const keyEpoch = conversationKeyEpoch(conversation);
+  const signature = await messageSignature("text", conversationID, {
+    encrypted_content: encrypted.data, iv: encrypted.iv, key_epoch: keyEpoch, reply_to: null,
+  });
   const message = await api(`/api/conversations/${conversationID}/messages`, {
     method: "POST",
     body: {
@@ -3602,11 +3661,33 @@ async function sendCallHistoryMessage(conversationID, text) {
       iv: encrypted.iv,
       reply_to: null,
       expires_in_seconds: 86400,
-      key_epoch: conversationKeyEpoch(conversation),
+      key_epoch: keyEpoch,
+      ...signature,
     },
   });
   if (state.current?.id === conversationID) await appendMessage(message, false);
   else await refreshAll();
+}
+
+async function messageSignature(kind, conversationID, body, existingMessage = null) {
+  return signMessagePayload(state.signingPrivateKey, state.signingKeyID, {
+    kind,
+    conversation_id: conversationID,
+    sender_id: state.me.id,
+    client_message_id: existingMessage?.client_message_id || undefined,
+    revision: existingMessage?.signature_version ? Number(existingMessage.revision || 1) + 1 : 1,
+    key_epoch: Number(body.key_epoch || existingMessage?.key_epoch || 1),
+    reply_to: body.reply_to ?? existingMessage?.reply_to ?? null,
+    encrypted_content: body.encrypted_content || "",
+    iv: body.iv || "",
+    option_count: body.option_count || 0,
+    starts_at: body.starts_at || "",
+    ends_at: body.ends_at || "",
+    encrypted_name: body.encrypted_name || "",
+    encrypted_mime: body.encrypted_mime || "",
+    ciphertext_sha256: body.ciphertext_sha256 || "",
+    preview_sha256: body.preview_sha256 || "",
+  });
 }
 
 async function clearCallState(conversationID = state.call?.conversationID) {
@@ -5124,6 +5205,9 @@ async function renderMessages(messages, conversation, preparedDecrypted = null) 
 
 async function decryptMessageContent(message, key) {
   try {
+    const signature = await verifyStoredMessageSignature(message);
+    message.signature_valid = signature.legacy ? null : signature.valid;
+    if (!signature.legacy && !signature.valid) throw new Error("invalid authenticated message");
     if (message.file) {
       return {
           name: await decryptEnvelope(key, message.file.encrypted_name),
@@ -5147,12 +5231,25 @@ async function decryptMessageContent(message, key) {
     }
     return clear;
   } catch {
-    if (message.poll) return { v: 1, question: "Sondage impossible à déchiffrer", options: [] };
-    if (message.event) return { v: 1, type: "event", name: "Évènement impossible à déchiffrer", description: "", location: "" };
+    const invalidSignature = message.signature_valid === false;
+    if (message.poll) return { v: 1, question: t(invalidSignature ? "Sondage bloqué : signature invalide" : "Sondage impossible à déchiffrer"), options: [] };
+    if (message.event) return { v: 1, type: "event", name: t(invalidSignature ? "Évènement bloqué : signature invalide" : "Évènement impossible à déchiffrer"), description: "", location: "" };
     return message.file
-      ? { name: "Fichier impossible à déchiffrer", mime: "application/octet-stream", fileID: message.file.id, size: message.file.size }
-      : "Contenu impossible à déchiffrer";
+      ? { name: t(invalidSignature ? "Fichier bloqué : signature invalide" : "Fichier impossible à déchiffrer"), mime: "application/octet-stream", fileID: message.file.id, size: message.file.size }
+      : t(invalidSignature ? "Message bloqué : signature invalide" : "Contenu impossible à déchiffrer");
   }
+}
+
+async function verifyStoredMessageSignature(message) {
+  if (!message?.signature_version) return { valid: false, legacy: true };
+  let members = await getMembers(message.conversation_id);
+  let sender = members.find((member) => sameID(member.user_id, message.sender_id));
+  if (!sender?.signing_public_key || sender.signing_key_id !== message.signing_key_id) {
+    members = await getMembers(message.conversation_id, { fresh: true });
+    sender = members.find((member) => sameID(member.user_id, message.sender_id));
+  }
+  if (!sender?.signing_public_key || sender.signing_key_id !== message.signing_key_id) return { valid: false, legacy: false };
+  return verifyMessagePayload(sender.signing_public_key, message);
 }
 
 function replyLabel(message, clear) {
@@ -5567,24 +5664,28 @@ async function submitPoll(event) {
       : await getConversationKey(state.current);
     const encrypted = await encryptText(key, JSON.stringify({ v: 1, question, options }));
     if (editing) {
+      const body = { encrypted_content: encrypted.data, iv: encrypted.iv, option_count: options.length, expires_in_seconds: expiresInSeconds };
+      Object.assign(body, await messageSignature("poll", state.current.id, body, editing.message));
       await api(`/api/messages/${editing.message.id}/poll`, {
         method: "PUT",
-        body: { encrypted_content: encrypted.data, iv: encrypted.iv, option_count: options.length, expires_in_seconds: expiresInSeconds },
+        body,
       });
       closePollDialog();
       await loadMessages(null, false);
       await refreshConversationList();
       toast("Sondage modifié. Les votes ont été remis à zéro.", "success");
     } else {
+      const body = {
+        encrypted_content: encrypted.data,
+        iv: encrypted.iv,
+        option_count: options.length,
+        expires_in_seconds: expiresInSeconds,
+        key_epoch: conversationKeyEpoch(state.current),
+      };
+      Object.assign(body, await messageSignature("poll", state.current.id, body));
       const message = await api(`/api/conversations/${state.current.id}/polls`, {
         method: "POST",
-        body: {
-          encrypted_content: encrypted.data,
-          iv: encrypted.iv,
-          option_count: options.length,
-          expires_in_seconds: expiresInSeconds,
-          key_epoch: conversationKeyEpoch(state.current),
-        },
+        body,
       });
       closePollDialog();
       await appendMessage(message);
@@ -5681,6 +5782,7 @@ async function submitEvent(event) {
       ends_at: end.toISOString(),
     };
     if (editing) {
+      Object.assign(body, await messageSignature("event", state.current.id, body, editing.message));
       await api(`/api/messages/${editing.message.id}/event`, { method: "PUT", body });
       closeEventDialog();
       await loadMessages(null, false);
@@ -5689,6 +5791,7 @@ async function submitEvent(event) {
       toast("Évènement modifié.", "success");
     } else {
       body.key_epoch = conversationKeyEpoch(state.current);
+      Object.assign(body, await messageSignature("event", state.current.id, body));
       const message = await api(`/api/conversations/${state.current.id}/events`, { method: "POST", body });
       closeEventDialog();
       await appendMessage(message);
@@ -6258,14 +6361,20 @@ async function sendMessage(event) {
   try {
     const key = await getConversationKey(state.current);
     const encrypted = await encryptText(key, text);
+    const keyEpoch = conversationKeyEpoch(state.current);
+    const replyTo = state.replyTo?.id || null;
+    const signature = await messageSignature("text", state.current.id, {
+      encrypted_content: encrypted.data, iv: encrypted.iv, key_epoch: keyEpoch, reply_to: replyTo,
+    });
     const message = await api(`/api/conversations/${state.current.id}/messages`, {
       method: "POST",
       body: {
         encrypted_content: encrypted.data,
         iv: encrypted.iv,
-        reply_to: state.replyTo?.id || null,
+        reply_to: replyTo,
         expires_in_seconds: state.messageExpirationSeconds,
-        key_epoch: conversationKeyEpoch(state.current),
+        key_epoch: keyEpoch,
+        ...signature,
       },
     });
     clearReplyTarget();
@@ -6589,19 +6698,23 @@ async function sendEncryptedFile(file, successMessage) {
       encryptEnvelope(key, file.type || "application/octet-stream"),
       encryptedFilePreview(file, data, key),
     ]);
+    const body = {
+      conversation_id: conversation.id,
+      encrypted_name: encryptedName,
+      encrypted_mime: encryptedMIME,
+      encrypted_data: encrypted.data,
+      iv: encrypted.iv,
+      encrypted_preview_data: preview?.data || "",
+      preview_iv: preview?.iv || "",
+      expires_in_seconds: expiresInSeconds,
+      key_epoch: conversationKeyEpoch(conversation),
+      ciphertext_sha256: await sha256Hex(base64ToBytes(encrypted.data)),
+      preview_sha256: preview?.data ? await sha256Hex(base64ToBytes(preview.data)) : "",
+    };
+    Object.assign(body, await messageSignature("file", conversation.id, body));
     const message = await api("/api/files", {
       method: "POST",
-      body: {
-        conversation_id: conversation.id,
-        encrypted_name: encryptedName,
-        encrypted_mime: encryptedMIME,
-        encrypted_data: encrypted.data,
-        iv: encrypted.iv,
-        encrypted_preview_data: preview?.data || "",
-        preview_iv: preview?.iv || "",
-        expires_in_seconds: expiresInSeconds,
-        key_epoch: conversationKeyEpoch(conversation),
-      },
+      body,
     });
     state.fileQuotas.used_storage = usedStorage + data.byteLength + 16;
     updateProfileStorage();
@@ -6908,6 +7021,10 @@ async function downloadFile(message, name, button) {
 }
 
 async function editMessage(message, clear, row) {
+  if (message.signature_valid === false) {
+    toast(t("Modification impossible : la signature du message est invalide."), "error");
+    return;
+  }
   if (message.poll) {
     row.dispatchEvent(new Event("swipe-close"));
     openPollDialog(message, clear);
@@ -6932,9 +7049,11 @@ async function editMessage(message, clear, row) {
   try {
     const key = await getMessageKey(message, state.current);
     const encrypted = await encryptText(key, text);
+    const body = { encrypted_content: encrypted.data, iv: encrypted.iv };
+    Object.assign(body, await messageSignature("text", message.conversation_id, body, message));
     await api(`/api/messages/${message.id}`, {
       method: "PUT",
-      body: { encrypted_content: encrypted.data, iv: encrypted.iv },
+      body,
     });
     await loadMessages(null, false);
     toast("Message modifié.", "success");
@@ -6989,6 +7108,7 @@ async function deleteMessage(message, row) {
 }
 
 async function loadDecryptedFile(message, key) {
+  if (message.signature_valid === false) throw new Error("La signature du fichier est invalide.");
   const cached = state.files.get(message.file.id);
   if (cached) return cached;
   const pending = state.fileLoads.get(message.file.id);
@@ -6999,6 +7119,11 @@ async function loadDecryptedFile(message, key) {
     if (!payload) {
       payload = await api(`/api/files/${message.file.id}`);
       state.cache?.saveFilePayload(message.file.id, payload);
+    }
+    if (message.signature_version && (!message.file.ciphertext_sha256 ||
+        message.file.ciphertext_sha256 !== payload.ciphertext_sha256 ||
+        message.file.ciphertext_sha256 !== await sha256Hex(base64ToBytes(payload.encrypted_data)))) {
+      throw new Error("La signature du fichier est invalide.");
     }
     const [name, mime, data] = await Promise.all([
       decryptEnvelope(key, payload.encrypted_name),
@@ -7024,6 +7149,7 @@ async function loadDecryptedFile(message, key) {
 }
 
 async function loadDecryptedFileThumbnail(message, key) {
+  if (message.signature_valid === false) return null;
   if (message.file.has_preview !== true) return null;
   const cached = state.fileThumbnails.get(message.file.id);
   if (cached) return cached;
@@ -7035,6 +7161,11 @@ async function loadDecryptedFileThumbnail(message, key) {
     if (!payload) {
       payload = await api(`/api/files/${message.file.id}/preview`);
       state.cache?.saveFilePreview(message.file.id, payload);
+    }
+    if (message.signature_version && (!message.file.preview_sha256 ||
+        message.file.preview_sha256 !== payload.preview_sha256 ||
+        message.file.preview_sha256 !== await sha256Hex(base64ToBytes(payload.encrypted_data)))) {
+      throw new Error("La signature de l’aperçu est invalide.");
     }
     const data = await decryptBytes(key, payload.encrypted_data, payload.iv);
     if (data.byteLength === 0 || data.byteLength > FILE_PREVIEW_MAX_BYTES) {

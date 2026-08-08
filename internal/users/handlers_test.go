@@ -197,8 +197,10 @@ func registerUserNamed(t *testing.T, handler *auth.Handler, username string) *ht
 	payload := map[string]string{
 		"username": username, "display_name": username, "password": "Password123!",
 		"public_key":            `{"kty":"EC","x":"public-key-placeholder"}`,
-		"encrypted_private_key": `{"iv":"private-iv","data":"encrypted-private-key"}`,
-		"crypto_salt":           "crypto-salt-value",
+		"encrypted_private_key": `{"v":2,"kdf":{"name":"argon2id","version":19,"memory_kib":32768,"iterations":3,"parallelism":1,"hash_length":32,"salt":"AAAAAAAAAAAAAAAAAAAAAA=="},"cipher":{"name":"AES-GCM","iv":"AAAAAAAAAAAAAAAA"},"data":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`,
+		"crypto_salt":           "argon2id-v2",
+		"signing_public_key":    `{"kty":"EC","crv":"P-256","x":"P1xgrChMoYjH2ksx1_ths9hjWlAUzXvm1iGGKf9wi34","y":"tijzBhBWCeQyQZADxQdzy0iJzba2WLy16qh0vHHsFRw"}`,
+		"signing_key_id":        "123a50372c29870ea73e4f730448f1d936620091eae3642c6f54b5b0377bbaa6",
 	}
 	data, _ := json.Marshal(payload)
 	request := httptest.NewRequest(http.MethodPost, "/api/register", bytes.NewReader(data))

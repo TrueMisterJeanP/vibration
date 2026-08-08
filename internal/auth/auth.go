@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base32"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"log"
 	"net"
@@ -14,6 +16,7 @@ import (
 
 	"chat-pwa-go/internal/httpx"
 	"chat-pwa-go/internal/invitationstore"
+	"chat-pwa-go/internal/messageauth"
 	"chat-pwa-go/internal/settings"
 
 	"github.com/go-sql-driver/mysql"
@@ -45,6 +48,8 @@ type authRequest struct {
 	PublicKey           string `json:"public_key"`
 	EncryptedPrivateKey string `json:"encrypted_private_key"`
 	CryptoSalt          string `json:"crypto_salt"`
+	SigningPublicKey    string `json:"signing_public_key"`
+	SigningKeyID        string `json:"signing_key_id"`
 	InvitationCode      string `json:"invitation_code"`
 	InvitationLink      bool   `json:"invitation_link"`
 	RecoveryCode        string `json:"recovery_code"`
@@ -61,6 +66,8 @@ type User struct {
 	PublicKey           string  `json:"public_key"`
 	EncryptedPrivateKey string  `json:"encrypted_private_key,omitempty"`
 	CryptoSalt          string  `json:"crypto_salt,omitempty"`
+	SigningPublicKey    string  `json:"signing_public_key,omitempty"`
+	SigningKeyID        string  `json:"signing_key_id,omitempty"`
 	Avatar              *string `json:"avatar"`
 	IsAdmin             bool    `json:"is_admin"`
 	IsManager           bool    `json:"is_manager"`
@@ -105,10 +112,16 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	input.DisplayName = strings.TrimSpace(input.DisplayName)
 	if !usernamePattern.MatchString(input.Username) || len(input.DisplayName) < 1 || len(input.DisplayName) > 80 ||
 		len(input.Password) < 8 || len(input.Password) > 256 || len(input.PublicKey) < 20 ||
-		len(input.EncryptedPrivateKey) < 20 || len(input.CryptoSalt) < 8 {
+		len(input.EncryptedPrivateKey) < 20 || input.CryptoSalt != "argon2id-v2" || !validV2IdentityEnvelope(input.EncryptedPrivateKey) {
 		httpx.Error(w, http.StatusBadRequest, "invalid registration fields")
 		return
 	}
+	canonicalSigningKey, signingKeyID, _, err := messageauth.CanonicalPublicKey(input.SigningPublicKey)
+	if err != nil || signingKeyID != input.SigningKeyID {
+		httpx.Error(w, http.StatusBadRequest, "invalid registration identity")
+		return
+	}
+	input.SigningPublicKey = canonicalSigningKey
 	if !h.allowAuthAttempt(w, r, "register", input.Username) {
 		return
 	}
@@ -199,8 +212,9 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	isAdmin := userCount == 0
-	result, err := tx.Exec(`INSERT INTO users(username,display_name,description,password_hash,recovery_code_hash,public_key,encrypted_private_key,crypto_salt,is_admin,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`, input.Username, input.DisplayName, "", string(hash), recoveryHash, input.PublicKey, input.EncryptedPrivateKey, input.CryptoSalt, isAdmin, now)
+	result, err := tx.Exec(`INSERT INTO users(username,display_name,description,password_hash,recovery_code_hash,public_key,encrypted_private_key,crypto_salt,signing_public_key,signing_key_id,is_admin,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, input.Username, input.DisplayName, "", string(hash), recoveryHash, input.PublicKey, input.EncryptedPrivateKey, input.CryptoSalt,
+		input.SigningPublicKey, input.SigningKeyID, isAdmin, now)
 	if err != nil {
 		log.Printf("registration failed: insert user: %v", err)
 		status, message := registrationInsertError(err)
@@ -208,6 +222,11 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := result.LastInsertId()
+	if _, err := tx.Exec(`INSERT INTO user_signing_keys(user_id,key_id,public_key,created_at) VALUES(?,?,?,?)`, id, input.SigningKeyID, input.SigningPublicKey, now); err != nil {
+		log.Printf("registration failed: insert signing key: %v", err)
+		httpx.Error(w, http.StatusInternalServerError, "registration failed")
+		return
+	}
 	if invitationID != 0 {
 		consumed, err := invitationstore.Consume(tx, invitationID, id, time.Now().UTC())
 		if err != nil {
@@ -231,7 +250,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := registerResponse{
-		User:         User{ID: id, Username: input.Username, DisplayName: input.DisplayName, PublicKey: input.PublicKey, IsAdmin: isAdmin, CreatedAt: now},
+		User: User{ID: id, Username: input.Username, DisplayName: input.DisplayName, PublicKey: input.PublicKey,
+			SigningPublicKey: input.SigningPublicKey, SigningKeyID: input.SigningKeyID, IsAdmin: isAdmin, CreatedAt: now},
 		RecoveryCode: recoveryCode,
 	}
 	if input.DesktopClient {
@@ -444,11 +464,108 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	var user User
-	err := h.DB.QueryRow(`SELECT id,username,display_name,description,public_key,encrypted_private_key,crypto_salt,avatar,is_admin,is_manager,is_banned,created_at FROM users WHERE id=?`, UserID(r)).
-		Scan(&user.ID, &user.Username, &user.DisplayName, &user.Description, &user.PublicKey, &user.EncryptedPrivateKey, &user.CryptoSalt, &user.Avatar, &user.IsAdmin, &user.IsManager, &user.IsBanned, &user.CreatedAt)
+	err := h.DB.QueryRow(`SELECT id,username,display_name,description,public_key,encrypted_private_key,crypto_salt,signing_public_key,signing_key_id,avatar,is_admin,is_manager,is_banned,created_at FROM users WHERE id=?`, UserID(r)).
+		Scan(&user.ID, &user.Username, &user.DisplayName, &user.Description, &user.PublicKey, &user.EncryptedPrivateKey, &user.CryptoSalt,
+			&user.SigningPublicKey, &user.SigningKeyID, &user.Avatar, &user.IsAdmin, &user.IsManager, &user.IsBanned, &user.CreatedAt)
 	if err != nil {
 		httpx.Error(w, http.StatusNotFound, "user not found")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, user)
+}
+
+func (h *Handler) UpdateIdentity(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		EncryptedPrivateKey string `json:"encrypted_private_key"`
+		CryptoSalt          string `json:"crypto_salt"`
+		SigningPublicKey    string `json:"signing_public_key"`
+		SigningKeyID        string `json:"signing_key_id"`
+	}
+	if !httpx.Decode(w, r, &input) {
+		return
+	}
+	canonical, keyID, _, err := messageauth.CanonicalPublicKey(input.SigningPublicKey)
+	if err != nil || keyID != input.SigningKeyID || !validV2IdentityEnvelope(input.EncryptedPrivateKey) || input.CryptoSalt != "argon2id-v2" {
+		httpx.Error(w, http.StatusBadRequest, "invalid identity upgrade")
+		return
+	}
+	userID := UserID(r)
+	tx, err := h.DB.Begin()
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "identity upgrade failed")
+		return
+	}
+	defer tx.Rollback()
+	var currentKeyID, currentSigningPublicKey, currentEncryptedPrivateKey, currentCryptoSalt string
+	if err := tx.QueryRow(`SELECT signing_key_id,signing_public_key,encrypted_private_key,crypto_salt FROM users WHERE id=?`, userID).
+		Scan(&currentKeyID, &currentSigningPublicKey, &currentEncryptedPrivateKey, &currentCryptoSalt); err != nil {
+		httpx.Error(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if currentKeyID != "" {
+		if currentKeyID == keyID && currentSigningPublicKey == canonical && currentEncryptedPrivateKey == input.EncryptedPrivateKey && currentCryptoSalt == input.CryptoSalt {
+			httpx.JSON(w, http.StatusOK, map[string]string{
+				"encrypted_private_key": currentEncryptedPrivateKey, "crypto_salt": currentCryptoSalt,
+				"signing_public_key": currentSigningPublicKey, "signing_key_id": currentKeyID,
+			})
+			return
+		}
+		httpx.Error(w, http.StatusConflict, "signing identity already exists")
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.Exec(`UPDATE users SET encrypted_private_key=?,crypto_salt=?,signing_public_key=?,signing_key_id=? WHERE id=?`,
+		input.EncryptedPrivateKey, input.CryptoSalt, canonical, keyID, userID); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "identity upgrade failed")
+		return
+	}
+	var existing int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM user_signing_keys WHERE user_id=? AND key_id=?`, userID, keyID).Scan(&existing); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "identity upgrade failed")
+		return
+	}
+	if existing == 0 {
+		if _, err := tx.Exec(`INSERT INTO user_signing_keys(user_id,key_id,public_key,created_at) VALUES(?,?,?,?)`, userID, keyID, canonical, now); err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "identity upgrade failed")
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "identity upgrade failed")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{
+		"encrypted_private_key": input.EncryptedPrivateKey, "crypto_salt": input.CryptoSalt,
+		"signing_public_key": canonical, "signing_key_id": keyID,
+	})
+}
+
+func validV2IdentityEnvelope(raw string) bool {
+	var envelope struct {
+		Version int `json:"v"`
+		KDF     struct {
+			Name        string `json:"name"`
+			Version     int    `json:"version"`
+			MemoryKiB   int    `json:"memory_kib"`
+			Iterations  int    `json:"iterations"`
+			Parallelism int    `json:"parallelism"`
+			HashLength  int    `json:"hash_length"`
+			Salt        string `json:"salt"`
+		} `json:"kdf"`
+		Cipher struct {
+			Name string `json:"name"`
+			IV   string `json:"iv"`
+		} `json:"cipher"`
+		Data string `json:"data"`
+	}
+	if len(raw) > 1<<20 || json.Unmarshal([]byte(raw), &envelope) != nil {
+		return false
+	}
+	salt, saltErr := base64.StdEncoding.DecodeString(envelope.KDF.Salt)
+	iv, ivErr := base64.StdEncoding.DecodeString(envelope.Cipher.IV)
+	data, dataErr := base64.StdEncoding.DecodeString(envelope.Data)
+	return envelope.Version == 2 && envelope.KDF.Name == "argon2id" && envelope.KDF.Version == 19 &&
+		envelope.KDF.MemoryKiB >= 8192 && envelope.KDF.MemoryKiB <= 262144 && envelope.KDF.Iterations >= 1 && envelope.KDF.Iterations <= 10 &&
+		envelope.KDF.Parallelism >= 1 && envelope.KDF.Parallelism <= 4 && envelope.KDF.HashLength == 32 && saltErr == nil && len(salt) == 16 &&
+		envelope.Cipher.Name == "AES-GCM" && ivErr == nil && len(iv) == 12 && dataErr == nil && len(data) >= 24
 }

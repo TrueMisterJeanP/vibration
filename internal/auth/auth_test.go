@@ -2,10 +2,12 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +34,90 @@ func TestDisabledRegistrationStillAllowsInitialAdminOnly(t *testing.T) {
 	second := registerRequest(t, handler, "second_user")
 	if second.Code != http.StatusForbidden {
 		t.Fatalf("second registration status=%d body=%s", second.Code, second.Body.String())
+	}
+}
+
+func TestRegistrationRejectsLegacyIdentityEnvelope(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := &Handler{DB: db}
+	payload := testRegistrationPayload("legacy_user", "Legacy User", "")
+	payload["encrypted_private_key"] = `{"v":1,"iv":"AAAAAAAAAAAAAAAA","data":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`
+	payload["crypto_salt"] = "AAAAAAAAAAAAAAAAAAAAAA=="
+	body, _ := json.Marshal(payload)
+	request := httptest.NewRequest(http.MethodPost, "/api/register", bytes.NewReader(body))
+	request.RemoteAddr = "127.0.0.1:12345"
+	response := httptest.NewRecorder()
+	handler.Register(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("legacy registration status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestLegacyIdentityCanUpgradeOnceWithoutChangingEncryptionPublicKey(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := &Handler{DB: db}
+	result, err := db.Exec(`INSERT INTO users(username,display_name,password_hash,public_key,encrypted_private_key,crypto_salt,created_at)
+		VALUES(?,?,?,?,?,?,?)`, "legacy_user", "Legacy User", "password-hash", "unchanged-encryption-public-key",
+		"legacy-encrypted-private-key", "legacy-salt", time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		t.Fatal(err)
+	}
+	userID, _ := result.LastInsertId()
+	identity := testRegistrationPayload("unused", "Unused", "")
+	body, _ := json.Marshal(map[string]any{
+		"encrypted_private_key": identity["encrypted_private_key"],
+		"crypto_salt":           identity["crypto_salt"],
+		"signing_public_key":    identity["signing_public_key"],
+		"signing_key_id":        identity["signing_key_id"],
+	})
+	request := httptest.NewRequest(http.MethodPut, "/api/me/identity", bytes.NewReader(body))
+	request = request.WithContext(context.WithValue(request.Context(), userIDKey, userID))
+	response := httptest.NewRecorder()
+	handler.UpdateIdentity(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("identity upgrade status=%d body=%s", response.Code, response.Body.String())
+	}
+	var publicKey, encryptedPrivateKey, cryptoSalt, signingPublicKey, signingKeyID string
+	if err := db.QueryRow(`SELECT public_key,encrypted_private_key,crypto_salt,signing_public_key,signing_key_id FROM users WHERE id=?`, userID).
+		Scan(&publicKey, &encryptedPrivateKey, &cryptoSalt, &signingPublicKey, &signingKeyID); err != nil {
+		t.Fatal(err)
+	}
+	if publicKey != "unchanged-encryption-public-key" || encryptedPrivateKey != identity["encrypted_private_key"] || cryptoSalt != "argon2id-v2" ||
+		signingPublicKey != identity["signing_public_key"] || signingKeyID != identity["signing_key_id"] {
+		t.Fatalf("unexpected upgraded identity public=%q signingID=%q", publicKey, signingKeyID)
+	}
+	var signingKeyCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM user_signing_keys WHERE user_id=? AND key_id=?`, userID, signingKeyID).Scan(&signingKeyCount); err != nil || signingKeyCount != 1 {
+		t.Fatalf("signing key history count=%d err=%v", signingKeyCount, err)
+	}
+	idempotentRequest := httptest.NewRequest(http.MethodPut, "/api/me/identity", bytes.NewReader(body))
+	idempotentRequest = idempotentRequest.WithContext(context.WithValue(idempotentRequest.Context(), userIDKey, userID))
+	idempotentResponse := httptest.NewRecorder()
+	handler.UpdateIdentity(idempotentResponse, idempotentRequest)
+	if idempotentResponse.Code != http.StatusOK {
+		t.Fatalf("idempotent identity upgrade status=%d body=%s", idempotentResponse.Code, idempotentResponse.Body.String())
+	}
+	changedEnvelope := strings.Replace(identity["encrypted_private_key"].(string), `"data":"AAAAAAAA`, `"data":"AQAAAAAA`, 1)
+	changedBody, _ := json.Marshal(map[string]any{
+		"encrypted_private_key": changedEnvelope,
+		"crypto_salt":           identity["crypto_salt"],
+		"signing_public_key":    identity["signing_public_key"],
+		"signing_key_id":        identity["signing_key_id"],
+	})
+	changedRequest := httptest.NewRequest(http.MethodPut, "/api/me/identity", bytes.NewReader(changedBody))
+	changedRequest = changedRequest.WithContext(context.WithValue(changedRequest.Context(), userIDKey, userID))
+	changedResponse := httptest.NewRecorder()
+	handler.UpdateIdentity(changedResponse, changedRequest)
+	if changedResponse.Code != http.StatusConflict {
+		t.Fatalf("identity replacement status=%d body=%s", changedResponse.Code, changedResponse.Body.String())
 	}
 }
 
@@ -347,16 +433,9 @@ func registerRequestWithInvitation(t *testing.T, handler *Handler, username, inv
 
 func registerRequestWithInvitationLink(t *testing.T, handler *Handler, username, invitationCode string) *httptest.ResponseRecorder {
 	t.Helper()
-	body := []byte(`{
-		"username":"` + username + `",
-		"display_name":"` + username + `",
-		"password":"Password123!",
-		"invitation_code":"` + invitationCode + `",
-		"invitation_link":true,
-		"public_key":"public-key-placeholder-value",
-		"encrypted_private_key":"encrypted-private-key-value",
-		"crypto_salt":"crypto-salt-value"
-	}`)
+	payload := testRegistrationPayload(username, username, invitationCode)
+	payload["invitation_link"] = true
+	body, _ := json.Marshal(payload)
 	request := httptest.NewRequest(http.MethodPost, "/api/register", bytes.NewReader(body))
 	request.RemoteAddr = "127.0.0.1:12345"
 	request.Header.Set("Content-Type", "application/json")
@@ -367,20 +446,23 @@ func registerRequestWithInvitationLink(t *testing.T, handler *Handler, username,
 
 func registerRequestWithDisplayName(t *testing.T, handler *Handler, username, displayName, invitationCode string) *httptest.ResponseRecorder {
 	t.Helper()
-	body := []byte(`{
-		"username":"` + username + `",
-		"display_name":"` + displayName + `",
-		"password":"Password123!",
-		"invitation_code":"` + invitationCode + `",
-		"public_key":"public-key-placeholder-value",
-		"encrypted_private_key":"encrypted-private-key-value",
-		"crypto_salt":"crypto-salt-value"
-	}`)
+	body, _ := json.Marshal(testRegistrationPayload(username, displayName, invitationCode))
 	request := httptest.NewRequest(http.MethodPost, "/api/register", bytes.NewReader(body))
 	request.RemoteAddr = "127.0.0.1:12345"
 	response := httptest.NewRecorder()
 	handler.Register(response, request)
 	return response
+}
+
+func testRegistrationPayload(username, displayName, invitationCode string) map[string]any {
+	return map[string]any{
+		"username": username, "display_name": displayName, "password": "Password123!", "invitation_code": invitationCode,
+		"public_key":            "public-key-placeholder-value",
+		"encrypted_private_key": `{"v":2,"kdf":{"name":"argon2id","version":19,"memory_kib":32768,"iterations":3,"parallelism":1,"hash_length":32,"salt":"AAAAAAAAAAAAAAAAAAAAAA=="},"cipher":{"name":"AES-GCM","iv":"AAAAAAAAAAAAAAAA"},"data":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`,
+		"crypto_salt":           "argon2id-v2",
+		"signing_public_key":    `{"kty":"EC","crv":"P-256","x":"P1xgrChMoYjH2ksx1_ths9hjWlAUzXvm1iGGKf9wi34","y":"tijzBhBWCeQyQZADxQdzy0iJzba2WLy16qh0vHHsFRw"}`,
+		"signing_key_id":        "123a50372c29870ea73e4f730448f1d936620091eae3642c6f54b5b0377bbaa6",
+	}
 }
 
 func loginRequest(t *testing.T, handler *Handler, username, password string) *httptest.ResponseRecorder {

@@ -10,6 +10,7 @@ import (
 	"chat-pwa-go/internal/auth"
 	"chat-pwa-go/internal/groupkeys"
 	"chat-pwa-go/internal/httpx"
+	"chat-pwa-go/internal/messageauth"
 )
 
 type Broadcaster interface {
@@ -53,26 +54,35 @@ type Handler struct {
 }
 
 type Message struct {
-	ID               int64      `json:"id"`
-	ConversationID   int64      `json:"conversation_id"`
-	SenderID         int64      `json:"sender_id"`
-	SenderUsername   string     `json:"sender_username"`
-	SenderAvatar     *string    `json:"sender_avatar"`
-	EncryptedContent *string    `json:"encrypted_content"`
-	IV               string     `json:"iv"`
-	KeyEpoch         int64      `json:"key_epoch"`
-	ReplyTo          *int64     `json:"reply_to"`
-	ExpiresAt        *string    `json:"expires_at"`
-	IsPinned         bool       `json:"is_pinned"`
-	PinnedBy         *int64     `json:"pinned_by"`
-	PinnedAt         *string    `json:"pinned_at"`
-	CreatedAt        string     `json:"created_at"`
-	UpdatedAt        *string    `json:"updated_at"`
-	File             *File      `json:"file,omitempty"`
-	Poll             *Poll      `json:"poll,omitempty"`
-	Event            *Event     `json:"event,omitempty"`
-	Reactions        []Reaction `json:"reactions,omitempty"`
-	Status           string     `json:"status"`
+	ID                      int64      `json:"id"`
+	ConversationID          int64      `json:"conversation_id"`
+	SenderID                int64      `json:"sender_id"`
+	SenderUsername          string     `json:"sender_username"`
+	SenderAvatar            *string    `json:"sender_avatar"`
+	EncryptedContent        *string    `json:"encrypted_content"`
+	IV                      string     `json:"iv"`
+	KeyEpoch                int64      `json:"key_epoch"`
+	ReplyTo                 *int64     `json:"reply_to"`
+	ExpiresAt               *string    `json:"expires_at"`
+	IsPinned                bool       `json:"is_pinned"`
+	PinnedBy                *int64     `json:"pinned_by"`
+	PinnedAt                *string    `json:"pinned_at"`
+	CreatedAt               string     `json:"created_at"`
+	UpdatedAt               *string    `json:"updated_at"`
+	ClientMessageID         *string    `json:"client_message_id,omitempty"`
+	SignatureConversationID string     `json:"signature_conversation_id,omitempty"`
+	SignatureSenderID       string     `json:"signature_sender_id,omitempty"`
+	SignatureReplyTo        string     `json:"signature_reply_to,omitempty"`
+	SignatureVersion        int        `json:"signature_version"`
+	SigningKeyID            *string    `json:"signing_key_id,omitempty"`
+	Signature               *string    `json:"signature,omitempty"`
+	MessageKind             string     `json:"message_kind"`
+	Revision                int64      `json:"revision"`
+	File                    *File      `json:"file,omitempty"`
+	Poll                    *Poll      `json:"poll,omitempty"`
+	Event                   *Event     `json:"event,omitempty"`
+	Reactions               []Reaction `json:"reactions,omitempty"`
+	Status                  string     `json:"status"`
 }
 
 type Reaction struct {
@@ -102,13 +112,15 @@ type Event struct {
 }
 
 type File struct {
-	ID            int64  `json:"id"`
-	EncryptedName string `json:"encrypted_name"`
-	EncryptedMIME string `json:"encrypted_mime"`
-	IV            string `json:"iv"`
-	Size          int64  `json:"size"`
-	HasPreview    bool   `json:"has_preview"`
-	PreviewSize   int64  `json:"preview_size,omitempty"`
+	ID               int64  `json:"id"`
+	EncryptedName    string `json:"encrypted_name"`
+	EncryptedMIME    string `json:"encrypted_mime"`
+	IV               string `json:"iv"`
+	Size             int64  `json:"size"`
+	HasPreview       bool   `json:"has_preview"`
+	PreviewSize      int64  `json:"preview_size,omitempty"`
+	CiphertextSHA256 string `json:"ciphertext_sha256,omitempty"`
+	PreviewSHA256    string `json:"preview_sha256,omitempty"`
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +149,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	h.deleteExpired(conversationID)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	query := `SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,m.encrypted_content,m.iv,m.key_epoch,m.reply_to,m.expires_at,mp.user_id,mp.created_at,m.created_at,m.updated_at,
-		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,f.preview_size,
+		m.client_message_id,COALESCE(m.signature_conversation_id,''),COALESCE(m.signature_sender_id,''),COALESCE(m.signature_reply_to,''),m.signature_version,m.signing_key_id,m.signature,m.message_kind,m.revision,
+		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,f.preview_size,f.ciphertext_sha256,f.preview_sha256,
 		CASE
 			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status<>'read') THEN 'read'
 			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status='sent') THEN 'delivered'
@@ -157,10 +170,12 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var item Message
 		var fileID, pinnedBy sql.NullInt64
-		var fileName, fileMIME, fileIV, expiresAt, pinnedAt sql.NullString
+		var fileName, fileMIME, fileIV, fileDigest, previewDigest, expiresAt, pinnedAt sql.NullString
 		var fileSize, previewSize sql.NullInt64
 		if rows.Scan(&item.ID, &item.ConversationID, &item.SenderID, &item.SenderUsername, &item.SenderAvatar, &item.EncryptedContent, &item.IV, &item.KeyEpoch,
-			&item.ReplyTo, &expiresAt, &pinnedBy, &pinnedAt, &item.CreatedAt, &item.UpdatedAt, &fileID, &fileName, &fileMIME, &fileIV, &fileSize, &previewSize, &item.Status) == nil {
+			&item.ReplyTo, &expiresAt, &pinnedBy, &pinnedAt, &item.CreatedAt, &item.UpdatedAt, &item.ClientMessageID, &item.SignatureConversationID, &item.SignatureSenderID, &item.SignatureReplyTo, &item.SignatureVersion,
+			&item.SigningKeyID, &item.Signature, &item.MessageKind, &item.Revision, &fileID, &fileName, &fileMIME, &fileIV, &fileSize, &previewSize,
+			&fileDigest, &previewDigest, &item.Status) == nil {
 			if expiresAt.Valid {
 				item.ExpiresAt = &expiresAt.String
 			}
@@ -171,7 +186,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 			}
 			if fileID.Valid {
 				item.File = &File{ID: fileID.Int64, EncryptedName: fileName.String, EncryptedMIME: fileMIME.String, IV: fileIV.String, Size: fileSize.Int64,
-					HasPreview: previewSize.Valid && previewSize.Int64 > 0, PreviewSize: previewSize.Int64}
+					HasPreview: previewSize.Valid && previewSize.Int64 > 0, PreviewSize: previewSize.Int64, CiphertextSHA256: fileDigest.String, PreviewSHA256: previewDigest.String}
 			}
 			result = append(result, item)
 		}
@@ -201,7 +216,8 @@ func (h *Handler) ListPinned(w http.ResponseWriter, r *http.Request) {
 	h.deleteExpired(conversationID)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	rows, err := h.DB.Query(`SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,m.encrypted_content,m.iv,m.key_epoch,m.reply_to,m.expires_at,mp.user_id,mp.created_at,m.created_at,m.updated_at,
-		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,f.preview_size,
+		m.client_message_id,COALESCE(m.signature_conversation_id,''),COALESCE(m.signature_sender_id,''),COALESCE(m.signature_reply_to,''),m.signature_version,m.signing_key_id,m.signature,m.message_kind,m.revision,
+		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,f.preview_size,f.ciphertext_sha256,f.preview_sha256,
 		CASE
 			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status<>'read') THEN 'read'
 			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status='sent') THEN 'delivered'
@@ -222,10 +238,12 @@ func (h *Handler) ListPinned(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var item Message
 		var fileID, pinnedBy sql.NullInt64
-		var fileName, fileMIME, fileIV, expiresAt, pinnedAt sql.NullString
+		var fileName, fileMIME, fileIV, fileDigest, previewDigest, expiresAt, pinnedAt sql.NullString
 		var fileSize, previewSize sql.NullInt64
 		if rows.Scan(&item.ID, &item.ConversationID, &item.SenderID, &item.SenderUsername, &item.SenderAvatar, &item.EncryptedContent, &item.IV, &item.KeyEpoch,
-			&item.ReplyTo, &expiresAt, &pinnedBy, &pinnedAt, &item.CreatedAt, &item.UpdatedAt, &fileID, &fileName, &fileMIME, &fileIV, &fileSize, &previewSize, &item.Status) == nil {
+			&item.ReplyTo, &expiresAt, &pinnedBy, &pinnedAt, &item.CreatedAt, &item.UpdatedAt, &item.ClientMessageID, &item.SignatureConversationID, &item.SignatureSenderID, &item.SignatureReplyTo, &item.SignatureVersion,
+			&item.SigningKeyID, &item.Signature, &item.MessageKind, &item.Revision, &fileID, &fileName, &fileMIME, &fileIV, &fileSize, &previewSize,
+			&fileDigest, &previewDigest, &item.Status) == nil {
 			if expiresAt.Valid {
 				item.ExpiresAt = &expiresAt.String
 			}
@@ -234,7 +252,7 @@ func (h *Handler) ListPinned(w http.ResponseWriter, r *http.Request) {
 			item.PinnedAt = &pinnedAt.String
 			if fileID.Valid {
 				item.File = &File{ID: fileID.Int64, EncryptedName: fileName.String, EncryptedMIME: fileMIME.String, IV: fileIV.String, Size: fileSize.Int64,
-					HasPreview: previewSize.Valid && previewSize.Int64 > 0, PreviewSize: previewSize.Int64}
+					HasPreview: previewSize.Valid && previewSize.Int64 > 0, PreviewSize: previewSize.Int64, CiphertextSHA256: fileDigest.String, PreviewSHA256: previewDigest.String}
 			}
 			result = append(result, item)
 		}
@@ -258,6 +276,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		ReplyTo          *int64 `json:"reply_to"`
 		ExpiresInSeconds int64  `json:"expires_in_seconds"`
 		KeyEpoch         int64  `json:"key_epoch"`
+		messageauth.Input
 	}
 	if !httpx.Decode(w, r, &input) {
 		return
@@ -271,7 +290,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid message expiration")
 		return
 	}
-	message, err := h.insert(conversationID, userID, &input.EncryptedContent, input.IV, input.KeyEpoch, input.ReplyTo, expiresAt, nil, 0, nil)
+	message, err := h.insert(conversationID, userID, &input.EncryptedContent, input.IV, input.KeyEpoch, input.ReplyTo, expiresAt, nil, 0, nil, "text", input.Input)
 	if err != nil {
 		h.writeCreateError(w, err)
 		return
@@ -283,7 +302,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, message)
 }
 
-func (h *Handler) insert(conversationID, userID int64, content *string, iv string, keyEpoch int64, replyTo *int64, expiresAt, pollExpiresAt *string, pollOptionCount int, event *Event) (Message, error) {
+func (h *Handler) insert(conversationID, userID int64, content *string, iv string, keyEpoch int64, replyTo *int64, expiresAt, pollExpiresAt *string, pollOptionCount int, event *Event, kind string, signatureInput messageauth.Input) (Message, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := h.DB.Begin()
 	if err != nil {
@@ -294,8 +313,18 @@ func (h *Handler) insert(conversationID, userID int64, content *string, iv strin
 	if err != nil {
 		return Message{}, err
 	}
-	result, err := tx.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,key_epoch,reply_to,expires_at,poll_expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
-		conversationID, userID, content, iv, keyEpoch, replyTo, expiresAt, pollExpiresAt, now)
+	payload := messageauth.NewPayload(kind, conversationID, userID, signatureInput, keyEpoch, replyTo, valueOrEmpty(content), iv)
+	payload.OptionCount = pollOptionCount
+	if event != nil {
+		payload.StartsAt, payload.EndsAt = event.StartsAt, event.EndsAt
+	}
+	if err := h.verifyMessageSignature(tx, userID, signatureInput, payload); err != nil {
+		return Message{}, err
+	}
+	result, err := tx.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,key_epoch,reply_to,expires_at,poll_expires_at,created_at,
+		client_message_id,signature_conversation_id,signature_sender_id,signature_reply_to,signature_version,signing_key_id,signature,message_kind,revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		conversationID, userID, content, iv, keyEpoch, replyTo, expiresAt, pollExpiresAt, now, signatureInput.ClientMessageID,
+		payload.ConversationID, payload.SenderID, payload.ReplyTo, signatureInput.SignatureVersion, signatureInput.SigningKeyID, signatureInput.Signature, kind, signatureInput.Revision)
 	if err != nil {
 		return Message{}, err
 	}
@@ -357,7 +386,36 @@ func (h *Handler) insert(conversationID, userID int64, content *string, iv strin
 		return Message{}, err
 	}
 	return Message{ID: id, ConversationID: conversationID, SenderID: userID, SenderUsername: username,
-		SenderAvatar: avatar, EncryptedContent: content, IV: iv, KeyEpoch: keyEpoch, ReplyTo: replyTo, ExpiresAt: expiresAt, CreatedAt: now, Poll: poll, Event: event, Status: "sent"}, nil
+		SenderAvatar: avatar, EncryptedContent: content, IV: iv, KeyEpoch: keyEpoch, ReplyTo: replyTo, ExpiresAt: expiresAt, CreatedAt: now,
+		ClientMessageID: &signatureInput.ClientMessageID, SignatureVersion: signatureInput.SignatureVersion, SigningKeyID: &signatureInput.SigningKeyID,
+		SignatureConversationID: payload.ConversationID, SignatureSenderID: payload.SenderID, SignatureReplyTo: payload.ReplyTo, Signature: &signatureInput.Signature,
+		MessageKind: kind, Revision: signatureInput.Revision, Poll: poll, Event: event, Status: "sent"}, nil
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+type queryRower interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+func (h *Handler) verifyMessageSignature(query queryRower, userID int64, input messageauth.Input, payload messageauth.Payload) error {
+	var publicKey string
+	if err := query.QueryRow(`SELECT public_key FROM user_signing_keys WHERE user_id=? AND key_id=? AND revoked_at IS NULL`, userID, input.SigningKeyID).Scan(&publicKey); err != nil {
+		return err
+	}
+	return messageauth.Verify(publicKey, input, payload)
+}
+
+func validNextSignature(oldClientID sql.NullString, oldRevision int64, input messageauth.Input) bool {
+	if !oldClientID.Valid {
+		return input.Revision == 1
+	}
+	return input.ClientMessageID == oldClientID.String && input.Revision == oldRevision+1
 }
 
 func (h *Handler) writeCreateError(w http.ResponseWriter, err error) {
@@ -367,6 +425,10 @@ func (h *Handler) writeCreateError(w http.ResponseWriter, err error) {
 	case groupkeys.ErrRotationRequired, groupkeys.ErrStaleEpoch:
 		httpx.Error(w, http.StatusConflict, err.Error())
 	default:
+		if strings.Contains(err.Error(), "signature") || strings.Contains(err.Error(), "signing key") || err == sql.ErrNoRows {
+			httpx.Error(w, http.StatusBadRequest, "invalid message signature")
+			return
+		}
 		httpx.Error(w, http.StatusInternalServerError, "message creation failed")
 	}
 }
@@ -413,6 +475,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		EncryptedContent string `json:"encrypted_content"`
 		IV               string `json:"iv"`
+		messageauth.Input
 	}
 	if !httpx.Decode(w, r, &input) {
 		return
@@ -421,8 +484,11 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid encrypted message")
 		return
 	}
-	var conversationID int64
-	if err := h.DB.QueryRow(`SELECT conversation_id FROM messages WHERE id=? AND sender_id=?`, messageID, auth.UserID(r)).Scan(&conversationID); err != nil {
+	var conversationID, keyEpoch, oldRevision int64
+	var replyTo *int64
+	var oldClientID sql.NullString
+	if err := h.DB.QueryRow(`SELECT conversation_id,key_epoch,reply_to,client_message_id,revision FROM messages WHERE id=? AND sender_id=?`, messageID, auth.UserID(r)).
+		Scan(&conversationID, &keyEpoch, &replyTo, &oldClientID, &oldRevision); err != nil {
 		httpx.Error(w, http.StatusNotFound, "message not found")
 		return
 	}
@@ -430,13 +496,30 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "message not found")
 		return
 	}
+	expectedRevision := int64(1)
+	if oldClientID.Valid {
+		expectedRevision = oldRevision + 1
+		if input.ClientMessageID != oldClientID.String {
+			httpx.Error(w, http.StatusBadRequest, "invalid message signature")
+			return
+		}
+	}
+	if input.Revision != expectedRevision {
+		httpx.Error(w, http.StatusBadRequest, "invalid message signature")
+		return
+	}
+	payload := messageauth.NewPayload("text", conversationID, auth.UserID(r), input.Input, keyEpoch, replyTo, input.EncryptedContent, input.IV)
+	if err := h.verifyMessageSignature(h.DB, auth.UserID(r), input.Input, payload); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid message signature")
+		return
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	result, err := h.DB.Exec(`UPDATE messages SET encrypted_content=?,iv=?,updated_at=?
+	result, err := h.DB.Exec(`UPDATE messages SET encrypted_content=?,iv=?,updated_at=?,client_message_id=?,signature_version=?,signing_key_id=?,signature=?,message_kind='text',revision=?
 		WHERE id=? AND sender_id=?
 		AND NOT EXISTS(SELECT 1 FROM files WHERE message_id=messages.id)
 		AND NOT EXISTS(SELECT 1 FROM poll_options WHERE message_id=messages.id)
 		AND NOT EXISTS(SELECT 1 FROM message_events WHERE message_id=messages.id)`,
-		input.EncryptedContent, input.IV, now, messageID, auth.UserID(r))
+		input.EncryptedContent, input.IV, now, input.ClientMessageID, input.SignatureVersion, input.SigningKeyID, input.Signature, input.Revision, messageID, auth.UserID(r))
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "message update failed")
 		return

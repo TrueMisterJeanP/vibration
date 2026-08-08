@@ -32,6 +32,8 @@ d’administration et d’un accompagnement d’auto-hébergement.
 - contacts ;
 - conversations privées et groupes ;
 - messages chiffrés côté navigateur ;
+- enveloppes d’identité Argon2id avec migration des anciens comptes PBKDF2 ;
+- empreintes d’identité persistantes et signatures individuelles des nouveaux messages ;
 - fichiers chiffrés ;
 - sondages à durée limitée ;
 - évènements et calendrier global des discussions ;

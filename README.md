@@ -161,11 +161,14 @@ Placer ensuite Vibration derrière un reverse proxy HTTPS, par exemple Nginx ou 
 - réinitialisation du mot de passe via code de récupération personnel ;
 - mots de passe hachés avec bcrypt (coût 12) ;
 - identité ECDH P-256 générée avec WebCrypto dans le navigateur ;
-- clé privée chiffrée par AES-GCM avec une clé PBKDF2 dérivée de la phrase secrète ;
+- clés privées ECDH et ECDSA chiffrées par AES-GCM avec une clé Argon2id dérivée de la phrase secrète ;
+- migration transparente des anciennes enveloppes PBKDF2 après déverrouillage, sans changement de la phrase ni de la clé ECDH ;
+- empreintes d’identité persistantes et blocage explicite lorsqu’une clé ECDH ou ECDSA change ;
 - contacts et recherche par nom d’utilisateur ;
 - conversations privées avec clé AES dérivée par ECDH + HKDF ;
 - groupes avec clé AES aléatoire enveloppée par ECDH pour chaque membre ;
 - messages texte AES-GCM, IV unique, historique paginé à 50 messages ;
+- signature individuelle ECDSA des nouveaux textes, fichiers, sondages et évènements, vérifiée avant déchiffrement ;
 - réponses, réactions, messages épinglés personnels avec fenêtre latérale dédiée, et messages éphémères configurables par appui long sur **Envoyer** ;
 - messages vocaux enregistrés dans le navigateur puis envoyés comme fichiers audio chiffrés ;
 - fichiers, nom de fichier et type MIME chiffrés avant envoi, limite 25 Mo ;
@@ -242,7 +245,11 @@ Chaque utilisateur peut aussi choisir ou supprimer un avatar depuis son profil. 
 
 ### Identité
 
-L’inscription crée une paire ECDH P-256 avec WebCrypto. La clé publique est envoyée au serveur. La clé privée est exportée au format JWK, chiffrée en AES-256-GCM avec une clé dérivée de la phrase secrète par PBKDF2-SHA-256 (310 000 itérations), puis seule l’enveloppe chiffrée est envoyée.
+L’inscription crée avec WebCrypto une paire ECDH P-256 pour le chiffrement et une paire ECDSA P-256 distincte pour les signatures. Les clés privées sont exportées au format JWK, regroupées dans une enveloppe v2, puis chiffrées en AES-256-GCM avec une clé dérivée de la phrase secrète par Argon2id (32 Mio, trois passes, parallélisme 1). Seules l’enveloppe chiffrée et les clés publiques sont envoyées au serveur.
+
+Les comptes créés avec l’ancien format PBKDF2-SHA-256 restent déverrouillables. Après une saisie correcte de leur phrase existante, le navigateur conserve exactement leur clé ECDH, ajoute la clé ECDSA et enregistre l’enveloppe Argon2id. La nouvelle règle de robustesse n’est pas réappliquée à leur phrase.
+
+L’empreinte combinée des clés ECDH et ECDSA est mémorisée localement par instance et par utilisateur. Un changement ultérieur bloque l’usage cryptographique jusqu’à acceptation explicite après comparaison par un autre canal.
 
 Le mot de passe de connexion et la phrase secrète ont des rôles distincts :
 
@@ -260,6 +267,8 @@ Le créateur génère une clé AES-256-GCM aléatoire. Cette clé est chiffrée 
 ### Messages et fichiers
 
 Chaque texte et chaque fichier utilise un IV AES-GCM aléatoire de 96 bits. Le nom et le type MIME des fichiers sont des enveloppes AES-GCM distinctes. Les fichiers ne sont téléchargés et déchiffrés qu’après un clic.
+
+Les nouveaux textes, fichiers, sondages et évènements sont signés en ECDSA P-256. La signature couvre notamment l’auteur, la conversation, l’identifiant client unique, la révision, l’époque de clé, la réponse éventuelle, l’IV et le contenu chiffré ; pour les fichiers, elle couvre aussi les empreintes SHA-256 des ciphertexts. Le serveur refuse une signature invalide et le client la revérifie avant déchiffrement. Les objets historiques restent lisibles avec l’étiquette **Non signé**.
 
 ## WebSocket
 
@@ -434,9 +443,9 @@ rm -f data/chat.db data/chat.db-shm data/chat.db-wal data/app_secret data/vapid.
 ## Limites connues de la V1
 
 - ce projet fournit un chiffrement E2EE fonctionnel, mais n’a pas fait l’objet d’un audit cryptographique indépendant ;
-- pas de Double Ratchet, de forward secrecy par message, de vérification d’empreinte/QR code ou de gestion multi-appareil ;
+- pas de Double Ratchet, de forward secrecy par message, de QR code d’empreinte ou de gestion multi-appareil ;
 - la compromission d’une clé privée permet de dériver les conversations privées historiques ;
-- après retrait d’un membre d’un groupe, la clé du groupe n’est pas automatiquement tournée ; il faut recréer un groupe pour exclure cryptographiquement l’ancien membre ;
+- la rotation des clés de groupe protège les messages futurs après un ajout ou un retrait, mais ne crée pas de forward secrecy par message ;
 - l’API permet au propriétaire d’ajouter/retirer des membres, mais l’interface V1 sélectionne principalement les membres à la création ;
 - les appels audio/vidéo sont WebRTC et chiffrés par le navigateur, mais ne disposent pas encore d’une couche E2EE applicative indépendante avec vérification d’identité ;
 - les appels audio/vidéo ne sont pas encore fédérés entre serveurs ;

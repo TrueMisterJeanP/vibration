@@ -79,6 +79,26 @@ async function loadModule() {
   assert.equal(otherInstance.status, "observed");
   assert.notEqual(otherInstance.record.id, accepted.record.id);
 
+  const signingIdentity = { ...identityA, userID: 77 };
+  const beforeSigning = await registry.observeIdentityKey(signingIdentity);
+  const signingA = JSON.stringify({ kty: "EC", crv: "P-256", x: "signing-a-x", y: "signing-a-y" });
+  const signingB = JSON.stringify({ kty: "EC", crv: "P-256", x: "signing-b-x", y: "signing-b-y" });
+  const upgradedSigning = await registry.observeIdentityKey({ ...signingIdentity, signingPublicKey: signingA, signingKeyID: "key-a" });
+  assert.equal(upgradedSigning.status, "observed", "an unverified identity may receive its first signing key as a TOFU upgrade");
+  assert.notEqual(upgradedSigning.record.fingerprint, beforeSigning.record.fingerprint);
+  const changedSigning = await registry.observeIdentityKey({ ...signingIdentity, signingPublicKey: signingB, signingKeyID: "key-b" });
+  assert.equal(changedSigning.status, "changed", "a later signing key replacement must be blocked");
+  assert.equal(changedSigning.record.signingPublicKey, trust.canonicalPublicKey(signingA));
+  assert.equal(changedSigning.record.pendingSigningPublicKey, trust.canonicalPublicKey(signingB));
+
+  const verifiedSigningIdentity = { ...identityA, userID: 78 };
+  const verifiedBeforeSigning = await registry.observeIdentityKey(verifiedSigningIdentity);
+  await registry.markIdentityVerified(verifiedSigningIdentity, verifiedBeforeSigning.record.fingerprint);
+  const verifiedSigningUpgrade = await registry.observeIdentityKey({ ...verifiedSigningIdentity, signingPublicKey: signingA, signingKeyID: "key-a" });
+  assert.equal(verifiedSigningUpgrade.status, "changed", "a verified identity must not acquire a signing key silently");
+  assert.equal(verifiedSigningUpgrade.record.signingPublicKey, "");
+  assert.equal(verifiedSigningUpgrade.record.pendingSigningPublicKey, trust.canonicalPublicKey(signingA));
+
   await assert.rejects(
     registry.observeIdentityKey({ ...identityA, userID: 99, publicKey: { kty: "RSA" } }),
     /Clé publique invalide/,

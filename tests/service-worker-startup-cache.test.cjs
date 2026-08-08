@@ -19,6 +19,7 @@ assert.ok(
   "l’écran de démarrage doit être lu dans Cache Storage avant toute requête réseau",
 );
 assert.match(startupBranch, /if \(cached\) return cached/);
+assert.match(worker, /"\/vendor\/hash-wasm\/argon2\.umd\.min\.js\?v=identity-v2"/);
 assert.equal(manifest.background_color, "#1b5260");
 
 console.log("Service Worker startup cache: green splash shell is served locally before the network");

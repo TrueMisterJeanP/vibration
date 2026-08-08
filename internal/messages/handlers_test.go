@@ -13,6 +13,8 @@ import (
 
 	"chat-pwa-go/internal/auth"
 	database "chat-pwa-go/internal/db"
+	"chat-pwa-go/internal/messageauth"
+	"chat-pwa-go/internal/testsupport"
 )
 
 type sentEvent struct {
@@ -275,8 +277,11 @@ func TestAuthorCanDeleteMessage(t *testing.T) {
 	mux.Handle("POST /api/messages/{id}/reactions", authHandler.Middleware(http.HandlerFunc(handler.React)))
 	mux.Handle("POST /api/messages/{id}/pin", authHandler.Middleware(http.HandlerFunc(handler.Pin)))
 	mux.Handle("DELETE /api/messages/{id}", authHandler.Middleware(http.HandlerFunc(handler.Delete)))
-	updateBody := bytes.NewBufferString(`{"encrypted_content":"updated-encrypted","iv":"updated-message-iv"}`)
-	updateRequest := httptest.NewRequest(http.MethodPut, "/api/messages/"+formatMessageID(messageID), updateBody)
+	updatePayload := map[string]any{"encrypted_content": "updated-encrypted", "iv": "updated-message-iv"}
+	mergeSignature(updatePayload, messageauth.Payload{Version: 1, Kind: "text", ConversationID: formatMessageID(conversationID), SenderID: "1",
+		ClientMessageID: "text-update-id-0001", Revision: 1, KeyEpoch: 1, EncryptedContent: "updated-encrypted", IV: "updated-message-iv"})
+	updateBody, _ := json.Marshal(updatePayload)
+	updateRequest := httptest.NewRequest(http.MethodPut, "/api/messages/"+formatMessageID(messageID), bytes.NewReader(updateBody))
 	updateRequest.Header.Set("Content-Type", "application/json")
 	updateRequest.AddCookie(cookie)
 	updateResponse := httptest.NewRecorder()
@@ -463,8 +468,11 @@ func TestPollLifecycleEnforcesOwnerAndSingleVote(t *testing.T) {
 	mux.Handle("GET /api/conversations/{id}/messages", authHandler.Middleware(http.HandlerFunc(handler.List)))
 	mux.Handle("DELETE /api/messages/{id}", authHandler.Middleware(http.HandlerFunc(handler.Delete)))
 
-	create := httptest.NewRequest(http.MethodPost, "/api/conversations/"+formatMessageID(conversationID)+"/polls",
-		bytes.NewBufferString(`{"encrypted_content":"encrypted-poll","iv":"poll-message-iv","option_count":2,"expires_in_seconds":300}`))
+	createPollBody := map[string]any{"encrypted_content": "encrypted-poll", "iv": "poll-message-iv", "option_count": 2, "expires_in_seconds": 300, "key_epoch": 1}
+	mergeSignature(createPollBody, messageauth.Payload{Version: 1, Kind: "poll", ConversationID: formatMessageID(conversationID), SenderID: "1",
+		ClientMessageID: "poll-client-id-0001", Revision: 1, KeyEpoch: 1, EncryptedContent: "encrypted-poll", IV: "poll-message-iv", OptionCount: 2})
+	createPollJSON, _ := json.Marshal(createPollBody)
+	create := httptest.NewRequest(http.MethodPost, "/api/conversations/"+formatMessageID(conversationID)+"/polls", bytes.NewReader(createPollJSON))
 	create.Header.Set("Content-Type", "application/json")
 	create.AddCookie(owner)
 	createResponse := httptest.NewRecorder()
@@ -519,8 +527,11 @@ func TestPollLifecycleEnforcesOwnerAndSingleVote(t *testing.T) {
 		t.Fatalf("listed poll=%+v", listed)
 	}
 
-	updateBody := `{"encrypted_content":"updated-encrypted-poll","iv":"updated-poll-message-iv","option_count":3,"expires_in_seconds":3600}`
-	memberUpdate := httptest.NewRequest(http.MethodPut, "/api/messages/"+formatMessageID(created.ID)+"/poll", bytes.NewBufferString(updateBody))
+	updatePollBody := map[string]any{"encrypted_content": "updated-encrypted-poll", "iv": "updated-poll-message-iv", "option_count": 3, "expires_in_seconds": 3600}
+	mergeSignature(updatePollBody, messageauth.Payload{Version: 1, Kind: "poll", ConversationID: formatMessageID(conversationID), SenderID: "1",
+		ClientMessageID: "poll-client-id-0001", Revision: 2, KeyEpoch: 1, EncryptedContent: "updated-encrypted-poll", IV: "updated-poll-message-iv", OptionCount: 3})
+	updateBody, _ := json.Marshal(updatePollBody)
+	memberUpdate := httptest.NewRequest(http.MethodPut, "/api/messages/"+formatMessageID(created.ID)+"/poll", bytes.NewReader(updateBody))
 	memberUpdate.Header.Set("Content-Type", "application/json")
 	memberUpdate.AddCookie(member)
 	memberUpdateResponse := httptest.NewRecorder()
@@ -529,7 +540,7 @@ func TestPollLifecycleEnforcesOwnerAndSingleVote(t *testing.T) {
 		t.Fatalf("member update status=%d body=%s", memberUpdateResponse.Code, memberUpdateResponse.Body.String())
 	}
 
-	ownerUpdate := httptest.NewRequest(http.MethodPut, "/api/messages/"+formatMessageID(created.ID)+"/poll", bytes.NewBufferString(updateBody))
+	ownerUpdate := httptest.NewRequest(http.MethodPut, "/api/messages/"+formatMessageID(created.ID)+"/poll", bytes.NewReader(updateBody))
 	ownerUpdate.Header.Set("Content-Type", "application/json")
 	ownerUpdate.AddCookie(owner)
 	ownerUpdateResponse := httptest.NewRecorder()
@@ -640,8 +651,12 @@ func TestEventLifecycleCalendarAndOwnerPermissions(t *testing.T) {
 
 	start := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 	end := start.Add(90 * time.Minute)
-	createBody := `{"encrypted_content":"encrypted-event","iv":"event-message-iv","starts_at":"` + start.Format(time.RFC3339Nano) + `","ends_at":"` + end.Format(time.RFC3339Nano) + `"}`
-	create := httptest.NewRequest(http.MethodPost, "/api/conversations/"+formatMessageID(conversationID)+"/events", bytes.NewBufferString(createBody))
+	createEventBody := map[string]any{"encrypted_content": "encrypted-event", "iv": "event-message-iv", "starts_at": start.Format(time.RFC3339Nano), "ends_at": end.Format(time.RFC3339Nano), "key_epoch": 1}
+	mergeSignature(createEventBody, messageauth.Payload{Version: 1, Kind: "event", ConversationID: formatMessageID(conversationID), SenderID: "1",
+		ClientMessageID: "event-client-id-001", Revision: 1, KeyEpoch: 1, EncryptedContent: "encrypted-event", IV: "event-message-iv",
+		StartsAt: start.Format(time.RFC3339Nano), EndsAt: end.Format(time.RFC3339Nano)})
+	createBody, _ := json.Marshal(createEventBody)
+	create := httptest.NewRequest(http.MethodPost, "/api/conversations/"+formatMessageID(conversationID)+"/events", bytes.NewReader(createBody))
 	create.Header.Set("Content-Type", "application/json")
 	create.AddCookie(owner)
 	createResponse := httptest.NewRecorder()
@@ -674,8 +689,12 @@ func TestEventLifecycleCalendarAndOwnerPermissions(t *testing.T) {
 
 	updatedStart := start.Add(24 * time.Hour)
 	updatedEnd := updatedStart.Add(2 * time.Hour)
-	updateBody := `{"encrypted_content":"updated-encrypted-event","iv":"updated-event-iv","starts_at":"` + updatedStart.Format(time.RFC3339Nano) + `","ends_at":"` + updatedEnd.Format(time.RFC3339Nano) + `"}`
-	memberUpdate := httptest.NewRequest(http.MethodPut, "/api/messages/"+formatMessageID(created.ID)+"/event", bytes.NewBufferString(updateBody))
+	updateEventBody := map[string]any{"encrypted_content": "updated-encrypted-event", "iv": "updated-event-iv", "starts_at": updatedStart.Format(time.RFC3339Nano), "ends_at": updatedEnd.Format(time.RFC3339Nano)}
+	mergeSignature(updateEventBody, messageauth.Payload{Version: 1, Kind: "event", ConversationID: formatMessageID(conversationID), SenderID: "1",
+		ClientMessageID: "event-client-id-001", Revision: 2, KeyEpoch: 1, EncryptedContent: "updated-encrypted-event", IV: "updated-event-iv",
+		StartsAt: updatedStart.Format(time.RFC3339Nano), EndsAt: updatedEnd.Format(time.RFC3339Nano)})
+	updateBody, _ := json.Marshal(updateEventBody)
+	memberUpdate := httptest.NewRequest(http.MethodPut, "/api/messages/"+formatMessageID(created.ID)+"/event", bytes.NewReader(updateBody))
 	memberUpdate.Header.Set("Content-Type", "application/json")
 	memberUpdate.AddCookie(member)
 	memberUpdateResponse := httptest.NewRecorder()
@@ -683,7 +702,7 @@ func TestEventLifecycleCalendarAndOwnerPermissions(t *testing.T) {
 	if memberUpdateResponse.Code != http.StatusNotFound {
 		t.Fatalf("member update status=%d body=%s", memberUpdateResponse.Code, memberUpdateResponse.Body.String())
 	}
-	ownerUpdate := httptest.NewRequest(http.MethodPut, "/api/messages/"+formatMessageID(created.ID)+"/event", bytes.NewBufferString(updateBody))
+	ownerUpdate := httptest.NewRequest(http.MethodPut, "/api/messages/"+formatMessageID(created.ID)+"/event", bytes.NewReader(updateBody))
 	ownerUpdate.Header.Set("Content-Type", "application/json")
 	ownerUpdate.AddCookie(owner)
 	ownerUpdateResponse := httptest.NewRecorder()
@@ -907,9 +926,12 @@ func registerMessageUserNamed(t *testing.T, handler *auth.Handler, username, dis
 	payload := map[string]string{
 		"username": username, "display_name": displayName, "password": "Password123!",
 		"public_key":            `{"kty":"EC","x":"public-key-placeholder"}`,
-		"encrypted_private_key": `{"iv":"private-iv","data":"encrypted-private-key"}`,
-		"crypto_salt":           "crypto-salt-value",
+		"encrypted_private_key": `{"v":2,"kdf":{"name":"argon2id","version":19,"memory_kib":32768,"iterations":3,"parallelism":1,"hash_length":32,"salt":"AAAAAAAAAAAAAAAAAAAAAA=="},"cipher":{"name":"AES-GCM","iv":"AAAAAAAAAAAAAAAA"},"data":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`,
+		"crypto_salt":           "argon2id-v2",
+		"signing_public_key":    `{"kty":"EC","crv":"P-256","x":"P1xgrChMoYjH2ksx1_ths9hjWlAUzXvm1iGGKf9wi34","y":"tijzBhBWCeQyQZADxQdzy0iJzba2WLy16qh0vHHsFRw"}`,
+		"signing_key_id":        "123a50372c29870ea73e4f730448f1d936620091eae3642c6f54b5b0377bbaa6",
 	}
+	testsupport.AddIdentityStrings(payload)
 	data, _ := json.Marshal(payload)
 	request := httptest.NewRequest(http.MethodPost, "/api/register", bytes.NewReader(data))
 	request.Header.Set("Content-Type", "application/json")
@@ -923,6 +945,12 @@ func registerMessageUserNamed(t *testing.T, handler *auth.Handler, username, dis
 
 func formatMessageID(id int64) string {
 	return strconv.FormatInt(id, 10)
+}
+
+func mergeSignature(body map[string]any, payload messageauth.Payload) {
+	for key, value := range testsupport.Sign(payload) {
+		body[key] = value
+	}
 }
 
 func hasMessageEvent(events []sentEvent, userID int64, eventType string) bool {

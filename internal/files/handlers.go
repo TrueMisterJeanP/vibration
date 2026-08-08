@@ -9,6 +9,7 @@ import (
 	"chat-pwa-go/internal/auth"
 	"chat-pwa-go/internal/groupkeys"
 	"chat-pwa-go/internal/httpx"
+	"chat-pwa-go/internal/messageauth"
 	"chat-pwa-go/internal/settings"
 )
 
@@ -47,29 +48,40 @@ type listedFile struct {
 	HasPreview       bool   `json:"has_preview"`
 	PreviewSize      int64  `json:"preview_size,omitempty"`
 	ActiveShareCount int64  `json:"active_share_count"`
+	CiphertextSHA256 string `json:"ciphertext_sha256,omitempty"`
+	PreviewSHA256    string `json:"preview_sha256,omitempty"`
 }
 
 type listedFileMessage struct {
-	ID               int64       `json:"id"`
-	ConversationID   int64       `json:"conversation_id"`
-	SenderID         int64       `json:"sender_id"`
-	SenderUsername   string      `json:"sender_username"`
-	SenderAvatar     *string     `json:"sender_avatar"`
-	EncryptedContent *string     `json:"encrypted_content"`
-	IV               string      `json:"iv"`
-	KeyEpoch         int64       `json:"key_epoch"`
-	ExpiresAt        *string     `json:"expires_at"`
-	CreatedAt        string      `json:"created_at"`
-	UpdatedAt        *string     `json:"updated_at"`
-	File             *listedFile `json:"file"`
+	ID                      int64       `json:"id"`
+	ConversationID          int64       `json:"conversation_id"`
+	SenderID                int64       `json:"sender_id"`
+	SenderUsername          string      `json:"sender_username"`
+	SenderAvatar            *string     `json:"sender_avatar"`
+	EncryptedContent        *string     `json:"encrypted_content"`
+	IV                      string      `json:"iv"`
+	KeyEpoch                int64       `json:"key_epoch"`
+	ExpiresAt               *string     `json:"expires_at"`
+	CreatedAt               string      `json:"created_at"`
+	UpdatedAt               *string     `json:"updated_at"`
+	ClientMessageID         *string     `json:"client_message_id,omitempty"`
+	SignatureConversationID string      `json:"signature_conversation_id,omitempty"`
+	SignatureSenderID       string      `json:"signature_sender_id,omitempty"`
+	SignatureReplyTo        string      `json:"signature_reply_to,omitempty"`
+	SignatureVersion        int         `json:"signature_version"`
+	SigningKeyID            *string     `json:"signing_key_id,omitempty"`
+	Signature               *string     `json:"signature,omitempty"`
+	MessageKind             string      `json:"message_kind"`
+	Revision                int64       `json:"revision"`
+	File                    *listedFile `json:"file"`
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	userID := auth.UserID(r)
 	rows, err := h.DB.Query(`SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,
-		m.encrypted_content,m.iv,m.key_epoch,m.expires_at,m.created_at,m.updated_at,
-		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,f.preview_size,
+		m.encrypted_content,m.iv,m.key_epoch,m.expires_at,m.created_at,m.updated_at,m.client_message_id,COALESCE(m.signature_conversation_id,''),COALESCE(m.signature_sender_id,''),COALESCE(m.signature_reply_to,''),m.signature_version,m.signing_key_id,m.signature,m.message_kind,m.revision,
+		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,f.preview_size,f.ciphertext_sha256,f.preview_sha256,
 		(SELECT COUNT(*) FROM file_shares fs WHERE fs.file_id=f.id AND fs.created_by=?
 			AND fs.revoked_at IS NULL AND fs.expires_at>?)
 		FROM files f JOIN messages m ON m.id=f.message_id JOIN users u ON u.id=m.sender_id
@@ -88,7 +100,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		var previewSize sql.NullInt64
 		if rows.Scan(&message.ID, &message.ConversationID, &message.SenderID, &message.SenderUsername, &message.SenderAvatar,
 			&message.EncryptedContent, &message.IV, &message.KeyEpoch, &message.ExpiresAt, &message.CreatedAt, &message.UpdatedAt,
-			&file.ID, &file.EncryptedName, &file.EncryptedMIME, &file.IV, &file.Size, &previewSize, &file.ActiveShareCount) == nil {
+			&message.ClientMessageID, &message.SignatureConversationID, &message.SignatureSenderID, &message.SignatureReplyTo, &message.SignatureVersion, &message.SigningKeyID, &message.Signature, &message.MessageKind, &message.Revision,
+			&file.ID, &file.EncryptedName, &file.EncryptedMIME, &file.IV, &file.Size, &previewSize, &file.CiphertextSHA256, &file.PreviewSHA256, &file.ActiveShareCount) == nil {
 			if previewSize.Valid && previewSize.Int64 > 0 {
 				file.HasPreview = true
 				file.PreviewSize = previewSize.Int64
@@ -134,6 +147,9 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		PreviewIV        string `json:"preview_iv"`
 		ExpiresInSeconds int64  `json:"expires_in_seconds"`
 		KeyEpoch         int64  `json:"key_epoch"`
+		CiphertextSHA256 string `json:"ciphertext_sha256"`
+		PreviewSHA256    string `json:"preview_sha256"`
+		messageauth.Input
 	}
 	quotas, err := settings.LoadFileQuotas(h.DB)
 	if err != nil {
@@ -159,6 +175,10 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusRequestEntityTooLarge, "file exceeds configured size limit")
 		return
 	}
+	if input.CiphertextSHA256 != messageauth.SHA256(data) {
+		httpx.Error(w, http.StatusBadRequest, "invalid encrypted file digest")
+		return
+	}
 	var previewData []byte
 	if input.EncryptedPreview != "" || input.PreviewIV != "" {
 		if input.EncryptedPreview == "" || len(input.PreviewIV) < 8 || len(input.PreviewIV) > 128 {
@@ -170,6 +190,13 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusRequestEntityTooLarge, "encrypted file preview exceeds 512 KB")
 			return
 		}
+		if input.PreviewSHA256 != messageauth.SHA256(previewData) {
+			httpx.Error(w, http.StatusBadRequest, "invalid encrypted file preview digest")
+			return
+		}
+	} else if input.PreviewSHA256 != "" {
+		httpx.Error(w, http.StatusBadRequest, "invalid encrypted file preview digest")
+		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := h.DB.Begin()
@@ -193,6 +220,15 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, status, err.Error())
 		return
 	}
+	payload := messageauth.NewPayload("file", input.ConversationID, userID, input.Input, input.KeyEpoch, nil, "", input.IV)
+	payload.EncryptedName, payload.EncryptedMIME = input.EncryptedName, input.EncryptedMIME
+	payload.CiphertextSHA256, payload.PreviewSHA256 = input.CiphertextSHA256, input.PreviewSHA256
+	var signingPublicKey string
+	if err := tx.QueryRow(`SELECT public_key FROM user_signing_keys WHERE user_id=? AND key_id=? AND revoked_at IS NULL`, userID, input.SigningKeyID).Scan(&signingPublicKey); err != nil ||
+		messageauth.Verify(signingPublicKey, input.Input, payload) != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid message signature")
+		return
+	}
 	quotas, err = settings.LoadFileQuotas(tx)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "file quota lookup failed")
@@ -211,15 +247,18 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusRequestEntityTooLarge, "user file quota exceeded")
 		return
 	}
-	messageResult, err := tx.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,key_epoch,expires_at,created_at) VALUES(?,?,NULL,?,?,?,?)`,
-		input.ConversationID, userID, input.IV, input.KeyEpoch, expiresAt, now)
+	messageResult, err := tx.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,key_epoch,expires_at,created_at,
+		client_message_id,signature_conversation_id,signature_sender_id,signature_reply_to,signature_version,signing_key_id,signature,message_kind,revision) VALUES(?,?,NULL,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		input.ConversationID, userID, input.IV, input.KeyEpoch, expiresAt, now, input.ClientMessageID, payload.ConversationID, payload.SenderID, payload.ReplyTo,
+		input.SignatureVersion, input.SigningKeyID, input.Signature, "file", input.Revision)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "message creation failed")
 		return
 	}
 	messageID, _ := messageResult.LastInsertId()
-	fileResult, err := tx.Exec(`INSERT INTO files(message_id,owner_id,encrypted_name,encrypted_mime,encrypted_data,iv,size,encrypted_preview_data,preview_iv,preview_size,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, messageID, userID, input.EncryptedName, input.EncryptedMIME, data, input.IV, len(data), nullablePreviewBytes(previewData), nullablePreviewString(input.PreviewIV), nullablePreviewSize(previewData), now)
+	fileResult, err := tx.Exec(`INSERT INTO files(message_id,owner_id,encrypted_name,encrypted_mime,encrypted_data,iv,size,encrypted_preview_data,preview_iv,preview_size,ciphertext_sha256,preview_sha256,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, messageID, userID, input.EncryptedName, input.EncryptedMIME, data, input.IV, len(data), nullablePreviewBytes(previewData),
+		nullablePreviewString(input.PreviewIV), nullablePreviewSize(previewData), input.CiphertextSHA256, nullablePreviewString(input.PreviewSHA256), now)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "file storage failed")
 		return
@@ -256,9 +295,12 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fileMeta := map[string]any{"id": fileID, "encrypted_name": input.EncryptedName, "encrypted_mime": input.EncryptedMIME, "iv": input.IV, "size": len(data),
-		"has_preview": len(previewData) > 0, "preview_size": len(previewData)}
+		"has_preview": len(previewData) > 0, "preview_size": len(previewData), "ciphertext_sha256": input.CiphertextSHA256, "preview_sha256": input.PreviewSHA256}
 	message := map[string]any{"id": messageID, "conversation_id": input.ConversationID, "sender_id": userID,
-		"sender_username": username, "sender_avatar": avatar, "encrypted_content": nil, "iv": input.IV, "key_epoch": input.KeyEpoch, "expires_at": expiresAt, "created_at": now, "status": "sent", "file": fileMeta}
+		"sender_username": username, "sender_avatar": avatar, "encrypted_content": nil, "iv": input.IV, "key_epoch": input.KeyEpoch, "expires_at": expiresAt, "created_at": now,
+		"client_message_id": input.ClientMessageID, "signature_version": input.SignatureVersion, "signing_key_id": input.SigningKeyID, "signature": input.Signature,
+		"signature_conversation_id": payload.ConversationID, "signature_sender_id": payload.SenderID, "signature_reply_to": payload.ReplyTo,
+		"message_kind": "file", "revision": input.Revision, "status": "sent", "file": fileMeta}
 	personalConversation := len(members) == 1 && members[0] == userID
 	for _, id := range members {
 		if id != userID {
@@ -292,20 +334,20 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	var name, mime, iv string
+	var name, mime, iv, digest string
 	var data []byte
 	var size int64
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	err = h.DB.QueryRow(`SELECT f.encrypted_name,f.encrypted_mime,f.encrypted_data,f.iv,f.size
+	err = h.DB.QueryRow(`SELECT f.encrypted_name,f.encrypted_mime,f.encrypted_data,f.iv,f.size,COALESCE(f.ciphertext_sha256,'')
 		FROM files f JOIN messages m ON m.id=f.message_id JOIN conversation_members cm ON cm.conversation_id=m.conversation_id
-		WHERE f.id=? AND cm.user_id=? AND cm.role<>'pending' AND m.created_at>=cm.created_at AND (m.expires_at IS NULL OR m.expires_at>?)`, fileID, auth.UserID(r), now).Scan(&name, &mime, &data, &iv, &size)
+		WHERE f.id=? AND cm.user_id=? AND cm.role<>'pending' AND m.created_at>=cm.created_at AND (m.expires_at IS NULL OR m.expires_at>?)`, fileID, auth.UserID(r), now).Scan(&name, &mime, &data, &iv, &size, &digest)
 	if err != nil {
 		httpx.Error(w, http.StatusNotFound, "file not found")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"id": fileID, "encrypted_name": name, "encrypted_mime": mime,
-		"encrypted_data": base64.StdEncoding.EncodeToString(data), "iv": iv, "size": size,
+		"encrypted_data": base64.StdEncoding.EncodeToString(data), "iv": iv, "size": size, "ciphertext_sha256": digest,
 	})
 }
 
@@ -316,19 +358,19 @@ func (h *Handler) Preview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var data []byte
-	var iv string
+	var iv, digest string
 	var size int64
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	err = h.DB.QueryRow(`SELECT f.encrypted_preview_data,f.preview_iv,f.preview_size
+	err = h.DB.QueryRow(`SELECT f.encrypted_preview_data,f.preview_iv,f.preview_size,COALESCE(f.preview_sha256,'')
 		FROM files f JOIN messages m ON m.id=f.message_id JOIN conversation_members cm ON cm.conversation_id=m.conversation_id
 		WHERE f.id=? AND f.encrypted_preview_data IS NOT NULL AND cm.user_id=? AND cm.role<>'pending'
-		AND m.created_at>=cm.created_at AND (m.expires_at IS NULL OR m.expires_at>?)`, fileID, auth.UserID(r), now).Scan(&data, &iv, &size)
+		AND m.created_at>=cm.created_at AND (m.expires_at IS NULL OR m.expires_at>?)`, fileID, auth.UserID(r), now).Scan(&data, &iv, &size, &digest)
 	if err != nil {
 		httpx.Error(w, http.StatusNotFound, "file preview not found")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
-		"id": fileID, "encrypted_data": base64.StdEncoding.EncodeToString(data), "iv": iv, "size": size,
+		"id": fileID, "encrypted_data": base64.StdEncoding.EncodeToString(data), "iv": iv, "size": size, "preview_sha256": digest,
 	})
 }
 

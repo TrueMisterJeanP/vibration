@@ -132,6 +132,15 @@ export function renderMessage(
   author.className = "message-author";
   author.textContent = mine ? t("Vous") : message.sender_username;
   authorRow.append(avatar, author);
+  if (message.signature_valid === null || message.signature_valid === false) {
+    const authentication = document.createElement("small");
+    authentication.className = `message-authentication ${message.signature_valid === false ? "invalid" : "legacy"}`;
+    authentication.textContent = t(message.signature_valid === false ? "Signature invalide" : "Non signé");
+    authentication.title = t(message.signature_valid === false
+      ? "Le contenu a été bloqué car sa signature ne correspond pas à l’auteur."
+      : "Ancien message lisible, mais sans signature individuelle vérifiable.");
+    authorRow.append(authentication);
+  }
   if (message.is_pinned) {
     const pinned = document.createElement("small");
     pinned.className = "message-pin-badge";

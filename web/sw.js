@@ -1,8 +1,9 @@
-const CACHE = "chat-pwa-go-v276";
+const CACHE = "chat-pwa-go-v277";
 const SHELL = [
   "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=passphrase-strength-v276",
-  "/js/app.js?v=passphrase-strength-v276", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios17-pdf-v199", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=macos-titlebar-v251",
-  "/js/notifications.js?v=passphrase-strength-v276", "/js/device-vault.js", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js", "/js/ui.js?v=ios17-pdf-v211", "/js/share.js?v=ios17-pdf-v199", "/js/login.js?v=passphrase-strength-v276", "/manifest.json?v=desktop-titlebar-v252",
+  "/js/app.js?v=identity-v2", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios17-pdf-v199", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=macos-titlebar-v251",
+  "/js/notifications.js?v=passphrase-strength-v276", "/js/device-vault.js", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js", "/js/ui.js?v=ios17-pdf-v211", "/js/share.js?v=ios17-pdf-v199", "/js/login.js?v=identity-v2", "/manifest.json?v=desktop-titlebar-v252",
+  "/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2",
   "/js/pdf-preview-compat.js?v=ios17-pdf-v199",
   "/js/conversation-cache.js?v=cache-v3",
   "/js/file-preview-image.js?v=ios17-pdf-v199",

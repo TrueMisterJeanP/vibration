@@ -20,17 +20,19 @@ type Handler struct {
 }
 
 type Contact struct {
-	ID             int64   `json:"id"`
-	ContactUserID  int64   `json:"contact_user_id"`
-	Username       string  `json:"username"`
-	DisplayName    string  `json:"display_name"`
-	Description    string  `json:"description"`
-	PublicKey      string  `json:"public_key"`
-	Avatar         *string `json:"avatar"`
-	EncryptedLabel *string `json:"encrypted_label"`
-	Status         string  `json:"status"`
-	Direction      string  `json:"direction"`
-	CreatedAt      string  `json:"created_at"`
+	ID               int64   `json:"id"`
+	ContactUserID    int64   `json:"contact_user_id"`
+	Username         string  `json:"username"`
+	DisplayName      string  `json:"display_name"`
+	Description      string  `json:"description"`
+	PublicKey        string  `json:"public_key"`
+	SigningPublicKey string  `json:"signing_public_key"`
+	SigningKeyID     string  `json:"signing_key_id"`
+	Avatar           *string `json:"avatar"`
+	EncryptedLabel   *string `json:"encrypted_label"`
+	Status           string  `json:"status"`
+	Direction        string  `json:"direction"`
+	CreatedAt        string  `json:"created_at"`
 }
 
 type CarnetEntry struct {
@@ -162,15 +164,15 @@ func (h *Handler) CarnetDeleteAll(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserID(r)
 	h.ensureFederatedContacts(userID)
-	rows, err := h.DB.Query(`SELECT id,contact_user_id,username,display_name,description,public_key,avatar,encrypted_label,status,direction,created_at
+	rows, err := h.DB.Query(`SELECT id,contact_user_id,username,display_name,description,public_key,signing_public_key,signing_key_id,avatar,encrypted_label,status,direction,created_at
 		FROM (
 			SELECT c.id AS id,c.contact_user_id AS contact_user_id,COALESCE(u.remote_username,u.username) AS username,u.display_name AS display_name,
-				u.description AS description,u.public_key AS public_key,u.avatar AS avatar,c.encrypted_label AS encrypted_label,
+				u.description AS description,u.public_key AS public_key,u.signing_public_key AS signing_public_key,u.signing_key_id AS signing_key_id,u.avatar AS avatar,c.encrypted_label AS encrypted_label,
 				c.status AS status,'outgoing' AS direction,c.created_at AS created_at
 			FROM contacts c JOIN users u ON u.id=c.contact_user_id WHERE c.owner_id=?
 			UNION ALL
 			SELECT c.id AS id,c.owner_id AS contact_user_id,COALESCE(u.remote_username,u.username) AS username,u.display_name AS display_name,
-				u.description AS description,u.public_key AS public_key,u.avatar AS avatar,c.encrypted_label AS encrypted_label,
+				u.description AS description,u.public_key AS public_key,u.signing_public_key AS signing_public_key,u.signing_key_id AS signing_key_id,u.avatar AS avatar,c.encrypted_label AS encrypted_label,
 				c.status AS status,'incoming' AS direction,c.created_at AS created_at
 			FROM contacts c JOIN users u ON u.id=c.owner_id WHERE c.contact_user_id=? AND c.status='pending'
 		) contact_rows
@@ -183,7 +185,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	contacts := make([]Contact, 0)
 	for rows.Next() {
 		var contact Contact
-		if rows.Scan(&contact.ID, &contact.ContactUserID, &contact.Username, &contact.DisplayName, &contact.Description, &contact.PublicKey, &contact.Avatar, &contact.EncryptedLabel, &contact.Status, &contact.Direction, &contact.CreatedAt) == nil {
+		if rows.Scan(&contact.ID, &contact.ContactUserID, &contact.Username, &contact.DisplayName, &contact.Description, &contact.PublicKey,
+			&contact.SigningPublicKey, &contact.SigningKeyID, &contact.Avatar, &contact.EncryptedLabel, &contact.Status, &contact.Direction, &contact.CreatedAt) == nil {
 			contacts = append(contacts, contact)
 		}
 	}

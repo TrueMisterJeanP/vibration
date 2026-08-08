@@ -113,6 +113,8 @@ export function formatPublicKeyFingerprint(fingerprint) {
 }
 
 function publicIdentity(input) {
+  const signingSupplied = Object.prototype.hasOwnProperty.call(input, "signingPublicKey");
+  const signingPublicKey = signingSupplied ? (input.signingPublicKey ? canonicalPublicKey(input.signingPublicKey) : "") : null;
   return {
     id: identityTrustID(input.instanceURL, input.userID),
     instanceURL: normalizeInstance(input.instanceURL),
@@ -120,7 +122,16 @@ function publicIdentity(input) {
     username: String(input.username || ""),
     displayName: String(input.displayName || ""),
     publicKey: canonicalPublicKey(input.publicKey),
+    signingPublicKey,
+    signingKeyID: String(input.signingKeyID || ""),
   };
+}
+
+async function identityFingerprint(publicKey, signingPublicKey = "") {
+  if (!signingPublicKey) return publicKeyFingerprint(publicKey);
+  const canonical = JSON.stringify({ encryption: canonicalPublicKey(publicKey), signing: canonicalPublicKey(signingPublicKey) });
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical)));
+  return [...digest].map((value) => value.toString(16).padStart(2, "0")).join("").toUpperCase();
 }
 
 function copyRecord(record) {
@@ -160,8 +171,10 @@ export function createIdentityTrustRegistry({ readRecord, writeRecord, now = () 
   const observeIdentityKey = async (input) => {
     const identity = publicIdentity(input);
     return serialized(identity.id, async () => {
-      const fingerprint = await publicKeyFingerprint(identity.publicKey);
-      const current = await load(identity.id);
+      const currentBeforeFingerprint = await load(identity.id);
+      const observedSigningKey = identity.signingPublicKey === null ? (currentBeforeFingerprint?.signingPublicKey || "") : identity.signingPublicKey;
+      const fingerprint = await identityFingerprint(identity.publicKey, observedSigningKey);
+      const current = currentBeforeFingerprint;
       const observedAt = now();
       if (!current) {
         const record = await save({
@@ -171,6 +184,8 @@ export function createIdentityTrustRegistry({ readRecord, writeRecord, now = () 
           username: identity.username,
           displayName: identity.displayName,
           publicKey: identity.publicKey,
+          signingPublicKey: identity.signingPublicKey || "",
+          signingKeyID: identity.signingKeyID,
           fingerprint,
           firstSeenAt: observedAt,
           lastSeenAt: observedAt,
@@ -180,7 +195,22 @@ export function createIdentityTrustRegistry({ readRecord, writeRecord, now = () 
         return { status: "observed", record };
       }
 
-      if (current.publicKey === identity.publicKey && !current.pendingPublicKey) {
+      if (current.publicKey === identity.publicKey && !current.signingPublicKey && identity.signingPublicKey &&
+          !current.pendingPublicKey && !current.verifiedAt) {
+        const record = await save({
+          ...current,
+          signingPublicKey: identity.signingPublicKey,
+          signingKeyID: identity.signingKeyID,
+          previousFingerprint: current.fingerprint,
+          fingerprint,
+          verifiedAt: null,
+          lastSeenAt: observedAt,
+        });
+        return { status: "observed", record };
+      }
+
+      const signingMatches = identity.signingPublicKey === null || (current.signingPublicKey || "") === identity.signingPublicKey;
+      if (current.publicKey === identity.publicKey && signingMatches && !current.pendingPublicKey && !current.pendingSigningPublicKey) {
         const metadataChanged = (
           (identity.username && identity.username !== current.username)
           || (identity.displayName && identity.displayName !== current.displayName)
@@ -198,8 +228,10 @@ export function createIdentityTrustRegistry({ readRecord, writeRecord, now = () 
         return { status: record.verifiedAt ? "verified" : "observed", record };
       }
 
-      if (current.publicKey !== identity.publicKey) {
+      if (current.publicKey !== identity.publicKey || (identity.signingPublicKey !== null && (current.signingPublicKey || "") !== identity.signingPublicKey)) {
         current.pendingPublicKey = identity.publicKey;
+        current.pendingSigningPublicKey = identity.signingPublicKey === null ? (current.signingPublicKey || "") : identity.signingPublicKey;
+        current.pendingSigningKeyID = identity.signingPublicKey === null ? (current.signingKeyID || "") : identity.signingKeyID;
         current.pendingFingerprint = fingerprint;
         current.changeDetectedAt ||= observedAt;
         current.lastChangedSeenAt = observedAt;
@@ -215,7 +247,7 @@ export function createIdentityTrustRegistry({ readRecord, writeRecord, now = () 
     const id = identityTrustID(input.instanceURL, input.userID);
     const record = await load(id);
     if (!record) return { status: "unknown", record: null };
-    if (record.pendingPublicKey) return { status: "changed", record };
+    if (record.pendingPublicKey || record.pendingSigningPublicKey) return { status: "changed", record };
     return { status: record.verifiedAt ? "verified" : "observed", record };
   };
 
@@ -232,11 +264,20 @@ export function createIdentityTrustRegistry({ readRecord, writeRecord, now = () 
       const acceptedAt = now();
       const history = [
         ...(current.history || []),
-        { publicKey: current.publicKey, fingerprint: current.fingerprint, firstSeenAt: current.firstSeenAt, replacedAt: acceptedAt },
+        {
+          publicKey: current.publicKey,
+          signingPublicKey: current.signingPublicKey || "",
+          signingKeyID: current.signingKeyID || "",
+          fingerprint: current.fingerprint,
+          firstSeenAt: current.firstSeenAt,
+          replacedAt: acceptedAt,
+        },
       ];
       const record = await save({
         ...current,
         publicKey: current.pendingPublicKey,
+        signingPublicKey: current.pendingSigningPublicKey || "",
+        signingKeyID: current.pendingSigningKeyID || "",
         fingerprint: current.pendingFingerprint,
         firstSeenAt: acceptedAt,
         lastSeenAt: acceptedAt,
@@ -245,6 +286,8 @@ export function createIdentityTrustRegistry({ readRecord, writeRecord, now = () 
         acceptedChangeAt: acceptedAt,
         history,
         pendingPublicKey: null,
+        pendingSigningPublicKey: null,
+        pendingSigningKeyID: null,
         pendingFingerprint: null,
         changeDetectedAt: null,
         lastChangedSeenAt: null,
@@ -258,7 +301,7 @@ export function createIdentityTrustRegistry({ readRecord, writeRecord, now = () 
     return serialized(id, async () => {
       const current = await load(id);
       if (!current) throw new Error("Cette identité n’a pas encore été observée.");
-      if (current.pendingPublicKey) throw new Error("La nouvelle clé doit d’abord être acceptée.");
+      if (current.pendingPublicKey || current.pendingSigningPublicKey) throw new Error("La nouvelle clé doit d’abord être acceptée.");
       if (expectedFingerprint && current.fingerprint !== expectedFingerprint) {
         throw new Error("L’empreinte a changé pendant la vérification.");
       }

@@ -19,6 +19,7 @@ de licence amont lorsque les licences concernées l’exigent.
 | ExcelJS | `4.4.0` | `web/vendor/exceljs/` | MIT | Copyright Guyon Roche. Le texte complet de la licence est conservé dans `web/vendor/exceljs/LICENSE`. |
 | pptx-preview | `1.0.7` | `web/vendor/pptx-preview/` | ISC | Copyright _hit757_ et contributeurs. Le texte complet de la licence est conservé dans `web/vendor/pptx-preview/LICENSE`. |
 | html2canvas | `1.4.1` | `web/vendor/html2canvas/` | MIT | Copyright Niklas von Hertzen et contributeurs. Le texte complet de la licence est conservé dans `web/vendor/html2canvas/LICENSE`. |
+| hash-wasm | `4.12.0` | `web/vendor/hash-wasm/` | MIT | Copyright Dani Biro. Le texte complet de la licence est conservé dans `web/vendor/hash-wasm/LICENSE`. |
 
 ## Modules Go
 
@@ -49,9 +50,9 @@ de licence amont lorsque les licences concernées l’exigent.
 
 ## Paquets npm
 
-Le `package-lock.json` exporté pour Community ne contient actuellement que le
-paquet racine du projet et aucun arbre de dépendances npm. L’arborescence de
-travail Enterprise peut contenir des paquets npm liés à Tauri, mais ils ne sont
+Le `package-lock.json` exporté pour Community fixe `hash-wasm` `4.12.0`, utilisé
+pour reproduire et tester l’implémentation Argon2id embarquée. L’arborescence de
+travail Enterprise peut contenir d’autres paquets npm liés à Tauri, qui ne sont
 pas inclus dans l’export Community.
 
 ## Textes de licence complets
@@ -64,6 +65,7 @@ pas inclus dans l’export Community.
 - ExcelJS : `web/vendor/exceljs/LICENSE`
 - pptx-preview : `web/vendor/pptx-preview/LICENSE`
 - html2canvas : `web/vendor/html2canvas/LICENSE`
+- hash-wasm : `web/vendor/hash-wasm/LICENSE`
 - Modules Go : les fichiers de licence font partie du code source des modules
   téléchargés et vérifiés par `go.sum`.
 

@@ -80,6 +80,7 @@ func main() {
 	mux.Handle("POST /api/terms/accept", authHandler.Middleware(http.HandlerFunc(authHandler.AcceptTerms)))
 	mux.Handle("POST /api/logout", authHandler.Middleware(http.HandlerFunc(authHandler.Logout)))
 	mux.Handle("GET /api/me", authHandler.Middleware(http.HandlerFunc(authHandler.Me)))
+	mux.Handle("PUT /api/me/identity", authHandler.Middleware(http.HandlerFunc(authHandler.UpdateIdentity)))
 	mux.Handle("PUT /api/me", authHandler.Middleware(http.HandlerFunc(userHandler.UpdateProfile)))
 	mux.Handle("POST /api/me/recovery-code", authHandler.Middleware(http.HandlerFunc(authHandler.RecoveryCode)))
 	mux.Handle("GET /api/users/search", authHandler.Middleware(http.HandlerFunc(userHandler.Search)))
@@ -287,7 +288,7 @@ func securityHeaders(next http.Handler, strictTransport bool) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Permissions-Policy", "camera=(self), microphone=(self), display-capture=(self), geolocation=()")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'self' blob:; frame-src 'self' blob:; frame-ancestors 'none'; form-action 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'self' blob:; frame-src 'self' blob:; frame-ancestors 'none'; form-action 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' ws: wss:; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self'")
 		if strictTransport {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}

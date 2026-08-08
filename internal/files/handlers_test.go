@@ -5,16 +5,20 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"chat-pwa-go/internal/auth"
 	database "chat-pwa-go/internal/db"
+	"chat-pwa-go/internal/messageauth"
 	"chat-pwa-go/internal/settings"
+	"chat-pwa-go/internal/testsupport"
 )
 
 type sentEvent struct {
@@ -195,6 +199,12 @@ func TestUploadWithoutPreviewRemainsCompatible(t *testing.T) {
 	body := uploadBody(conversationID)
 	delete(body, "encrypted_preview_data")
 	delete(body, "preview_iv")
+	delete(body, "preview_sha256")
+	for key, value := range testsupport.Sign(messageauth.Payload{Version: 1, Kind: "file", ConversationID: strconv.FormatInt(conversationID, 10), SenderID: "1",
+		ClientMessageID: body["client_message_id"].(string), Revision: 1, KeyEpoch: 1, IV: "file-iv-123", EncryptedName: "encrypted-file-name",
+		EncryptedMIME: "encrypted-file-mime", CiphertextSHA256: body["ciphertext_sha256"].(string)}) {
+		body[key] = value
+	}
 
 	uploaded := fileRequest(t, mux, http.MethodPost, "/api/files", body, sender)
 	if uploaded.Code != http.StatusCreated {
@@ -544,26 +554,43 @@ func publicFileRequest(t *testing.T, mux http.Handler, path string) *httptest.Re
 }
 
 func uploadBody(conversationID int64) map[string]any {
-	return map[string]any{
+	data := []byte("encrypted-file-data")
+	preview := []byte("encrypted-preview-data")
+	clientID := fmt.Sprintf("file-test-client-%016d", atomic.AddUint64(&testFileClientSequence, 1))
+	body := map[string]any{
 		"conversation_id":        conversationID,
 		"encrypted_name":         "encrypted-file-name",
 		"encrypted_mime":         "encrypted-file-mime",
-		"encrypted_data":         base64.StdEncoding.EncodeToString([]byte("encrypted-file-data")),
+		"encrypted_data":         base64.StdEncoding.EncodeToString(data),
 		"iv":                     "file-iv-123",
-		"encrypted_preview_data": base64.StdEncoding.EncodeToString([]byte("encrypted-preview-data")),
+		"encrypted_preview_data": base64.StdEncoding.EncodeToString(preview),
 		"preview_iv":             "preview-iv-123",
 		"expires_in_seconds":     0,
+		"key_epoch":              1,
+		"ciphertext_sha256":      messageauth.SHA256(data),
+		"preview_sha256":         messageauth.SHA256(preview),
 	}
+	for key, value := range testsupport.Sign(messageauth.Payload{Version: 1, Kind: "file", ConversationID: strconv.FormatInt(conversationID, 10), SenderID: "1",
+		ClientMessageID: clientID, Revision: 1, KeyEpoch: 1, IV: "file-iv-123", EncryptedName: "encrypted-file-name",
+		EncryptedMIME: "encrypted-file-mime", CiphertextSHA256: messageauth.SHA256(data), PreviewSHA256: messageauth.SHA256(preview)}) {
+		body[key] = value
+	}
+	return body
 }
+
+var testFileClientSequence uint64
 
 func registerFileUser(t *testing.T, handler *auth.Handler, username string) *http.Cookie {
 	t.Helper()
 	payload := map[string]string{
 		"username": username, "display_name": username, "password": "Password123!",
 		"public_key":            `{"kty":"EC","x":"public-key-placeholder"}`,
-		"encrypted_private_key": `{"iv":"private-iv","data":"encrypted-private-key"}`,
-		"crypto_salt":           "crypto-salt-value",
+		"encrypted_private_key": `{"v":2,"kdf":{"name":"argon2id","version":19,"memory_kib":32768,"iterations":3,"parallelism":1,"hash_length":32,"salt":"AAAAAAAAAAAAAAAAAAAAAA=="},"cipher":{"name":"AES-GCM","iv":"AAAAAAAAAAAAAAAA"},"data":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`,
+		"crypto_salt":           "argon2id-v2",
+		"signing_public_key":    `{"kty":"EC","crv":"P-256","x":"P1xgrChMoYjH2ksx1_ths9hjWlAUzXvm1iGGKf9wi34","y":"tijzBhBWCeQyQZADxQdzy0iJzba2WLy16qh0vHHsFRw"}`,
+		"signing_key_id":        "123a50372c29870ea73e4f730448f1d936620091eae3642c6f54b5b0377bbaa6",
 	}
+	testsupport.AddIdentityStrings(payload)
 	data, _ := json.Marshal(payload)
 	request := httptest.NewRequest(http.MethodPost, "/api/register", bytes.NewReader(data))
 	request.Header.Set("Content-Type", "application/json")

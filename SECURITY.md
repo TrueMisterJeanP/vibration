@@ -51,6 +51,19 @@ Vibration cherche à minimiser la confiance accordée au serveur :
 - Community utilise par défaut un stockage local SQLite ;
 - aucun service d’analytique ou de télémétrie hébergé par Vibration n’est requis.
 
+Depuis la version Community 1.0.9 :
+
+- les nouvelles enveloppes d’identité sont protégées par Argon2id ; les comptes
+  PBKDF2 existants sont migrés après saisie réussie de leur phrase, sans
+  changement de clé ECDH ni exigence de nouvelle phrase ;
+- chaque nouveau texte, fichier, sondage et évènement est signé avec une clé
+  ECDSA P-256 distincte de la clé ECDH ;
+- le serveur vérifie la signature avant d’accepter l’objet et le client la
+  vérifie avant de déchiffrer ou télécharger son contenu ;
+- les clés de signature participent au registre local persistant d’identité ;
+- les messages historiques sans signature restent lisibles et sont signalés
+  comme tels.
+
 Ce modèle ne supprime pas toutes les frontières de confiance. L’opérateur
 contrôle toujours :
 
@@ -59,6 +72,12 @@ contrôle toujours :
 - les sauvegardes et permissions du système de fichiers ;
 - les fichiers de base de données et les journaux serveur ;
 - les secrets applicatifs et les clefs VAPID.
+
+Il n’existe pas encore de forward secrecy par message. Une compromission future
+d’une clé ECDH statique peut donc exposer l’historique des conversations privées.
+La version Web reste également dépendante du code JavaScript fourni par son
+serveur ; un client installé et signé est nécessaire pour réduire cette
+frontière de confiance.
 
 ## Liste de durcissement
 

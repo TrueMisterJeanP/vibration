@@ -1,11 +1,13 @@
 package messages
 
 import (
+	"database/sql"
 	"net/http"
 	"time"
 
 	"chat-pwa-go/internal/auth"
 	"chat-pwa-go/internal/httpx"
+	"chat-pwa-go/internal/messageauth"
 )
 
 const (
@@ -26,6 +28,7 @@ func (h *Handler) CreatePoll(w http.ResponseWriter, r *http.Request) {
 		OptionCount      int    `json:"option_count"`
 		ExpiresInSeconds int64  `json:"expires_in_seconds"`
 		KeyEpoch         int64  `json:"key_epoch"`
+		messageauth.Input
 	}
 	if !httpx.Decode(w, r, &input) {
 		return
@@ -39,7 +42,7 @@ func (h *Handler) CreatePoll(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid poll expiration")
 		return
 	}
-	message, err := h.insert(conversationID, userID, &input.EncryptedContent, input.IV, input.KeyEpoch, nil, nil, pollExpiresAt, input.OptionCount, nil)
+	message, err := h.insert(conversationID, userID, &input.EncryptedContent, input.IV, input.KeyEpoch, nil, nil, pollExpiresAt, input.OptionCount, nil, "poll", input.Input)
 	if err != nil {
 		h.writeCreateError(w, err)
 		return
@@ -62,6 +65,7 @@ func (h *Handler) UpdatePoll(w http.ResponseWriter, r *http.Request) {
 		IV               string `json:"iv"`
 		OptionCount      int    `json:"option_count"`
 		ExpiresInSeconds int64  `json:"expires_in_seconds"`
+		messageauth.Input
 	}
 	if !httpx.Decode(w, r, &input) {
 		return
@@ -76,11 +80,24 @@ func (h *Handler) UpdatePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID := auth.UserID(r)
-	var conversationID int64
-	err = h.DB.QueryRow(`SELECT m.conversation_id FROM messages m
-		WHERE m.id=? AND m.sender_id=? AND EXISTS(SELECT 1 FROM poll_options po WHERE po.message_id=m.id)`, messageID, userID).Scan(&conversationID)
+	var conversationID, keyEpoch, oldRevision int64
+	var replyTo *int64
+	var oldClientID sql.NullString
+	err = h.DB.QueryRow(`SELECT m.conversation_id,m.key_epoch,m.reply_to,m.client_message_id,m.revision FROM messages m
+		WHERE m.id=? AND m.sender_id=? AND EXISTS(SELECT 1 FROM poll_options po WHERE po.message_id=m.id)`, messageID, userID).
+		Scan(&conversationID, &keyEpoch, &replyTo, &oldClientID, &oldRevision)
 	if err != nil || !h.isMember(conversationID, userID) {
 		httpx.Error(w, http.StatusNotFound, "poll not found")
+		return
+	}
+	if !validNextSignature(oldClientID, oldRevision, input.Input) {
+		httpx.Error(w, http.StatusBadRequest, "invalid message signature")
+		return
+	}
+	payload := messageauth.NewPayload("poll", conversationID, userID, input.Input, keyEpoch, replyTo, input.EncryptedContent, input.IV)
+	payload.OptionCount = input.OptionCount
+	if err := h.verifyMessageSignature(h.DB, userID, input.Input, payload); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid message signature")
 		return
 	}
 	tx, err := h.DB.Begin()
@@ -100,8 +117,8 @@ func (h *Handler) UpdatePoll(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	result, err := tx.Exec(`UPDATE messages SET encrypted_content=?,iv=?,poll_expires_at=?,updated_at=? WHERE id=? AND sender_id=?`,
-		input.EncryptedContent, input.IV, pollExpiresAt, now, messageID, userID)
+	result, err := tx.Exec(`UPDATE messages SET encrypted_content=?,iv=?,poll_expires_at=?,updated_at=?,client_message_id=?,signature_version=?,signing_key_id=?,signature=?,message_kind='poll',revision=? WHERE id=? AND sender_id=?`,
+		input.EncryptedContent, input.IV, pollExpiresAt, now, input.ClientMessageID, input.SignatureVersion, input.SigningKeyID, input.Signature, input.Revision, messageID, userID)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "poll update failed")
 		return

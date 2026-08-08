@@ -21,8 +21,9 @@ Vibration Community est une application web/PWA auto-hébergeable :
 
 L’export Community remplace `package.json` et `package-lock.json` par les
 fichiers dédiés `editions/community.package.json` et
-`editions/community.package-lock.json`. Le paquet exporté n’a aucune dépendance
-npm d’exécution.
+`editions/community.package-lock.json`. Le seul paquet npm déclaré est
+`hash-wasm`, utilisé pour reproduire et tester le module Argon2id déjà embarqué
+dans `web/vendor/` ; le navigateur ne contacte aucun CDN.
 
 ## Dépendances d’exécution
 
@@ -83,12 +84,13 @@ Les bibliothèques navigateur embarquées dans Community sont :
 | ExcelJS | `4.4.0` | `web/vendor/exceljs/` | lecture et prévisualisation des classeurs Excel `.xlsx` | MIT |
 | pptx-preview | `1.0.7` | `web/vendor/pptx-preview/` | prévisualisation des présentations PowerPoint `.pptx` | ISC |
 | html2canvas | `1.4.1` | `web/vendor/html2canvas/` | capture fidèle des premières pages Office dans Firefox et Safari | MIT |
+| hash-wasm | `4.12.0` | `web/vendor/hash-wasm/` | dérivation Argon2id des enveloppes d’identité v2 | MIT |
 
 ## Dépendances de développement
 
-L’export Community n’a aucune dépendance npm. `npm ci` installe donc un graphe
-vide et reste présent dans la CI pour conserver un point d’entrée stable avant
-`npm run check:js`.
+L’export Community fixe `hash-wasm` à la version `4.12.0`. `npm ci` permet de
+contrôler cette provenance et d’exécuter le test cryptographique Node ; le code
+servi au navigateur demeure la copie locale versionnée sous `web/vendor/`.
 
 L’arborescence de travail Enterprise peut contenir des outils locaux
 supplémentaires, notamment les paquets Tauri et le wrapper `src-tauri/`. Ces

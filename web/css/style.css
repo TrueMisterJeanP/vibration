@@ -296,6 +296,8 @@ html.ios-pwa-splash-positioned #startup-splash svg { visibility: visible; }
 .message-avatar { width: 1.55rem; height: 1.55rem; flex: 0 0 1.55rem; display: grid; place-items: center; overflow: hidden; border-radius: 50%; background: #1b5260; color: #a9fff4; font-size: .65rem; font-weight: 700; }
 .message-avatar img { display: block; width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
 .message-author { display: block; color: #8cecdf; font-size: .72rem; }
+.message-authentication { border: 1px solid currentColor; border-radius: 999px; padding: .05rem .32rem; color: var(--muted); font-size: .58rem; line-height: 1.2; }
+.message-authentication.invalid { color: #ff8a8a; }
 .message time { display: block; text-align: right; color: rgb(233 245 244 / .58); font-size: .68rem; }
 .message time.read { color: #74e9ff; }
 .file-download-button { margin-left: auto; width: 2rem; height: 2rem; padding: 0; border-radius: 50%; background: rgb(255 255 255 / .12); color: var(--text); font-size: 1.15rem; line-height: 1; }
