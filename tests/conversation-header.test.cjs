@@ -11,12 +11,16 @@ const avatarPosition = html.indexOf('id="chat-avatar"');
 const titlePosition = html.indexOf('id="chat-title"');
 const mobileButtonStart = html.indexOf('id="open-sidebar-logo"');
 const mobileButtonEnd = html.indexOf("</button>", mobileButtonStart);
+const callBannerStart = html.indexOf('id="call-banner"');
+const callBannerEnd = html.indexOf('id="composer"', callBannerStart);
+const callBanner = html.slice(callBannerStart, callBannerEnd);
 assert.ok(avatarPosition >= 0, "the conversation header avatar must exist");
 assert.ok(avatarPosition < titlePosition, "the avatar must appear before the conversation name");
 assert.match(html, /id="chat-title"[\s\S]*id="chat-description"/);
 assert.match(html, /button id="close-sidebar-logo"[\s\S]*aria-controls="profile-dialog"/);
 assert.match(html, /id="open-sidebar-logo"[\s\S]*header-conversation-initial/);
 assert.match(html, /id="group-avatar-preview" class="profile-avatar-preview"/);
+assert.match(callBanner, /class="call-banner-status"[\s\S]*id="call-banner-label"[\s\S]*id="call-turn-indicator"/);
 assert.doesNotMatch(
   html.slice(mobileButtonStart, mobileButtonEnd),
   /brand-mark/,
@@ -24,6 +28,12 @@ assert.doesNotMatch(
 );
 
 assert.match(app, /function renderConversationHeader\(conversation, display\)/);
+assert.match(app, /function pendingCallLabel\(media\)\s*\{\s*return t\(media === "video" \? "Appel vidéo en attente" : "Appel audio en attente"\);/);
+assert.match(app, /function activeCallLabel\(media\)\s*\{\s*return t\(media === "video" \? "Appel vidéo en cours" : "Appel audio en cours"\);/);
+assert.match(app, /callState\.outgoing\s*\? `\$\{pendingCallLabel\(callState\.media\)\}\.\`/);
+assert.match(app, /: `\$\{activeCallLabel\(callState\.media\)\}\.\`/);
+assert.match(app, /: outgoing\s*\? pendingCallLabel\(state\.call\.media\)/);
+assert.match(app, /: `\$\{activeCallLabel\(state\.call\.media\)\}\$\{groupSuffix\}`/);
 assert.match(app, /const openProfileDialog = async \(\) =>/);
 assert.match(app, /document\.querySelector\("#close-sidebar-logo"\)\.onclick = openProfileDialog/);
 assert.match(app, /function renderPersonalNoteIcon\(container\)/);
@@ -86,6 +96,7 @@ assert.match(css, /\.brand-logo-button\.has-conversation-avatar\s*\{[^}]*backgro
 assert.match(css, /\.avatar\s*\{[^}]*background: var\(--avatar-bg\);[^}]*color: var\(--avatar-fg\);/);
 assert.match(css, /\.profile-avatar-preview\s*\{[^}]*background: var\(--avatar-bg\);/);
 assert.match(css, /\.group-avatar-preview-icon\s*\{[^}]*stroke: currentColor;/);
+assert.match(css, /\.call-banner-status\s*\{[^}]*display: inline-flex;[^}]*align-items: center;[^}]*justify-content: flex-start;[^}]*gap: \.45rem;/);
 assert.match(app, /function renderGroupAvatarPreview\(container, avatar\)/);
 assert.match(css, /:root\[data-theme="light"\]\s*\{ --avatar-bg: #c9e7e4; --avatar-fg: #075e57; \}/);
 assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.chat-conversation-avatar \{ display: none; \}/);

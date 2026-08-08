@@ -1,4 +1,4 @@
-const CACHE = "chat-pwa-go-v277";
+const CACHE = "chat-pwa-go-v282";
 const SHELL = [
   "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=passphrase-strength-v276",
   "/js/app.js?v=identity-v2", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios17-pdf-v199", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=macos-titlebar-v251",

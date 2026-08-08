@@ -225,16 +225,10 @@ func (h *Handler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid group")
 		return
 	}
-	for id := range set {
-		if id != ownerID && !h.hasAcceptedContact(ownerID, id) {
-			httpx.Error(w, http.StatusForbidden, "contact acceptance required")
-			return
-		}
-	}
 	var remoteMembers int
 	for id := range set {
 		var remote bool
-		if h.DB.QueryRow(`SELECT is_remote FROM users WHERE id=?`, id).Scan(&remote) != nil {
+		if h.DB.QueryRow(`SELECT is_remote FROM users WHERE id=? AND is_banned=0`, id).Scan(&remote) != nil {
 			httpx.Error(w, http.StatusNotFound, "user not found")
 			return
 		}

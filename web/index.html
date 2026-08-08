@@ -89,8 +89,10 @@
       </div>
       <div id="thread-typing-label" aria-live="polite" hidden></div>
       <div id="call-banner" class="call-banner" hidden>
-        <span id="call-banner-label"></span>
-        <span id="call-turn-indicator" class="call-turn-indicator" hidden></span>
+        <span class="call-banner-status">
+          <span id="call-banner-label"></span>
+          <span id="call-turn-indicator" class="call-turn-indicator" hidden></span>
+        </span>
         <audio id="remote-call-audio" autoplay playsinline controls hidden></audio>
         <div id="remote-call-audio-peers" class="call-audio-peers" hidden></div>
         <div id="call-video-stage" class="call-video-stage" hidden>
@@ -324,6 +326,8 @@
     </section>
     <label>Nom du groupe<input id="group-name" required maxlength="80"></label>
     <label>Description<textarea id="group-description" rows="3" maxlength="280" placeholder="Décrivez le groupe"></textarea></label>
+    <label>Ajouter un membre par nom d’utilisateur<input id="group-user-search" minlength="2" autocomplete="off" placeholder="alice"></label>
+    <div id="group-user-results" class="picker-list"></div>
     <fieldset><legend>Membres</legend><div id="group-members" class="picker-list"></div></fieldset>
     <button type="submit">Créer le groupe chiffré</button>
   </form></dialog>
@@ -462,6 +466,13 @@
           </dd>
         </div>
       </dl>
+      <section id="conversation-info-members-section" class="conversation-info-members" aria-labelledby="conversation-info-members-title" hidden>
+        <h4 id="conversation-info-members-title">
+          Membres
+          <span id="conversation-info-members-count" class="conversation-info-members-count">0</span>
+        </h4>
+        <ul id="conversation-info-members" class="conversation-info-member-list" aria-live="polite"></ul>
+      </section>
     </section>
   </dialog>
   <dialog id="action-dialog">

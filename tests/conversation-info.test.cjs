@@ -17,6 +17,7 @@ assert.match(html, /id="conversation-info-description"/);
 assert.match(html, /id="conversation-info-fingerprint"/);
 assert.match(html, /id="conversation-info-trust-status"/);
 assert.match(html, /id="conversation-info-verify"/);
+assert.match(html, /id="conversation-info-members-section"[\s\S]*id="conversation-info-members-count"[\s\S]*id="conversation-info-members"/);
 
 assert.match(app, /async function openCurrentConversationInfo\(\)/);
 assert.match(app, /members\.find\(\(member\) => member\.user_id !== state\.me\.id\)/);
@@ -24,6 +25,12 @@ assert.match(app, /peer\?\.federation_instance_url[\s\S]*conversation\.federatio
 assert.match(app, /elements\.conversationInfoUsernameRow\.hidden = isGroup/);
 assert.match(app, /elements\.conversationInfoAddressRow\.hidden = isGroup/);
 assert.match(app, /elements\.conversationInfoFingerprintRow\.hidden = isGroup/);
+assert.match(app, /function renderConversationInfoMembers\(members\)/);
+assert.match(app, /elements\.conversationInfoMembersSection\.hidden = !isGroup/);
+assert.match(app, /if \(isGroup\) renderConversationInfoMembers\(members\)/);
+assert.match(app, /member\.role === "owner"[\s\S]*t\("Propriétaire"\)/);
+assert.match(app, /member\.role === "pending"[\s\S]*t\("Invitation en attente"\)/);
+assert.match(app, /sameID\(member\.user_id, state\.me\.id\)[\s\S]*t\("Vous"\)/);
 assert.match(app, /markIdentityVerified\(identity, current\.record\?\.fingerprint\)/);
 assert.match(app, /function conversationContactAddress\(username, instance\)/);
 assert.match(app, /return `\$\{normalizedUsername\}@\$\{normalizedInstance\}`/);
@@ -35,6 +42,10 @@ assert.match(app, /elements\.chatIdentity\.addEventListener\("keydown"/);
 assert.match(css, /\.conversation-info-dialog\s*\{/);
 assert.match(css, /\.conversation-info-avatar\s*\{/);
 assert.match(css, /\.conversation-info-details\s*\{/);
+assert.match(css, /\.conversation-info-member-list\s*\{/);
+assert.match(css, /\.conversation-info-member-list\s*\{[^}]*max-height:[^}]*overflow-y:\s*auto/);
+assert.match(css, /\.conversation-info-member-avatar\s*\{/);
+assert.match(css, /\.picker-list\s*\{[^}]*max-height:[^}]*overflow-y:\s*auto/);
 assert.match(css, /\.identity-fingerprint\s*\{/);
 
 console.log("Conversation info: contact/group profile dialog wiring verified");

@@ -31,6 +31,14 @@ async function load(language) {
     pt: ["As minhas notas", "Mensagens e ficheiros pessoais", "1 mensagem não lida", "3 mensagens não lidas", "Identidade pessoal não encontrada."],
     de: ["Meine Notizen", "Persönliche Nachrichten und Dateien", "1 ungelesene Nachricht", "3 ungelesene Nachrichten", "Persönliche Identität nicht gefunden."],
   };
+  const expectedCallStatuses = {
+    en: ["Audio call pending", "Video call pending", "Audio call in progress", "Video call in progress"],
+    fr: ["Appel audio en attente", "Appel vidéo en attente", "Appel audio en cours", "Appel vidéo en cours"],
+    es: ["Llamada de audio en espera", "Videollamada en espera", "Llamada de audio en curso", "Videollamada en curso"],
+    it: ["Chiamata audio in attesa", "Videochiamata in attesa", "Chiamata audio in corso", "Videochiamata in corso"],
+    pt: ["Chamada de áudio em espera", "Videochamada em espera", "Chamada de áudio em curso", "Videochamada em curso"],
+    de: ["Audioanruf ausstehend", "Videoanruf ausstehend", "Audioanruf läuft", "Videoanruf läuft"],
+  };
   const expectedShareErrors = {
     en: ["This shared file is unavailable.", "This shared file is no longer available.", "Unable to verify this sharing link.", "Invalid sharing key.", "The sharing key cannot decrypt this file."],
     fr: ["Ce fichier partagé n’est pas disponible.", "Ce fichier partagé n’est plus disponible.", "Impossible de vérifier ce lien de partage.", "Clé de partage invalide.", "La clé de partage ne permet pas de déchiffrer ce fichier."],
@@ -79,6 +87,12 @@ async function load(language) {
       i18n.t("{count} messages non lus", { count: 3 }),
       i18n.t("Identité personnelle introuvable."),
     ], expectedNotes[language]);
+    assert.deepEqual([
+      i18n.t("Appel audio en attente"),
+      i18n.t("Appel vidéo en attente"),
+      i18n.t("Appel audio en cours"),
+      i18n.t("Appel vidéo en cours"),
+    ], expectedCallStatuses[language]);
     assert.deepEqual([
       i18n.t("Ce fichier partagé n’est pas disponible."),
       i18n.t("Ce fichier partagé n’est plus disponible."),

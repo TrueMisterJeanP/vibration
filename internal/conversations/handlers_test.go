@@ -423,6 +423,43 @@ func TestGroupMemberLeavesAndOwnerDeletesGroup(t *testing.T) {
 	assertConversationCount(t, db, formatID(id), 0)
 }
 
+func TestCreateGroupCanInviteUserWithoutPrivateContact(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	handler := &Handler{DB: db, Hub: testHub{}}
+	owner := registerUser(t, authHandler, "group_search_owner")
+	registerUser(t, authHandler, "group_search_invitee")
+	mux := conversationMux(authHandler, handler)
+
+	created := request(t, mux, http.MethodPost, "/api/conversations/group", map[string]any{
+		"encrypted_title": "encrypted-group-title",
+		"member_ids":      []int64{2},
+		"encrypted_keys": map[string]string{
+			"1": "encrypted-owner-key",
+			"2": "encrypted-invitee-key",
+		},
+	}, owner)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create group without private contact status=%d body=%s", created.Code, created.Body.String())
+	}
+	var result map[string]int64
+	if err := json.Unmarshal(created.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	var role string
+	if err := db.QueryRow(`SELECT role FROM conversation_members WHERE conversation_id=? AND user_id=2`, result["id"]).Scan(&role); err != nil || role != "pending" {
+		t.Fatalf("invitee role=%q err=%v", role, err)
+	}
+	var contacts int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM contacts`).Scan(&contacts); err != nil || contacts != 0 {
+		t.Fatalf("group invitation must not create a private contact, contacts=%d err=%v", contacts, err)
+	}
+}
+
 func TestAddGroupMemberRequiresKeyRotation(t *testing.T) {
 	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
 	if err != nil {

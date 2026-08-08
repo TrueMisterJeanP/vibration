@@ -77,7 +77,7 @@ const BACKGROUND_THUMBNAIL_PRELOAD_BUDGET_BYTES = 4 * 1024 * 1024;
 const BACKGROUND_PRELOAD_TTL_MS = 2 * 60 * 1000;
 const BACKGROUND_PRELOAD_NETWORK_FRESH_MS = 15 * 1000;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "identity-signatures-v277";
+const APP_BUILD = "translated-call-status-v282";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 
 window.VIBRATION_BUILD = APP_BUILD;
@@ -140,6 +140,7 @@ const state = {
 
 let profileAvatar = null;
 let groupAvatar = null;
+const groupInvitedUsers = new Map();
 let pdfJSModule;
 let ios17PDFJSModule;
 let conversationRenderVersion = 0;
@@ -183,6 +184,9 @@ const elements = {
   conversationInfoFingerprint: document.querySelector("#conversation-info-fingerprint"),
   conversationInfoTrustStatus: document.querySelector("#conversation-info-trust-status"),
   conversationInfoVerify: document.querySelector("#conversation-info-verify"),
+  conversationInfoMembersSection: document.querySelector("#conversation-info-members-section"),
+  conversationInfoMembersCount: document.querySelector("#conversation-info-members-count"),
+  conversationInfoMembers: document.querySelector("#conversation-info-members"),
   title: document.querySelector("#chat-title"),
   description: document.querySelector("#chat-description"),
   typing: document.querySelector("#typing-label"),
@@ -411,6 +415,27 @@ function actionDialog({
   });
 }
 
+function appendGroupUserSearchResult(results, user, onInvite) {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "picker-row";
+  const identity = document.createElement("span");
+  const displayName = document.createElement("strong");
+  displayName.textContent = user.display_name || user.username;
+  const description = document.createElement("small");
+  description.className = "contact-description";
+  description.textContent = user.description || "";
+  description.hidden = !user.description;
+  const username = document.createElement("small");
+  username.textContent = `@${user.username}`;
+  identity.append(displayName, description, username);
+  const action = document.createElement("span");
+  action.textContent = t("Inviter");
+  row.append(identity, action);
+  row.onclick = onInvite;
+  results.append(row);
+}
+
 function groupEditDialog({ name, description, avatar, contacts, members }) {
   const dialog = document.querySelector("#group-edit-dialog");
   const form = document.querySelector("#group-edit-form");
@@ -450,21 +475,13 @@ function groupEditDialog({ name, description, avatar, contacts, members }) {
       const users = await api(`/api/users/search?q=${encodeURIComponent(query)}`);
       const currentIDs = new Set([...members.map((member) => member.user_id), ...selectedIDs, ...extraUsers.keys()]);
       for (const user of users.filter((item) => item.id !== state.me.id && !currentIDs.has(item.id))) {
-        const row = document.createElement("button");
-        row.type = "button";
-        row.className = "picker-row";
-        const description = user.description
-          ? `<small class="contact-description">${escapeText(user.description)}</small>`
-          : "";
-        row.innerHTML = `<span><strong>${escapeText(user.display_name || user.username)}</strong>${description}<small>@${escapeText(user.username)}</small></span><span>Inviter</span>`;
-        row.onclick = () => {
+        appendGroupUserSearchResult(userResults, user, () => {
           extraUsers.set(user.id, user);
           selectedIDs.add(user.id);
           userSearch.value = "";
           userResults.replaceChildren();
           renderMembers();
-        };
-        userResults.append(row);
+        });
       }
       if (!userResults.children.length) {
         const empty = document.createElement("p");
@@ -1023,6 +1040,7 @@ function bindUI() {
   bindExpirationDialog();
   elements.input.addEventListener("input", sendTyping);
   document.querySelector("#contact-search").addEventListener("input", debounce(searchContacts, 300));
+  document.querySelector("#group-user-search").addEventListener("input", debounce(searchNewGroupMembers, 300));
   document.querySelector("#group-form").addEventListener("submit", createGroup);
   document.querySelector("#notification-button").onclick = async (event) => {
     const button = event.currentTarget;
@@ -1453,6 +1471,57 @@ function setConversationInfoTrigger(conversation) {
   }
 }
 
+function renderConversationInfoMembers(members) {
+  const sortedMembers = [...(members || [])].sort((left, right) => {
+    const roleOrder = (member) => member.role === "owner" ? 0 : member.role === "pending" ? 2 : 1;
+    const roleDifference = roleOrder(left) - roleOrder(right);
+    if (roleDifference) return roleDifference;
+    const leftName = left.display_name || left.remote_username || left.username || "";
+    const rightName = right.display_name || right.remote_username || right.username || "";
+    return leftName.localeCompare(rightName, locale, { sensitivity: "base" });
+  });
+  elements.conversationInfoMembersCount.textContent = String(sortedMembers.length);
+  elements.conversationInfoMembers.replaceChildren();
+
+  for (const member of sortedMembers) {
+    const item = document.createElement("li");
+    item.className = "conversation-info-member";
+
+    const avatar = document.createElement("span");
+    avatar.className = "conversation-info-member-avatar";
+    avatar.setAttribute("aria-hidden", "true");
+    const displayName = member.display_name || member.remote_username || member.username || t("Non renseigné");
+    replaceAvatarContent(avatar, member.avatar, displayName.slice(0, 1).toUpperCase());
+
+    const identity = document.createElement("span");
+    identity.className = "conversation-info-member-identity";
+    const name = document.createElement("strong");
+    name.textContent = displayName;
+    const username = member.remote_username || member.username || "";
+    const address = document.createElement("small");
+    address.textContent = member.is_remote
+      ? conversationContactAddress(username, member.federation_instance_url)
+      : (username ? `@${String(username).replace(/^@+/, "")}` : t("Non renseigné"));
+    identity.append(name, address);
+
+    const statuses = document.createElement("span");
+    statuses.className = "conversation-info-member-statuses";
+    const statusLabels = [];
+    if (member.role === "owner") statusLabels.push(t("Propriétaire"));
+    if (member.role === "pending") statusLabels.push(t("Invitation en attente"));
+    if (sameID(member.user_id, state.me.id)) statusLabels.push(t("Vous"));
+    for (const label of statusLabels) {
+      const status = document.createElement("small");
+      status.className = "conversation-info-member-status";
+      status.textContent = label;
+      statuses.append(status);
+    }
+
+    item.append(avatar, identity, statuses);
+    elements.conversationInfoMembers.append(item);
+  }
+}
+
 async function openCurrentConversationInfo() {
   const conversation = state.current;
   if (!conversation || conversation.is_personal || !["private", "group"].includes(conversation.type)) return;
@@ -1473,6 +1542,9 @@ async function openCurrentConversationInfo() {
   elements.conversationInfoFingerprint.textContent = "—";
   elements.conversationInfoTrustStatus.textContent = "";
   elements.conversationInfoVerify.hidden = true;
+  elements.conversationInfoMembersSection.hidden = !isGroup;
+  elements.conversationInfoMembersCount.textContent = "0";
+  elements.conversationInfoMembers.replaceChildren();
   replaceAvatarContent(elements.conversationInfoAvatar, null, isGroup ? "G" : "?");
   if (!elements.conversationInfoDialog.open) elements.conversationInfoDialog.showModal();
   elements.conversationInfoTitle.setAttribute("tabindex", "-1");
@@ -1507,6 +1579,7 @@ async function openCurrentConversationInfo() {
     display.avatar,
     conversationAvatarFallback(display, conversation),
   );
+  if (isGroup) renderConversationInfoMembers(members);
   if (peer) {
     state.conversationInfoIdentity = identityTrustInput(peer);
     await refreshConversationIdentityTrust();
@@ -2525,7 +2598,9 @@ async function renderConversations({ freshMembers = false } = {}) {
       subtitle.textContent = `${callLabel(callState.media)} entrant. Touchez ici pour répondre.`;
       subtitle.classList.add("call-description");
     } else if (callState) {
-      subtitle.textContent = `${callLabel(callState.media)} ${callState.outgoing ? "en attente" : "en cours"}.`;
+      subtitle.textContent = callState.outgoing
+        ? `${pendingCallLabel(callState.media)}.`
+        : `${activeCallLabel(callState.media)}.`;
       subtitle.classList.add("call-description");
     } else {
       subtitle.textContent = preview;
@@ -3381,6 +3456,14 @@ function callHistoryLabel(media) {
   return media === "video" ? "Appel vidéo" : "Appel audio";
 }
 
+function pendingCallLabel(media) {
+  return t(media === "video" ? "Appel vidéo en attente" : "Appel audio en attente");
+}
+
+function activeCallLabel(media) {
+  return t(media === "video" ? "Appel vidéo en cours" : "Appel audio en cours");
+}
+
 function configureCallVideoElement(video) {
   video.autoplay = true;
   video.playsInline = true;
@@ -3897,10 +3980,10 @@ function updateCallUI() {
   elements.callBannerLabel.textContent = incoming
     ? `${callLabel(state.call.media)} entrant de ${currentCallTitle()}`
     : outgoing
-      ? `${callLabel(state.call.media)} en attente`
+      ? pendingCallLabel(state.call.media)
       : connecting
         ? `${callLabel(state.call.media)} en connexion`
-        : `${callLabel(state.call.media)} en cours${groupSuffix}`;
+        : `${activeCallLabel(state.call.media)}${groupSuffix}`;
   syncCallRouteIndicator();
   elements.callOpenConversationButton.hidden = true;
   elements.callAcceptButton.hidden = !(currentConversation && incoming);
@@ -8041,7 +8124,7 @@ function renderGroupMemberPicker(list, contacts, options = {}) {
       userID: user.id,
       username: user.username,
       displayName: user.display_name || user.username,
-      description: user.description || "Invitation sans contact privé",
+      description: user.description || t("Invitation sans contact privé"),
       accepted: false,
     });
   }
@@ -8080,8 +8163,63 @@ function renderGroupMemberPicker(list, contacts, options = {}) {
   }
 }
 
+function selectedNewGroupMemberIDs() {
+  return new Set(
+    [...document.querySelectorAll("#group-members input:checked")]
+      .map((input) => Number(input.value))
+      .filter(Boolean),
+  );
+}
+
+function renderNewGroupMembers(selectedIDs = selectedNewGroupMemberIDs()) {
+  renderGroupMemberPicker(document.querySelector("#group-members"), state.contacts, {
+    selectedIDs,
+    extraUsers: [...groupInvitedUsers.values()],
+  });
+}
+
+async function searchNewGroupMembers(event) {
+  const input = event.target;
+  const query = input.value.trim();
+  const results = document.querySelector("#group-user-results");
+  results.replaceChildren();
+  if (query.length < 2) return;
+  try {
+    const users = await api(`/api/users/search?q=${encodeURIComponent(query)}`);
+    if (input.value.trim() !== query) return;
+    const listedIDs = new Set([
+      ...state.contacts
+        .filter((contact) => contact.status === "accepted")
+        .map((contact) => contact.contact_user_id),
+      ...groupInvitedUsers.keys(),
+    ]);
+    const availableUsers = users.filter((user) => !sameID(user.id, state.me.id) && !listedIDs.has(user.id));
+    for (const user of availableUsers) {
+      appendGroupUserSearchResult(results, user, () => {
+        const selectedIDs = selectedNewGroupMemberIDs();
+        selectedIDs.add(user.id);
+        groupInvitedUsers.set(user.id, user);
+        input.value = "";
+        results.replaceChildren();
+        renderNewGroupMembers(selectedIDs);
+      });
+    }
+    if (!availableUsers.length) {
+      const empty = document.createElement("p");
+      empty.className = "picker-empty";
+      empty.textContent = t("Aucun nouveau membre trouvé.");
+      results.append(empty);
+    }
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Recherche utilisateur impossible."), "error");
+  }
+}
+
 async function openGroupDialog() {
   groupAvatar = null;
+  groupInvitedUsers.clear();
+  document.querySelector("#group-user-search").value = "";
+  document.querySelector("#group-user-results").replaceChildren();
   updateGroupAvatarPreview();
   const [contacts, conversations] = await Promise.all([
     api("/api/contacts"),
@@ -8089,7 +8227,7 @@ async function openGroupDialog() {
   ]);
   state.contacts = contacts;
   state.conversations = conversations;
-  renderGroupMemberPicker(document.querySelector("#group-members"), contacts);
+  renderNewGroupMembers(new Set());
   document.querySelector("#group-dialog").showModal();
 }
 
@@ -8098,7 +8236,7 @@ async function createGroup(event) {
   const button = event.currentTarget.querySelector('button[type="submit"]');
   const name = document.querySelector("#group-name").value.trim();
   const description = document.querySelector("#group-description").value.trim();
-  const selectedIDs = [...document.querySelectorAll("#group-members input:checked")].map((input) => Number(input.value));
+  const selectedIDs = [...selectedNewGroupMemberIDs()];
   if (!name || !selectedIDs.length) {
     toast("Sélectionnez au moins un membre.", "error");
     return;
@@ -8106,11 +8244,18 @@ async function createGroup(event) {
   setBusy(button, true);
   try {
     const groupKey = await generateGroupKey();
+    const selectedMembers = selectedIDs.map((userID) => {
+      const contact = state.contacts.find((item) => (
+        item.status === "accepted" && sameID(item.contact_user_id, userID)
+      ));
+      return contact
+        ? { ...contact, id: contact.contact_user_id }
+        : groupInvitedUsers.get(userID);
+    });
+    if (selectedMembers.some((member) => !member)) throw new Error("Utilisateur introuvable.");
     const members = [
       state.me,
-      ...state.contacts
-        .filter((contact) => contact.status === "accepted" && selectedIDs.includes(contact.contact_user_id))
-        .map((contact) => ({ ...contact, id: contact.contact_user_id })),
+      ...selectedMembers,
     ];
     const encryptedKeys = {};
     for (const member of members) {
@@ -8124,8 +8269,9 @@ async function createGroup(event) {
           state.me.id,
         );
       } catch {
-        const contact = state.contacts.find((item) => item.contact_user_id === memberID);
-        const identity = memberID === state.me.id ? "votre compte" : contact?.display_name || contact?.username || "ce membre";
+        const identity = memberID === state.me.id
+          ? "votre compte"
+          : member.display_name || member.username || "ce membre";
         throw new Error(`La clé de chiffrement de ${identity} est invalide. Ce compte doit être recréé.`);
       }
     }
@@ -8145,6 +8291,8 @@ async function createGroup(event) {
     document.querySelector("#group-dialog").close();
     event.currentTarget.reset();
     groupAvatar = null;
+    groupInvitedUsers.clear();
+    document.querySelector("#group-user-results").replaceChildren();
     updateGroupAvatarPreview();
     await refreshAll();
     const conversation = state.conversations.find((item) => item.id === result.id);
