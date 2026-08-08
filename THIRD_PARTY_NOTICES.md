@@ -18,6 +18,7 @@ de licence amont lorsque les licences concernées l’exigent.
 | docx-preview | `0.4.0` | `web/vendor/docx-preview/` | Apache-2.0 | Copyright Volodymyr Baydalka et contributeurs. Le texte complet de la licence est conservé dans `web/vendor/docx-preview/LICENSE`. |
 | ExcelJS | `4.4.0` | `web/vendor/exceljs/` | MIT | Copyright Guyon Roche. Le texte complet de la licence est conservé dans `web/vendor/exceljs/LICENSE`. |
 | pptx-preview | `1.0.7` | `web/vendor/pptx-preview/` | ISC | Copyright _hit757_ et contributeurs. Le texte complet de la licence est conservé dans `web/vendor/pptx-preview/LICENSE`. |
+| html2canvas | `1.4.1` | `web/vendor/html2canvas/` | MIT | Copyright Niklas von Hertzen et contributeurs. Le texte complet de la licence est conservé dans `web/vendor/html2canvas/LICENSE`. |
 
 ## Modules Go
 
@@ -62,6 +63,7 @@ pas inclus dans l’export Community.
 - docx-preview : `web/vendor/docx-preview/LICENSE`
 - ExcelJS : `web/vendor/exceljs/LICENSE`
 - pptx-preview : `web/vendor/pptx-preview/LICENSE`
+- html2canvas : `web/vendor/html2canvas/LICENSE`
 - Modules Go : les fichiers de licence font partie du code source des modules
   téléchargés et vérifiés par `go.sum`.
 

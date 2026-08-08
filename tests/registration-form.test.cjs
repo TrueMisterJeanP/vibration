@@ -22,14 +22,19 @@ assert.match(
 );
 assert.match(
   registerForm,
-  /Confirmer la phrase de chiffrement<input name="phrase_confirm" type="password" required minlength="10" autocomplete="off">/,
+  /Confirmer la phrase de chiffrement<input name="phrase_confirm" type="password" required minlength="24" autocomplete="new-password">/,
 );
+assert.match(registerForm, /id="passphrase-strength"[^>]*aria-live="polite"/);
+assert.match(registerForm, /id="generate-passphrase"[^>]*type="button"/);
+assert.match(registerForm, /id="generated-passphrase-panel"[^>]*hidden/);
+assert.match(registerForm, /id="copy-passphrase"[^>]*type="button"/);
 
 const registrationHandler = login.slice(
   login.indexOf('registerForm.addEventListener("submit"'),
   login.indexOf("registerServiceWorker()"),
 );
 const passwordValidationPosition = registrationHandler.indexOf("data.password !== data.password_confirm");
+const passphraseValidationPosition = registrationHandler.indexOf("assessNewPassphrase(data.phrase)");
 const registrationRequestPosition = registrationHandler.indexOf('api("/api/register"');
 
 assert.ok(passwordValidationPosition >= 0, "registration must compare both sign-in passwords");
@@ -39,6 +44,10 @@ assert.ok(
 );
 assert.match(registrationHandler, /t\("Les mots de passe de connexion diffèrent\."\)/);
 assert.match(registrationHandler, /registerForm\.elements\.password_confirm\.focus/);
+assert.ok(passphraseValidationPosition >= 0, "registration must apply the shared passphrase policy");
+assert.ok(passphraseValidationPosition < registrationRequestPosition, "passphrase strength must be checked before registration");
+assert.match(login, /generateStrongPassphrase\(\)/);
+assert.match(login, /navigator\.clipboard\.writeText\(generatedPassphraseOutput\.value\)/);
 assert.match(i18n, /\["Confirmer le mot de passe de connexion", "Confirm sign-in password"/);
 assert.match(i18n, /\["Confirmer la phrase de chiffrement", "Confirm encryption passphrase"/);
 assert.match(i18n, /\["Les mots de passe de connexion diffèrent\.", "The sign-in passwords do not match\."/);

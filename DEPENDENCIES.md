@@ -82,6 +82,7 @@ Les bibliothèques navigateur embarquées dans Community sont :
 | docx-preview | `0.4.0` | `web/vendor/docx-preview/` | prévisualisation des documents Word `.docx` | Apache-2.0 |
 | ExcelJS | `4.4.0` | `web/vendor/exceljs/` | lecture et prévisualisation des classeurs Excel `.xlsx` | MIT |
 | pptx-preview | `1.0.7` | `web/vendor/pptx-preview/` | prévisualisation des présentations PowerPoint `.pptx` | ISC |
+| html2canvas | `1.4.1` | `web/vendor/html2canvas/` | capture fidèle des premières pages Office dans Firefox et Safari | MIT |
 
 ## Dépendances de développement
 

@@ -66,9 +66,10 @@ assert.match(app, /elements\.description\.textContent = display\.description/);
 assert.match(app, /await refreshCurrentConversationHeader\(currentID\)/);
 assert.match(
   socketEventHandler,
-  /if \(event\.profile_updated\) \{\s*await getMembers\(event\.conversation_id, \{ fresh: true \}\);\s*\}/,
+  /if \(event\.profile_updated\) \{[\s\S]*await getMembers\(event\.conversation_id, \{ fresh: true \}\);[\s\S]*reportIdentitySecurityError\(error\)/,
   "a contact profile update must refresh member data before rerendering the conversation header",
 );
+assert.match(conversationUpdatedHandler, /if \(!profileIdentityBlocked &&/);
 assert.ok(
   conversationUpdatedHandler.indexOf("await getMembers(event.conversation_id, { fresh: true })")
     < conversationUpdatedHandler.indexOf("await renderConversations()"),

@@ -423,7 +423,7 @@ func TestGroupMemberLeavesAndOwnerDeletesGroup(t *testing.T) {
 	assertConversationCount(t, db, formatID(id), 0)
 }
 
-func TestAddGroupMemberDoesNotRequireAcceptedContact(t *testing.T) {
+func TestAddGroupMemberRequiresKeyRotation(t *testing.T) {
 	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -449,12 +449,12 @@ func TestAddGroupMemberDoesNotRequireAcceptedContact(t *testing.T) {
 		"user_id":                    2,
 		"encrypted_conversation_key": "encrypted-target-key",
 	}, owner)
-	if added.Code != http.StatusCreated {
+	if added.Code != http.StatusConflict {
 		t.Fatalf("add member status=%d body=%s", added.Code, added.Body.String())
 	}
-	var role string
-	if err := db.QueryRow(`SELECT role FROM conversation_members WHERE conversation_id=? AND user_id=2`, conversationID).Scan(&role); err != nil || role != "pending" {
-		t.Fatalf("new member role=%q err=%v", role, err)
+	var memberCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM conversation_members WHERE conversation_id=? AND user_id=2`, conversationID).Scan(&memberCount); err != nil || memberCount != 0 {
+		t.Fatalf("legacy endpoint must not add a member, count=%d err=%v", memberCount, err)
 	}
 	var contacts int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM contacts WHERE owner_id IN (1,2) OR contact_user_id IN (1,2)`).Scan(&contacts); err != nil || contacts != 0 {
@@ -471,6 +471,7 @@ func TestRemoveGroupMemberNotifiesRemovedUser(t *testing.T) {
 	authHandler := &auth.Handler{DB: db}
 	owner := registerUser(t, authHandler, "removal_owner")
 	registerUser(t, authHandler, "removal_member")
+	registerUser(t, authHandler, "added_member")
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := db.Exec(`INSERT INTO conversations(type,encrypted_title,created_by,created_at) VALUES('group','encrypted-title',1,?)`, now)
 	if err != nil {
@@ -486,8 +487,19 @@ func TestRemoveGroupMemberNotifiesRemovedUser(t *testing.T) {
 	push := &removalPush{sent: make(chan removalPushEvent, 1)}
 	handler := &Handler{DB: db, Hub: hub, Push: push}
 	mux := conversationMux(authHandler, handler)
-	response := request(t, mux, http.MethodDelete,
-		"/api/conversations/"+formatID(conversationID)+"/members/2", nil, owner)
+	response := request(t, mux, http.MethodPost,
+		"/api/conversations/"+formatID(conversationID)+"/rotate-keys", map[string]any{
+			"key_epoch":        2,
+			"removed_user_ids": []int64{2},
+			"added_user_ids":   []int64{3},
+			"encrypted_keys": map[string]string{
+				"1": "owner-encrypted-key-epoch-2",
+				"3": "added-encrypted-key-epoch-2",
+			},
+			"encrypted_title":       "encrypted-title-epoch-2",
+			"encrypted_description": nil,
+			"encrypted_avatar":      nil,
+		}, owner)
 	if response.Code != http.StatusOK {
 		t.Fatalf("remove member status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -502,6 +514,19 @@ func TestRemoveGroupMemberNotifiesRemovedUser(t *testing.T) {
 	}
 	if !foundRemovalNotice {
 		t.Fatalf("removed member did not receive a removal notice: %#v", hub.sent)
+	}
+	var epoch int64
+	var rotationRequired bool
+	if err := db.QueryRow(`SELECT current_key_epoch,rotation_required FROM conversations WHERE id=?`, conversationID).Scan(&epoch, &rotationRequired); err != nil || epoch != 2 || rotationRequired {
+		t.Fatalf("rotation state epoch=%d required=%v err=%v", epoch, rotationRequired, err)
+	}
+	var removedMembers, addedMembers, ownerEnvelopes, addedEnvelopes int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM conversation_members WHERE conversation_id=? AND user_id=2`, conversationID).Scan(&removedMembers)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM conversation_members WHERE conversation_id=? AND user_id=3 AND role='pending'`, conversationID).Scan(&addedMembers)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM conversation_key_envelopes WHERE conversation_id=? AND key_epoch=2 AND user_id=1`, conversationID).Scan(&ownerEnvelopes)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM conversation_key_envelopes WHERE conversation_id=? AND key_epoch=2 AND user_id=3`, conversationID).Scan(&addedEnvelopes)
+	if removedMembers != 0 || addedMembers != 1 || ownerEnvelopes != 1 || addedEnvelopes != 1 {
+		t.Fatalf("rotation removed=%d added=%d owner envelopes=%d added envelopes=%d", removedMembers, addedMembers, ownerEnvelopes, addedEnvelopes)
 	}
 
 	select {
@@ -527,6 +552,7 @@ func conversationMux(authHandler *auth.Handler, handler *Handler) *http.ServeMux
 	mux.Handle("PUT /api/conversations/{id}", authHandler.Middleware(http.HandlerFunc(handler.Update)))
 	mux.Handle("DELETE /api/conversations/{id}", authHandler.Middleware(http.HandlerFunc(handler.Delete)))
 	mux.Handle("POST /api/conversations/{id}/members", authHandler.Middleware(http.HandlerFunc(handler.AddMember)))
+	mux.Handle("POST /api/conversations/{id}/rotate-keys", authHandler.Middleware(http.HandlerFunc(handler.RotateGroupKeys)))
 	mux.Handle("DELETE /api/conversations/{id}/members/{user_id}", authHandler.Middleware(http.HandlerFunc(handler.RemoveMember)))
 	return mux
 }

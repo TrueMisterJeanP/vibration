@@ -1,6 +1,91 @@
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+export const NEW_PASSPHRASE_POLICY_MESSAGE = "Utilisez au moins 6 mots sans lien entre eux (32 caractères minimum) ou 24 caractères variés.";
+
+const COMMON_PASSPHRASES = [
+  "mot de passe",
+  "phrase secrete",
+  "phrase secrète",
+  "password",
+  "passphrase",
+  "correct horse battery staple",
+];
+
+// 64 fragments equiprobable. Six words de trois fragments donnent 108 bits
+// d'aléa lorsque la phrase est créée avec crypto.getRandomValues().
+const PASSPHRASE_FRAGMENTS = [
+  "ba", "be", "bi", "bo", "bu", "ca", "ce", "ci", "co", "cu",
+  "da", "de", "di", "do", "du", "fa", "fe", "fi", "fo", "fu",
+  "ga", "ge", "gi", "go", "gu", "ka", "ke", "ki", "ko", "ku",
+  "la", "le", "li", "lo", "lu", "ma", "me", "mi", "mo", "mu",
+  "na", "ne", "ni", "no", "nu", "pa", "pe", "pi", "po", "pu",
+  "ra", "re", "ri", "ro", "ru", "sa", "se", "si", "so", "su",
+  "ta", "te", "ti", "to",
+];
+
+export function assessNewPassphrase(phrase) {
+  const value = String(phrase || "");
+  if (!value) return { valid: false, score: 0, reason: "empty" };
+
+  const normalized = value.normalize("NFKC").trim().toLocaleLowerCase("fr");
+  const length = [...normalized].length;
+  const words = normalized.split(/\s+/u).filter(Boolean);
+  const uniqueWords = new Set(words);
+  const uniqueCharacters = new Set([...normalized.replace(/\s/gu, "")]);
+  const characterClasses = [
+    /\p{Ll}/u,
+    /\p{Lu}/u,
+    /\p{N}/u,
+    /[^\p{L}\p{N}\s]/u,
+  ].filter((pattern) => pattern.test(value)).length;
+  const predictable = COMMON_PASSPHRASES.some((common) => normalized.includes(common))
+    || /^(.)\1{7,}$/u.test(normalized)
+    || /^(.{1,12})\1{2,}$/u.test(normalized)
+    || /(012345|123456|234567|abcdef|azerty|qwerty)/u.test(normalized);
+  const wordPhrase = length >= 32
+    && words.length >= 6
+    && uniqueWords.size === words.length
+    && words.every((word) => [...word].length >= 3);
+  const variedPhrase = length >= 24
+    && characterClasses >= 3
+    && uniqueCharacters.size >= 14;
+  const valid = !predictable && (wordPhrase || variedPhrase);
+
+  return {
+    valid,
+    score: valid ? 4 : (length >= 16 && (words.length >= 4 || characterClasses >= 2) ? 2 : 1),
+    reason: valid ? (wordPhrase ? "word-phrase" : "varied-phrase") : "weak",
+    length,
+    wordCount: words.length,
+    characterClasses,
+  };
+}
+
+export function validateNewPassphrase(phrase) {
+  const assessment = assessNewPassphrase(phrase);
+  if (!assessment.valid) {
+    throw new Error(`Phrase secrète trop faible. ${NEW_PASSPHRASE_POLICY_MESSAGE}`);
+  }
+  return assessment;
+}
+
+export function generateStrongPassphrase() {
+  for (;;) {
+    const random = crypto.getRandomValues(new Uint8Array(18));
+    const words = [];
+    for (let wordIndex = 0; wordIndex < 6; wordIndex += 1) {
+      let word = "";
+      for (let fragmentIndex = 0; fragmentIndex < 3; fragmentIndex += 1) {
+        word += PASSPHRASE_FRAGMENTS[random[(wordIndex * 3) + fragmentIndex] & 63];
+      }
+      words.push(word);
+    }
+    const phrase = words.join(" ");
+    if (assessNewPassphrase(phrase).valid) return phrase;
+  }
+}
+
 export function bytesToBase64(bytes) {
   let binary = "";
   const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -29,7 +114,7 @@ async function phraseKey(phrase, salt) {
 }
 
 export async function createIdentity(phrase) {
-  if (phrase.length < 10) throw new Error("La phrase secrète doit contenir au moins 10 caractères.");
+  validateNewPassphrase(phrase);
   const pair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
   const publicJWK = await crypto.subtle.exportKey("jwk", pair.publicKey);
   const privateJWK = await crypto.subtle.exportKey("jwk", pair.privateKey);

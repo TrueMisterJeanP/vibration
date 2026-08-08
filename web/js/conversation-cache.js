@@ -1,5 +1,5 @@
 const CACHE_DB_NAME = "webtchat-conversation-cache";
-const CACHE_DB_VERSION = 1;
+const CACHE_DB_VERSION = 2;
 const MAX_CACHED_MESSAGES = 100;
 
 const STORES = {
@@ -7,6 +7,7 @@ const STORES = {
   members: "members",
   messages: "messages",
   files: "files",
+  keyEnvelopes: "key-envelopes",
 };
 
 function requestResult(request) {
@@ -30,15 +31,19 @@ function openDatabase() {
     const request = indexedDB.open(CACHE_DB_NAME, CACHE_DB_VERSION);
     request.onupgradeneeded = () => {
       const database = request.result;
-      const conversations = database.createObjectStore(STORES.conversations, { keyPath: "key" });
-      conversations.createIndex("scope", "scope", { unique: false });
-      const members = database.createObjectStore(STORES.members, { keyPath: "key" });
-      members.createIndex("scope", "scope", { unique: false });
-      const messages = database.createObjectStore(STORES.messages, { keyPath: "key" });
-      messages.createIndex("scope", "scope", { unique: false });
-      messages.createIndex("conversation", ["scope", "conversation_id"], { unique: false });
-      const files = database.createObjectStore(STORES.files, { keyPath: "key" });
-      files.createIndex("scope", "scope", { unique: false });
+      const ensureStore = (name, indexes = []) => {
+        const store = database.objectStoreNames.contains(name)
+          ? request.transaction.objectStore(name)
+          : database.createObjectStore(name, { keyPath: "key" });
+        for (const [indexName, keyPath] of indexes) {
+          if (!store.indexNames.contains(indexName)) store.createIndex(indexName, keyPath, { unique: false });
+        }
+      };
+      ensureStore(STORES.conversations, [["scope", "scope"]]);
+      ensureStore(STORES.members, [["scope", "scope"]]);
+      ensureStore(STORES.messages, [["scope", "scope"], ["conversation", ["scope", "conversation_id"]]]);
+      ensureStore(STORES.files, [["scope", "scope"]]);
+      ensureStore(STORES.keyEnvelopes, [["scope", "scope"], ["conversation", ["scope", "conversation_id"]]]);
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error("IndexedDB open failed"));
@@ -59,6 +64,28 @@ function normalizeScope(instanceURL, user) {
 
 function sameID(left, right) {
   return left != null && right != null && String(left) === String(right);
+}
+
+export function sameMessageSnapshots(left, right, ignoredKeys = []) {
+  const ignored = new Set(ignoredKeys);
+  const equal = (leftValue, rightValue) => {
+    if (Object.is(leftValue, rightValue)) return true;
+    if (leftValue == null || rightValue == null || typeof leftValue !== typeof rightValue) return false;
+    if (typeof leftValue !== "object") return false;
+    if (Array.isArray(leftValue) || Array.isArray(rightValue)) {
+      if (!Array.isArray(leftValue) || !Array.isArray(rightValue) || leftValue.length !== rightValue.length) return false;
+      return leftValue.every((value, index) => equal(value, rightValue[index]));
+    }
+    const leftKeys = Object.keys(leftValue).filter((key) => !ignored.has(key)).sort();
+    const rightKeys = Object.keys(rightValue).filter((key) => !ignored.has(key)).sort();
+    if (leftKeys.length !== rightKeys.length) return false;
+    for (let index = 0; index < leftKeys.length; index += 1) {
+      const key = leftKeys[index];
+      if (key !== rightKeys[index] || !equal(leftValue[key], rightValue[key])) return false;
+    }
+    return true;
+  };
+  return equal(left, right);
 }
 
 async function readAll(database, storeName, indexName, key) {
@@ -151,6 +178,23 @@ export async function openConversationCache(instanceURL, user) {
       return true;
     }, false),
 
+    getKeyEnvelopes: safe(async (conversationID) => {
+      const records = await getConversationRecords(STORES.keyEnvelopes, conversationID);
+      return records.map((record) => record.envelope).sort((left, right) => Number(left.key_epoch) - Number(right.key_epoch));
+    }, []),
+
+    saveKeyEnvelopes: safe(async (conversationID, envelopes) => {
+      const existing = await getConversationRecords(STORES.keyEnvelopes, conversationID);
+      const records = (envelopes || []).map((envelope) => ({
+        key: recordKey(scope, "key-envelope", `${conversationID}:${envelope.key_epoch}`),
+        scope,
+        conversation_id: conversationID,
+        envelope,
+      }));
+      await writeRecords(database, STORES.keyEnvelopes, records, existing.map((record) => record.key));
+      return true;
+    }, false),
+
     getMessages: safe(async (conversationID) => {
       const records = await getConversationRecords(STORES.messages, conversationID);
       return newestMessages(records).map((record) => record.message);
@@ -223,8 +267,10 @@ export async function openConversationCache(instanceURL, user) {
     deleteConversation: safe(async (conversationID) => {
       const messages = await getConversationRecords(STORES.messages, conversationID);
       const members = await getConversationRecords(STORES.members, conversationID);
+      const keyEnvelopes = await getConversationRecords(STORES.keyEnvelopes, conversationID);
       await writeRecords(database, STORES.messages, [], messages.map((record) => record.key));
       await writeRecords(database, STORES.members, [], members.map((record) => record.key));
+      await writeRecords(database, STORES.keyEnvelopes, [], keyEnvelopes.map((record) => record.key));
       const fileKeys = messages
         .map((record) => record.message?.file?.id)
         .filter((fileID) => fileID != null)
@@ -239,6 +285,7 @@ export async function openConversationCache(instanceURL, user) {
       await deleteByScope(database, STORES.members, scope);
       await deleteByScope(database, STORES.messages, scope);
       await deleteByScope(database, STORES.files, scope);
+      await deleteByScope(database, STORES.keyEnvelopes, scope);
       return true;
     }, false),
   };

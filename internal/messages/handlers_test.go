@@ -59,13 +59,14 @@ func (r *testFederationRouter) QueueFile(_ int64)                               
 func (r *testFederationRouter) RelayRealtime(_ int64, _ int64, _ map[string]any) bool {
 	return false
 }
-func (r *testFederationRouter) RelayPresence(_ int64, _ bool)           {}
-func (r *testFederationRouter) QueueGroupCreate(_ int64)                {}
-func (r *testFederationRouter) QueueGroupAccept(_ int64, _ int64)       {}
-func (r *testFederationRouter) QueueGroupUpdate(_ int64)                {}
-func (r *testFederationRouter) QueueGroupDelete(_ int64, _ int64)       {}
-func (r *testFederationRouter) QueueGroupMemberAdd(_ int64, _ int64)    {}
-func (r *testFederationRouter) QueueGroupMemberRemove(_ int64, _ int64) {}
+func (r *testFederationRouter) RelayPresence(_ int64, _ bool)            {}
+func (r *testFederationRouter) QueueGroupCreate(_ int64)                 {}
+func (r *testFederationRouter) QueueGroupAccept(_ int64, _ int64)        {}
+func (r *testFederationRouter) QueueGroupUpdate(_ int64)                 {}
+func (r *testFederationRouter) QueueGroupDelete(_ int64, _ int64)        {}
+func (r *testFederationRouter) QueueGroupMemberAdd(_ int64, _ int64)     {}
+func (r *testFederationRouter) QueueGroupMemberRemove(_ int64, _ int64)  {}
+func (r *testFederationRouter) QueueGroupRotation(_ int64, _, _ []int64) {}
 
 func (r *testFederationRouter) QueuePollUpdate(messageID int64, _, _ string, _ int, _ *string) {
 	r.updated = append(r.updated, messageID)

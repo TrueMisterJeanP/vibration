@@ -1,6 +1,15 @@
 (function () {
   const storageKey = "chat-theme";
   const media = window.matchMedia("(prefers-color-scheme: light)");
+  const isTauriRuntime = Boolean(window.__TAURI__)
+    || Boolean(window.__TAURI_INTERNALS__)
+    || location.protocol === "tauri:";
+  const isMacDesktop = (navigator.platform === "MacIntel" || /Macintosh|Mac OS X/.test(navigator.userAgent))
+    && navigator.maxTouchPoints <= 1
+    && !/iPad|iPhone|iPod|Mobile/.test(navigator.userAgent);
+  if (isTauriRuntime && isMacDesktop) {
+    document.documentElement.classList.add("tauri-macos-titlebar");
+  }
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
     || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches

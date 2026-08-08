@@ -38,7 +38,7 @@ assert.match(
 
 assert.match(ui, /preview\.textContent = "Chargement de l’aperçu…"/);
 assert.match(office, /export async function preloadModernOfficePreview\(file\)/);
-assert.match(loadMessages, /prefetchRecentFileThumbnails\(messages, key\)[\s\S]*prewarmFilePreviewRenderers\(decrypted\);\s*prefetchRecentFullFilePreviews\(decrypted, key\)/);
+assert.match(loadMessages, /prefetchRecentFileThumbnails\(decrypted\)[\s\S]*prewarmFilePreviewRenderers\(decrypted\);\s*prefetchRecentFullFilePreviews\(decrypted\)/);
 assert.match(source, /rootMargin: "1200px 0px"/);
 assert.match(source, /state\.fileThumbnails\.get\(message\.file\.id\) \|\| await loadDecryptedFileThumbnail/);
 assert.match(source, /image\.loading = "eager"/);

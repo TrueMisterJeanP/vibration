@@ -70,6 +70,20 @@ func TestInvitationLifecycleAndPublicLanding(t *testing.T) {
 	if list.Code != http.StatusOK || bytes.Contains(list.Body.Bytes(), []byte("famille-2026")) {
 		t.Fatalf("list should not expose the code: status=%d body=%s", list.Code, list.Body.String())
 	}
+	pagedList := httptest.NewRecorder()
+	pagedListRequest := httptest.NewRequest(http.MethodGet, "/api/admin/invitations?page=1&limit=10", nil)
+	pagedListRequest.AddCookie(adminCookie)
+	mux.ServeHTTP(pagedList, pagedListRequest)
+	var page struct {
+		Items      []invitationRecord `json:"items"`
+		Page       int                `json:"page"`
+		Total      int                `json:"total"`
+		TotalPages int                `json:"total_pages"`
+	}
+	if pagedList.Code != http.StatusOK || json.Unmarshal(pagedList.Body.Bytes(), &page) != nil ||
+		page.Page != 1 || page.Total != 1 || page.TotalPages != 1 || len(page.Items) != 1 {
+		t.Fatalf("unexpected paginated invitation list: status=%d body=%s", pagedList.Code, pagedList.Body.String())
+	}
 
 	revoke := httptest.NewRecorder()
 	revokeRequest := httptest.NewRequest(http.MethodDelete, "/api/admin/invitations/"+itoa(created.ID), nil)
@@ -82,6 +96,14 @@ func TestInvitationLifecycleAndPublicLanding(t *testing.T) {
 	mux.ServeHTTP(afterRevoke, httptest.NewRequest(http.MethodGet, "/invite/famille-2026", nil))
 	if afterRevoke.Code != http.StatusGone {
 		t.Fatalf("revoked landing status=%d body=%s", afterRevoke.Code, afterRevoke.Body.String())
+	}
+}
+
+func TestInvitationPaginationBounds(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/invitations?page=99&limit=10", nil)
+	page, limit, offset, totalPages := invitationPagination(request, 23)
+	if page != 3 || limit != 10 || offset != 20 || totalPages != 3 {
+		t.Fatalf("unexpected invitation pagination: page=%d limit=%d offset=%d pages=%d", page, limit, offset, totalPages)
 	}
 }
 

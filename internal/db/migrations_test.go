@@ -16,7 +16,7 @@ func TestOpenCreatesRequiredTables(t *testing.T) {
 	defer database.Close()
 
 	required := []string{
-		"users", "sessions", "contacts", "conversations", "conversation_members",
+		"users", "sessions", "contacts", "conversations", "conversation_members", "conversation_key_envelopes",
 		"messages", "message_events", "message_reactions", "message_pins", "poll_options", "poll_votes", "message_receipts", "files", "push_subscriptions", "admin_actions", "app_settings", "user_terms_acceptances", "calendar_feeds", "invitation_contacts", "carnet_entries",
 		"federated_instances", "federation_replays", "federated_conversations", "federated_message_map", "federation_outbox",
 	}
@@ -288,6 +288,39 @@ func TestMigratePreservesLegacyPinForItsOwner(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("migrated personal pin count=%d, want 1", count)
+	}
+}
+
+func TestMigrateBackfillsFirstGroupKeyEpoch(t *testing.T) {
+	database, err := Open(filepath.Join(t.TempDir(), "legacy-group-key.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	now := "2026-08-08T12:00:00Z"
+	if _, err := database.Exec(`INSERT INTO users(id,username,display_name,password_hash,public_key,encrypted_private_key,crypto_salt,created_at)
+		VALUES(1,'owner','Owner','hash','owner-public-key','private','salt',?),
+		(2,'member','Member','hash','member-public-key','private','salt',?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO conversations(id,type,encrypted_title,created_by,created_at)
+		VALUES(1,'group','encrypted-title',1,?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
+		VALUES(1,1,'owner-envelope','owner',?),(1,2,'member-envelope','member',?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+	var envelopes int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM conversation_key_envelopes
+		WHERE conversation_id=1 AND key_epoch=1 AND sender_public_key='owner-public-key'`).Scan(&envelopes); err != nil {
+		t.Fatal(err)
+	}
+	if envelopes != 2 {
+		t.Fatalf("epoch-one envelopes=%d, want 2", envelopes)
 	}
 }
 

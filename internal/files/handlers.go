@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"chat-pwa-go/internal/auth"
+	"chat-pwa-go/internal/groupkeys"
 	"chat-pwa-go/internal/httpx"
 	"chat-pwa-go/internal/settings"
 )
@@ -56,6 +57,7 @@ type listedFileMessage struct {
 	SenderAvatar     *string     `json:"sender_avatar"`
 	EncryptedContent *string     `json:"encrypted_content"`
 	IV               string      `json:"iv"`
+	KeyEpoch         int64       `json:"key_epoch"`
 	ExpiresAt        *string     `json:"expires_at"`
 	CreatedAt        string      `json:"created_at"`
 	UpdatedAt        *string     `json:"updated_at"`
@@ -66,7 +68,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	userID := auth.UserID(r)
 	rows, err := h.DB.Query(`SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,
-		m.encrypted_content,m.iv,m.expires_at,m.created_at,m.updated_at,
+		m.encrypted_content,m.iv,m.key_epoch,m.expires_at,m.created_at,m.updated_at,
 		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,f.preview_size,
 		(SELECT COUNT(*) FROM file_shares fs WHERE fs.file_id=f.id AND fs.created_by=?
 			AND fs.revoked_at IS NULL AND fs.expires_at>?)
@@ -85,7 +87,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		var file listedFile
 		var previewSize sql.NullInt64
 		if rows.Scan(&message.ID, &message.ConversationID, &message.SenderID, &message.SenderUsername, &message.SenderAvatar,
-			&message.EncryptedContent, &message.IV, &message.ExpiresAt, &message.CreatedAt, &message.UpdatedAt,
+			&message.EncryptedContent, &message.IV, &message.KeyEpoch, &message.ExpiresAt, &message.CreatedAt, &message.UpdatedAt,
 			&file.ID, &file.EncryptedName, &file.EncryptedMIME, &file.IV, &file.Size, &previewSize, &file.ActiveShareCount) == nil {
 			if previewSize.Valid && previewSize.Int64 > 0 {
 				file.HasPreview = true
@@ -131,6 +133,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		EncryptedPreview string `json:"encrypted_preview_data"`
 		PreviewIV        string `json:"preview_iv"`
 		ExpiresInSeconds int64  `json:"expires_in_seconds"`
+		KeyEpoch         int64  `json:"key_epoch"`
 	}
 	quotas, err := settings.LoadFileQuotas(h.DB)
 	if err != nil {
@@ -179,6 +182,17 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, "upload failed")
 		return
 	}
+	input.KeyEpoch, err = groupkeys.ValidateSend(tx, input.ConversationID, userID, input.KeyEpoch)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if err == groupkeys.ErrNotMember {
+			status = http.StatusNotFound
+		} else if err == groupkeys.ErrRotationRequired || err == groupkeys.ErrStaleEpoch {
+			status = http.StatusConflict
+		}
+		httpx.Error(w, status, err.Error())
+		return
+	}
 	quotas, err = settings.LoadFileQuotas(tx)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "file quota lookup failed")
@@ -197,8 +211,8 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusRequestEntityTooLarge, "user file quota exceeded")
 		return
 	}
-	messageResult, err := tx.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,expires_at,created_at) VALUES(?,?,NULL,?,?,?)`,
-		input.ConversationID, userID, input.IV, expiresAt, now)
+	messageResult, err := tx.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,key_epoch,expires_at,created_at) VALUES(?,?,NULL,?,?,?,?)`,
+		input.ConversationID, userID, input.IV, input.KeyEpoch, expiresAt, now)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "message creation failed")
 		return
@@ -244,7 +258,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	fileMeta := map[string]any{"id": fileID, "encrypted_name": input.EncryptedName, "encrypted_mime": input.EncryptedMIME, "iv": input.IV, "size": len(data),
 		"has_preview": len(previewData) > 0, "preview_size": len(previewData)}
 	message := map[string]any{"id": messageID, "conversation_id": input.ConversationID, "sender_id": userID,
-		"sender_username": username, "sender_avatar": avatar, "encrypted_content": nil, "iv": input.IV, "expires_at": expiresAt, "created_at": now, "status": "sent", "file": fileMeta}
+		"sender_username": username, "sender_avatar": avatar, "encrypted_content": nil, "iv": input.IV, "key_epoch": input.KeyEpoch, "expires_at": expiresAt, "created_at": now, "status": "sent", "file": fileMeta}
 	personalConversation := len(members) == 1 && members[0] == userID
 	for _, id := range members {
 		if id != userID {

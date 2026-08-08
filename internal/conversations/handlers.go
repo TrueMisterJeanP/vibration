@@ -29,6 +29,7 @@ type FederationRouter interface {
 	QueueGroupDelete(conversationID, userID int64)
 	QueueGroupMemberAdd(conversationID, memberID int64)
 	QueueGroupMemberRemove(conversationID, memberID int64)
+	QueueGroupRotation(conversationID int64, removedMemberIDs, addedMemberIDs []int64)
 }
 
 type Handler struct {
@@ -48,6 +49,8 @@ type Conversation struct {
 	FederationKeyID          *string `json:"federation_key_id"`
 	FederationInstanceURL    *string `json:"federation_instance_url"`
 	RemoteUsername           *string `json:"remote_username"`
+	CurrentKeyEpoch          int64   `json:"current_key_epoch"`
+	RotationRequired         bool    `json:"rotation_required"`
 	CreatedBy                int64   `json:"created_by"`
 	CreatedAt                string  `json:"created_at"`
 	EncryptedConversationKey string  `json:"encrypted_conversation_key"`
@@ -56,6 +59,7 @@ type Conversation struct {
 	LastMessageAt            *string `json:"last_message_at"`
 	LastMessageEncrypted     *string `json:"last_message_encrypted_content"`
 	LastMessageIV            *string `json:"last_message_iv"`
+	LastMessageKeyEpoch      int64   `json:"last_message_key_epoch"`
 	LastMessageHasFile       bool    `json:"last_message_has_file"`
 	UnreadCount              int     `json:"unread_count"`
 	IsPersonal               bool    `json:"is_personal"`
@@ -75,13 +79,20 @@ type Member struct {
 	Role                     string  `json:"role"`
 }
 
+type KeyEnvelope struct {
+	KeyEpoch                 int64  `json:"key_epoch"`
+	EncryptedConversationKey string `json:"encrypted_conversation_key"`
+	SenderPublicKey          string `json:"sender_public_key"`
+}
+
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	rows, err := h.DB.Query(`SELECT c.id,c.type,c.encrypted_title,c.encrypted_description,c.encrypted_avatar,c.federation_key_id,fi.base_url,ru.remote_username,
+	rows, err := h.DB.Query(`SELECT c.id,c.type,c.encrypted_title,c.encrypted_description,c.encrypted_avatar,c.federation_key_id,fi.base_url,ru.remote_username,c.current_key_epoch,c.rotation_required,
 		c.created_by,c.created_at,cm.encrypted_conversation_key,cm.role,cm.favorite_at,
 		(SELECT MAX(created_at) FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?)),
 		(SELECT encrypted_content FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
 		(SELECT iv FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
+		COALESCE((SELECT key_epoch FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),1),
 		COALESCE((SELECT f.id IS NOT NULL FROM messages lm LEFT JOIN files f ON f.message_id=lm.id WHERE lm.conversation_id=c.id AND lm.created_at>=cm.created_at AND (lm.expires_at IS NULL OR lm.expires_at>?) ORDER BY lm.id DESC LIMIT 1),0),
 		(SELECT COUNT(*) FROM messages m JOIN message_receipts mr ON mr.message_id=m.id
 		WHERE m.conversation_id=c.id AND m.created_at>=cm.created_at AND mr.user_id=? AND mr.status<>'read' AND (m.expires_at IS NULL OR m.expires_at>?)),
@@ -93,7 +104,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		WHERE cm.user_id=?
 		ORDER BY CASE WHEN cm.favorite_at IS NULL THEN 1 ELSE 0 END,cm.favorite_at DESC,
 			COALESCE((SELECT MAX(created_at) FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?)),cm.created_at,c.created_at) DESC,c.id DESC`,
-		now, now, now, now, auth.UserID(r), now, auth.UserID(r), now)
+		now, now, now, now, now, auth.UserID(r), now, auth.UserID(r), now)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "conversation lookup failed")
 		return
@@ -104,8 +115,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		var item Conversation
 		var memberCount int
 		if rows.Scan(&item.ID, &item.Type, &item.EncryptedTitle, &item.EncryptedDescription, &item.EncryptedAvatar, &item.FederationKeyID,
-			&item.FederationInstanceURL, &item.RemoteUsername, &item.CreatedBy, &item.CreatedAt, &item.EncryptedConversationKey, &item.Role, &item.FavoriteAt,
-			&item.LastMessageAt, &item.LastMessageEncrypted, &item.LastMessageIV, &item.LastMessageHasFile, &item.UnreadCount, &memberCount) == nil {
+			&item.FederationInstanceURL, &item.RemoteUsername, &item.CurrentKeyEpoch, &item.RotationRequired, &item.CreatedBy, &item.CreatedAt, &item.EncryptedConversationKey, &item.Role, &item.FavoriteAt,
+			&item.LastMessageAt, &item.LastMessageEncrypted, &item.LastMessageIV, &item.LastMessageKeyEpoch, &item.LastMessageHasFile, &item.UnreadCount, &memberCount) == nil {
 			item.IsPersonal = item.Type == "private" && item.CreatedBy == auth.UserID(r) && memberCount == 1
 			result = append(result, item)
 		}
@@ -251,12 +262,12 @@ func (h *Handler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "group creation failed")
 		return
 	}
-	// Other members are pending until they accept the invitation. Their carnet
-	// is populated when the group membership becomes active.
-	h.notifyMembers(id, "conversation_updated")
 	if h.Federation != nil {
 		h.Federation.QueueGroupCreate(id)
 	}
+	// Other members are pending until they accept the invitation. Their carnet
+	// is populated when the group membership becomes active.
+	h.notifyMembers(id, "conversation_updated")
 	httpx.JSON(w, http.StatusCreated, map[string]any{"id": id})
 }
 
@@ -273,6 +284,12 @@ func (h *Handler) createConversation(kind string, title, description, avatar *st
 		return 0, err
 	}
 	id, _ := result.LastInsertId()
+	var ownerPublicKey string
+	if kind == "group" {
+		if err := tx.QueryRow(`SELECT public_key FROM users WHERE id=?`, ownerID).Scan(&ownerPublicKey); err != nil {
+			return 0, err
+		}
+	}
 	ids := make([]int64, 0, len(keys))
 	for userID := range keys {
 		ids = append(ids, userID)
@@ -294,6 +311,13 @@ func (h *Handler) createConversation(kind string, title, description, avatar *st
 		if affected != 1 {
 			return 0, sql.ErrNoRows
 		}
+		if kind == "group" {
+			if _, err := tx.Exec(`INSERT INTO conversation_key_envelopes(
+				conversation_id,key_epoch,user_id,encrypted_conversation_key,sender_public_key,created_at)
+				VALUES(?,1,?,?,?,?)`, id, userID, keys[userID], ownerPublicKey, now); err != nil {
+				return 0, err
+			}
+		}
 	}
 	return id, tx.Commit()
 }
@@ -307,11 +331,12 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var conversation Conversation
 	var memberCount int
-	err = h.DB.QueryRow(`SELECT c.id,c.type,c.encrypted_title,c.encrypted_description,c.encrypted_avatar,c.federation_key_id,fi.base_url,ru.remote_username,
+	err = h.DB.QueryRow(`SELECT c.id,c.type,c.encrypted_title,c.encrypted_description,c.encrypted_avatar,c.federation_key_id,fi.base_url,ru.remote_username,c.current_key_epoch,c.rotation_required,
 		c.created_by,c.created_at,cm.encrypted_conversation_key,cm.role,cm.favorite_at,
 		(SELECT MAX(created_at) FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?)),
 		(SELECT encrypted_content FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
 		(SELECT iv FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
+		COALESCE((SELECT key_epoch FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),1),
 		COALESCE((SELECT f.id IS NOT NULL FROM messages lm LEFT JOIN files f ON f.message_id=lm.id WHERE lm.conversation_id=c.id AND lm.created_at>=cm.created_at AND (lm.expires_at IS NULL OR lm.expires_at>?) ORDER BY lm.id DESC LIMIT 1),0),
 		(SELECT COUNT(*) FROM messages m JOIN message_receipts mr ON mr.message_id=m.id
 			WHERE m.conversation_id=c.id AND m.created_at>=cm.created_at AND mr.user_id=? AND mr.status<>'read' AND (m.expires_at IS NULL OR m.expires_at>?)),
@@ -320,11 +345,11 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN federated_conversations fc ON fc.local_conversation_id=c.id
 		LEFT JOIN federated_instances fi ON fi.id=fc.instance_id
 		LEFT JOIN users ru ON ru.id=fc.remote_user_id
-		WHERE c.id=? AND cm.user_id=?`, now, now, now, now, auth.UserID(r), now, id, auth.UserID(r)).
+		WHERE c.id=? AND cm.user_id=?`, now, now, now, now, now, auth.UserID(r), now, id, auth.UserID(r)).
 		Scan(&conversation.ID, &conversation.Type, &conversation.EncryptedTitle, &conversation.EncryptedDescription, &conversation.EncryptedAvatar,
-			&conversation.FederationKeyID, &conversation.FederationInstanceURL, &conversation.RemoteUsername, &conversation.CreatedBy, &conversation.CreatedAt,
+			&conversation.FederationKeyID, &conversation.FederationInstanceURL, &conversation.RemoteUsername, &conversation.CurrentKeyEpoch, &conversation.RotationRequired, &conversation.CreatedBy, &conversation.CreatedAt,
 			&conversation.EncryptedConversationKey, &conversation.Role, &conversation.FavoriteAt, &conversation.LastMessageAt, &conversation.LastMessageEncrypted, &conversation.LastMessageIV,
-			&conversation.LastMessageHasFile, &conversation.UnreadCount, &memberCount)
+			&conversation.LastMessageKeyEpoch, &conversation.LastMessageHasFile, &conversation.UnreadCount, &memberCount)
 	if err != nil {
 		httpx.Error(w, http.StatusNotFound, "conversation not found")
 		return
@@ -404,17 +429,34 @@ func (h *Handler) Members(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, members)
 }
 
+func (h *Handler) Keys(w http.ResponseWriter, r *http.Request) {
+	conversationID, err := httpx.PathID(r, "id")
+	userID := auth.UserID(r)
+	if err != nil || !h.isActiveMember(conversationID, userID) {
+		httpx.Error(w, http.StatusNotFound, "conversation not found")
+		return
+	}
+	rows, err := h.DB.Query(`SELECT key_epoch,encrypted_conversation_key,sender_public_key
+		FROM conversation_key_envelopes WHERE conversation_id=? AND user_id=? ORDER BY key_epoch`, conversationID, userID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "group key lookup failed")
+		return
+	}
+	defer rows.Close()
+	result := make([]KeyEnvelope, 0)
+	for rows.Next() {
+		var envelope KeyEnvelope
+		if rows.Scan(&envelope.KeyEpoch, &envelope.EncryptedConversationKey, &envelope.SenderPublicKey) == nil {
+			result = append(result, envelope)
+		}
+	}
+	httpx.JSON(w, http.StatusOK, result)
+}
+
 func (h *Handler) AddMember(w http.ResponseWriter, r *http.Request) {
 	conversationID, err := httpx.PathID(r, "id")
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	var input struct {
-		UserID                   int64  `json:"user_id"`
-		EncryptedConversationKey string `json:"encrypted_conversation_key"`
-	}
-	if !httpx.Decode(w, r, &input) {
 		return
 	}
 	var ownerID int64
@@ -424,41 +466,7 @@ func (h *Handler) AddMember(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusForbidden, "only the group owner can add members")
 		return
 	}
-	if input.UserID <= 0 || len(input.EncryptedConversationKey) < 10 {
-		httpx.Error(w, http.StatusBadRequest, "invalid member")
-		return
-	}
-	var isRemote bool
-	if h.DB.QueryRow(`SELECT is_remote FROM users WHERE id=?`, input.UserID).Scan(&isRemote) != nil {
-		httpx.Error(w, http.StatusNotFound, "user not found")
-		return
-	}
-	if isRemote {
-		var existingRemote int
-		_ = h.DB.QueryRow(`SELECT COUNT(*) FROM conversation_members cm JOIN users u ON u.id=cm.user_id
-			WHERE cm.conversation_id=? AND u.is_remote=1`, conversationID).Scan(&existingRemote)
-		if existingRemote > 0 {
-			httpx.Error(w, http.StatusConflict, "a federated group currently supports one remote participant")
-			return
-		}
-	}
-	result, err := h.DB.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
-		SELECT ?,?,?, 'pending',? WHERE EXISTS(SELECT 1 FROM users WHERE id=?)`,
-		conversationID, input.UserID, input.EncryptedConversationKey, time.Now().UTC().Format(time.RFC3339Nano), input.UserID)
-	if err != nil {
-		httpx.Error(w, http.StatusConflict, "member already exists")
-		return
-	}
-	affected, _ := result.RowsAffected()
-	if affected != 1 {
-		httpx.Error(w, http.StatusNotFound, "user not found")
-		return
-	}
-	h.notifyMembers(conversationID, "conversation_updated")
-	if h.Federation != nil {
-		h.Federation.QueueGroupMemberAdd(conversationID, input.UserID)
-	}
-	httpx.JSON(w, http.StatusCreated, map[string]any{"ok": true})
+	httpx.Error(w, http.StatusConflict, "group key rotation required")
 }
 
 func (h *Handler) Accept(w http.ResponseWriter, r *http.Request) {
@@ -488,6 +496,189 @@ func (h *Handler) Accept(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+func (h *Handler) RotateGroupKeys(w http.ResponseWriter, r *http.Request) {
+	conversationID, err := httpx.PathID(r, "id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var input struct {
+		KeyEpoch             int64             `json:"key_epoch"`
+		RemovedUserIDs       []int64           `json:"removed_user_ids"`
+		AddedUserIDs         []int64           `json:"added_user_ids"`
+		EncryptedKeys        map[string]string `json:"encrypted_keys"`
+		EncryptedTitle       string            `json:"encrypted_title"`
+		EncryptedDescription *string           `json:"encrypted_description"`
+		EncryptedAvatar      *string           `json:"encrypted_avatar"`
+	}
+	if !httpx.Decode(w, r, &input) {
+		return
+	}
+	if len(input.EncryptedTitle) < 10 || len(input.EncryptedTitle) > 4096 ||
+		(input.EncryptedDescription != nil && (len(*input.EncryptedDescription) < 10 || len(*input.EncryptedDescription) > 8192)) ||
+		(input.EncryptedAvatar != nil && (len(*input.EncryptedAvatar) < 10 || len(*input.EncryptedAvatar) > 512<<10)) {
+		httpx.Error(w, http.StatusBadRequest, "invalid group rotation")
+		return
+	}
+	tx, err := h.DB.Begin()
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "group rotation failed")
+		return
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE conversations SET current_key_epoch=current_key_epoch WHERE id=?`, conversationID); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "group rotation failed")
+		return
+	}
+	var ownerID, currentEpoch int64
+	var kind, ownerPublicKey string
+	var rotationRequired bool
+	if tx.QueryRow(`SELECT c.created_by,c.type,c.current_key_epoch,c.rotation_required,u.public_key
+		FROM conversations c JOIN users u ON u.id=c.created_by WHERE c.id=?`, conversationID).
+		Scan(&ownerID, &kind, &currentEpoch, &rotationRequired, &ownerPublicKey) != nil || ownerID != auth.UserID(r) || kind != "group" {
+		httpx.Error(w, http.StatusForbidden, "only the group owner can rotate keys")
+		return
+	}
+	if input.KeyEpoch != currentEpoch+1 || (len(input.RemovedUserIDs) == 0 && len(input.AddedUserIDs) == 0 && !rotationRequired) {
+		httpx.Error(w, http.StatusConflict, "invalid group key epoch")
+		return
+	}
+	type memberState struct {
+		role     string
+		isRemote bool
+	}
+	members := map[int64]memberState{}
+	rows, err := tx.Query(`SELECT cm.user_id,cm.role,u.is_remote FROM conversation_members cm JOIN users u ON u.id=cm.user_id WHERE cm.conversation_id=?`, conversationID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "group rotation failed")
+		return
+	}
+	for rows.Next() {
+		var userID int64
+		var member memberState
+		if rows.Scan(&userID, &member.role, &member.isRemote) == nil {
+			members[userID] = member
+		}
+	}
+	rows.Close()
+	removed := map[int64]bool{}
+	for _, userID := range input.RemovedUserIDs {
+		if userID <= 0 || userID == ownerID || removed[userID] || members[userID].role == "" {
+			httpx.Error(w, http.StatusBadRequest, "invalid removed member")
+			return
+		}
+		removed[userID] = true
+	}
+	added := map[int64]memberState{}
+	for _, userID := range input.AddedUserIDs {
+		if userID <= 0 || userID == ownerID || removed[userID] || members[userID].role != "" || added[userID].role != "" {
+			httpx.Error(w, http.StatusBadRequest, "invalid added member")
+			return
+		}
+		var isRemote bool
+		if tx.QueryRow(`SELECT is_remote FROM users WHERE id=?`, userID).Scan(&isRemote) != nil {
+			httpx.Error(w, http.StatusNotFound, "user not found")
+			return
+		}
+		if isRemote {
+			var mappedRemoteUserID int64
+			if tx.QueryRow(`SELECT remote_user_id FROM federated_conversations WHERE local_conversation_id=?`, conversationID).
+				Scan(&mappedRemoteUserID) == nil && mappedRemoteUserID != userID {
+				httpx.Error(w, http.StatusConflict, "federated group recipient cannot be replaced")
+				return
+			}
+		}
+		added[userID] = memberState{role: "pending", isRemote: isRemote}
+	}
+	finalMembers := map[int64]memberState{}
+	remoteMembers := 0
+	for userID, member := range members {
+		if removed[userID] {
+			continue
+		}
+		finalMembers[userID] = member
+		if member.isRemote {
+			remoteMembers++
+		}
+	}
+	for userID, member := range added {
+		finalMembers[userID] = member
+		if member.isRemote {
+			remoteMembers++
+		}
+	}
+	if remoteMembers > 1 || len(input.EncryptedKeys) != len(finalMembers) {
+		httpx.Error(w, http.StatusBadRequest, "invalid group members")
+		return
+	}
+	for userID := range finalMembers {
+		key := input.EncryptedKeys[strconv.FormatInt(userID, 10)]
+		if len(key) < 10 || len(key) > 1<<20 {
+			httpx.Error(w, http.StatusBadRequest, "missing encrypted group key")
+			return
+		}
+	}
+	for key := range input.EncryptedKeys {
+		userID, parseErr := strconv.ParseInt(key, 10, 64)
+		if parseErr != nil || finalMembers[userID].role == "" {
+			httpx.Error(w, http.StatusBadRequest, "unexpected encrypted group key")
+			return
+		}
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for userID := range removed {
+		if _, err := tx.Exec(`DELETE FROM conversation_members WHERE conversation_id=? AND user_id=?`, conversationID, userID); err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "group rotation failed")
+			return
+		}
+	}
+	for userID, member := range added {
+		if _, err := tx.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
+			VALUES(?,?,?,?,?)`, conversationID, userID, input.EncryptedKeys[strconv.FormatInt(userID, 10)], member.role, now); err != nil {
+			httpx.Error(w, http.StatusConflict, "member already exists")
+			return
+		}
+	}
+	for userID := range finalMembers {
+		encryptedKey := input.EncryptedKeys[strconv.FormatInt(userID, 10)]
+		if _, err := tx.Exec(`UPDATE conversation_members SET encrypted_conversation_key=? WHERE conversation_id=? AND user_id=?`, encryptedKey, conversationID, userID); err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "group rotation failed")
+			return
+		}
+		if _, err := tx.Exec(`INSERT INTO conversation_key_envelopes(
+			conversation_id,key_epoch,user_id,encrypted_conversation_key,sender_public_key,created_at)
+			VALUES(?,?,?,?,?,?)`, conversationID, input.KeyEpoch, userID, encryptedKey, ownerPublicKey, now); err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "group rotation failed")
+			return
+		}
+	}
+	if _, err := tx.Exec(`UPDATE conversations SET encrypted_title=?,encrypted_description=?,encrypted_avatar=?,current_key_epoch=?,rotation_required=? WHERE id=?`,
+		input.EncryptedTitle, input.EncryptedDescription, input.EncryptedAvatar, input.KeyEpoch, false, conversationID); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "group rotation failed")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "group rotation failed")
+		return
+	}
+	if h.Federation != nil {
+		h.Federation.QueueGroupRotation(conversationID, input.RemovedUserIDs, input.AddedUserIDs)
+	}
+	for userID := range removed {
+		if h.Hub != nil {
+			h.Hub.SendToUser(userID, map[string]any{
+				"type": "conversation_updated", "conversation_id": conversationID, "removed": true, "removal_notice": true,
+			})
+		}
+		if h.Push != nil {
+			go h.Push.NotifyUserWithContent(userID, "Retrait d’un groupe", "Vous ne faites plus partie de ce groupe.", "/",
+				"group-removal-"+strconv.FormatInt(conversationID, 10))
+		}
+	}
+	h.notifyMembers(conversationID, "conversation_updated")
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "key_epoch": input.KeyEpoch})
+}
+
 func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	conversationID, err := httpx.PathID(r, "id")
 	if err != nil {
@@ -506,35 +697,12 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusForbidden, "member cannot be removed")
 		return
 	}
-	result, err := h.DB.Exec(`DELETE FROM conversation_members WHERE conversation_id=? AND user_id=?`, conversationID, memberID)
-	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "member removal failed")
-		return
-	}
-	affected, _ := result.RowsAffected()
-	if affected == 0 {
+	var exists int
+	if h.DB.QueryRow(`SELECT COUNT(*) FROM conversation_members WHERE conversation_id=? AND user_id=?`, conversationID, memberID).Scan(&exists) != nil || exists == 0 {
 		httpx.Error(w, http.StatusNotFound, "member not found")
 		return
 	}
-	if h.Hub != nil {
-		h.Hub.SendToUser(memberID, map[string]any{
-			"type": "conversation_updated", "conversation_id": conversationID, "removed": true, "removal_notice": true,
-		})
-	}
-	if h.Push != nil {
-		go h.Push.NotifyUserWithContent(
-			memberID,
-			"Retrait d’un groupe",
-			"Vous ne faites plus partie de ce groupe.",
-			"/",
-			"group-removal-"+strconv.FormatInt(conversationID, 10),
-		)
-	}
-	h.notifyMembers(conversationID, "conversation_updated")
-	if h.Federation != nil {
-		h.Federation.QueueGroupMemberRemove(conversationID, memberID)
-	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+	httpx.Error(w, http.StatusConflict, "group key rotation required")
 }
 
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
@@ -620,7 +788,21 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		if h.Federation != nil {
 			h.Federation.QueueGroupDelete(conversationID, userID)
 		}
-		if _, err := h.DB.Exec(`DELETE FROM conversation_members WHERE conversation_id=? AND user_id=?`, conversationID, userID); err != nil {
+		tx, err := h.DB.Begin()
+		if err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "conversation deletion failed")
+			return
+		}
+		defer tx.Rollback()
+		if _, err := tx.Exec(`UPDATE conversations SET rotation_required=? WHERE id=?`, true, conversationID); err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "conversation deletion failed")
+			return
+		}
+		if _, err := tx.Exec(`DELETE FROM conversation_members WHERE conversation_id=? AND user_id=?`, conversationID, userID); err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "conversation deletion failed")
+			return
+		}
+		if err := tx.Commit(); err != nil {
 			httpx.Error(w, http.StatusInternalServerError, "conversation deletion failed")
 			return
 		}
@@ -665,6 +847,12 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) isMember(conversationID, userID int64) bool {
 	var count int
 	return h.DB.QueryRow(`SELECT COUNT(*) FROM conversation_members WHERE conversation_id=? AND user_id=?`, conversationID, userID).Scan(&count) == nil && count == 1
+}
+
+func (h *Handler) isActiveMember(conversationID, userID int64) bool {
+	var count int
+	return h.DB.QueryRow(`SELECT COUNT(*) FROM conversation_members WHERE conversation_id=? AND user_id=? AND role<>'pending'`, conversationID, userID).
+		Scan(&count) == nil && count == 1
 }
 
 func (h *Handler) hasAcceptedContact(ownerID, contactUserID int64) bool {

@@ -25,6 +25,7 @@ func (h *Handler) CreatePoll(w http.ResponseWriter, r *http.Request) {
 		IV               string `json:"iv"`
 		OptionCount      int    `json:"option_count"`
 		ExpiresInSeconds int64  `json:"expires_in_seconds"`
+		KeyEpoch         int64  `json:"key_epoch"`
 	}
 	if !httpx.Decode(w, r, &input) {
 		return
@@ -38,9 +39,9 @@ func (h *Handler) CreatePoll(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid poll expiration")
 		return
 	}
-	message, err := h.insert(conversationID, userID, &input.EncryptedContent, input.IV, nil, nil, pollExpiresAt, input.OptionCount, nil)
+	message, err := h.insert(conversationID, userID, &input.EncryptedContent, input.IV, input.KeyEpoch, nil, nil, pollExpiresAt, input.OptionCount, nil)
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "poll creation failed")
+		h.writeCreateError(w, err)
 		return
 	}
 	h.broadcast(message)

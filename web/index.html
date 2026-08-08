@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1b5260">
-  <meta name="vibration-build" content="modal-files-dialog-v259">
+  <meta name="vibration-build" content="passphrase-strength-v276">
   <style>
     :root { --avatar-bg: #1b5260; --avatar-fg: #a9fff4; background-color: #1b5260; }
     html[data-theme="light"] { --avatar-bg: #c9e7e4; --avatar-fg: #075e57; background-color: #c9e7e4; }
@@ -16,14 +16,15 @@
     #startup-splash svg { position: absolute; top: var(--startup-symbol-y, 0); left: var(--startup-symbol-x, calc((100vw - 120px) / 2)); display: block; width: 120px; height: 120px; visibility: hidden; fill: none; stroke: var(--avatar-fg); stroke-width: 1.25; stroke-linejoin: miter; animation: none; transition: none; }
     html.ios-pwa-splash-positioned #startup-splash svg { visibility: visible; }
   </style>
-  <script src="/js/theme.js?v=startup-preload-v250"></script>
+  <script src="/js/theme.js?v=macos-titlebar-v251"></script>
   <title>Vibration</title>
-  <link rel="manifest" href="/manifest.json?v=startup-preload-v250">
+  <link rel="manifest" href="/manifest.json?v=desktop-titlebar-v252">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=modal-files-dialog-v259">
+  <link rel="stylesheet" href="/css/style.css?v=passphrase-strength-v276">
 </head>
 <body>
+  <div class="desktop-titlebar-drag-region" data-tauri-drag-region aria-hidden="true"></div>
   <div id="startup-splash" role="status" aria-label="Chargement de Vibration">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 20 12 12 20 4 12Z"></path></svg>
   </div>
@@ -395,6 +396,11 @@
         <progress id="profile-storage-progress" max="1" value="0" aria-label="Espace de stockage"></progress>
         <small id="profile-storage-status">Vérification…</small>
       </section>
+      <section class="profile-notifications" aria-labelledby="profile-identity-title">
+        <h4 id="profile-identity-title">Empreinte de sécurité</h4>
+        <output id="profile-identity-fingerprint" class="identity-fingerprint" aria-live="polite">Vérification…</output>
+        <small id="profile-identity-status">Cette empreinte identifie votre clé publique. Comparez-la avec vos correspondants par un autre moyen.</small>
+      </section>
       <section class="profile-notifications" aria-labelledby="profile-security-title">
         <h4 id="profile-security-title">Clé de chiffrement locale</h4>
         <small id="remembered-key-status">Vérification…</small>
@@ -447,6 +453,14 @@
           <dt>Description</dt>
           <dd id="conversation-info-description"></dd>
         </div>
+        <div id="conversation-info-fingerprint-row">
+          <dt>Empreinte de sécurité</dt>
+          <dd class="identity-trust-detail">
+            <code id="conversation-info-fingerprint" class="identity-fingerprint">—</code>
+            <small id="conversation-info-trust-status" aria-live="polite"></small>
+            <button id="conversation-info-verify" class="outline identity-verify-button" type="button">Marquer comme vérifiée</button>
+          </dd>
+        </div>
       </dl>
     </section>
   </dialog>
@@ -463,6 +477,6 @@
     </form>
   </dialog>
   <div id="toasts" aria-live="polite"></div>
-  <script type="module" src="/js/app.js?v=modal-files-dialog-v259"></script>
+  <script type="module" src="/js/app.js?v=passphrase-strength-v276"></script>
 </body>
 </html>

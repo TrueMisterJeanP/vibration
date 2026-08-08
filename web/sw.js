@@ -1,12 +1,12 @@
-const CACHE = "chat-pwa-go-v259";
+const CACHE = "chat-pwa-go-v276";
 const SHELL = [
-  "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=modal-files-dialog-v259",
-  "/js/app.js?v=modal-files-dialog-v259", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios17-pdf-v199", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=startup-preload-v250",
-  "/js/notifications.js?v=modal-files-dialog-v259", "/js/device-vault.js", "/js/i18n.js", "/js/ui.js?v=ios17-pdf-v211", "/js/share.js?v=ios17-pdf-v199", "/js/login.js", "/manifest.json?v=startup-preload-v250",
+  "/", "/index.html", "/login.html", "/share.html", "/css/style.css?v=passphrase-strength-v276",
+  "/js/app.js?v=passphrase-strength-v276", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios17-pdf-v199", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=macos-titlebar-v251",
+  "/js/notifications.js?v=passphrase-strength-v276", "/js/device-vault.js", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js", "/js/ui.js?v=ios17-pdf-v211", "/js/share.js?v=ios17-pdf-v199", "/js/login.js?v=passphrase-strength-v276", "/manifest.json?v=desktop-titlebar-v252",
   "/js/pdf-preview-compat.js?v=ios17-pdf-v199",
-  "/js/conversation-cache.js?v=cache-v1",
+  "/js/conversation-cache.js?v=cache-v3",
   "/js/file-preview-image.js?v=ios17-pdf-v199",
-  "/js/office-preview.js?v=safari-office-hit-test-v258",
+  "/js/office-preview.js?v=office-faithful-preview-v265",
   "/vendor/pdfjs/pdf.compat.mjs?v=ios17-pdf-v199",
   "/vendor/pdfjs/pdf.min.mjs?v=ios17-pdf-v199",
   "/vendor/pdfjs/pdf.worker.compat.mjs?v=ios17-pdf-v199",
@@ -17,9 +17,10 @@ const SHELL = [
   "/vendor/docx-preview/docx-preview.min.js?v=office-preview-v254",
   "/vendor/exceljs/exceljs.min.js?v=office-preview-v254",
   "/vendor/pptx-preview/pptx-preview.umd.js?v=office-preview-v254",
+  "/vendor/html2canvas/html2canvas.min.js?v=office-faithful-preview-v265",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/person.svg", "/icons/group.svg",
 ];
-const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=startup-preload-v250"];
+const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=admin-pagination-v267"];
 const STARTUP_CACHE_PATHS = new Set(["/", "/index.html", "/css/style.css", "/js/theme.js"]);
 
 self.addEventListener("install", (event) => {

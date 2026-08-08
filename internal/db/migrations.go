@@ -63,6 +63,8 @@ var migrations = []string{
 		encrypted_description TEXT,
 		encrypted_avatar TEXT,
 		federation_key_id TEXT,
+		current_key_epoch INTEGER NOT NULL DEFAULT 1,
+		rotation_required INTEGER NOT NULL DEFAULT 0,
 		created_by INTEGER NOT NULL REFERENCES users(id),
 		created_at TEXT NOT NULL
 	)`,
@@ -76,12 +78,22 @@ var migrations = []string{
 		created_at TEXT NOT NULL,
 		UNIQUE(conversation_id, user_id)
 	)`,
+	`CREATE TABLE IF NOT EXISTS conversation_key_envelopes (
+		conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+		key_epoch INTEGER NOT NULL,
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		encrypted_conversation_key TEXT NOT NULL,
+		sender_public_key TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		PRIMARY KEY(conversation_id, key_epoch, user_id)
+	)`,
 	`CREATE TABLE IF NOT EXISTS messages (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
 		sender_id INTEGER NOT NULL REFERENCES users(id),
 		encrypted_content TEXT,
 		iv TEXT NOT NULL,
+		key_epoch INTEGER NOT NULL DEFAULT 1,
 		reply_to INTEGER REFERENCES messages(id) ON DELETE SET NULL,
 		expires_at TEXT,
 		poll_expires_at TEXT,
@@ -356,6 +368,23 @@ func Migrate(database *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	for _, column := range []struct {
+		name       string
+		definition string
+	}{
+		{"current_key_epoch", "INTEGER NOT NULL DEFAULT 1"},
+		{"rotation_required", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		exists, err = columnExists(tx, "conversations", column.name)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if _, err := tx.Exec(`ALTER TABLE conversations ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
+				return fmt.Errorf("add conversations.%s: %w", column.name, err)
+			}
+		}
+	}
 	if !exists {
 		if _, err := tx.Exec(`ALTER TABLE conversations ADD COLUMN federation_key_id TEXT`); err != nil {
 			return fmt.Errorf("add conversations.federation_key_id: %w", err)
@@ -410,6 +439,7 @@ func Migrate(database *sql.DB) error {
 		{"poll_expires_at", "TEXT"},
 		{"pinned_by", "INTEGER REFERENCES users(id)"},
 		{"pinned_at", "TEXT"},
+		{"key_epoch", "INTEGER NOT NULL DEFAULT 1"},
 	} {
 		exists, err := columnExists(tx, "messages", column.name)
 		if err != nil {
@@ -422,6 +452,15 @@ func Migrate(database *sql.DB) error {
 		}
 	}
 	for _, statement := range []string{
+		`CREATE TABLE IF NOT EXISTS conversation_key_envelopes (
+			conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+			key_epoch INTEGER NOT NULL,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			encrypted_conversation_key TEXT NOT NULL,
+			sender_public_key TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY(conversation_id, key_epoch, user_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS message_reactions (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -467,6 +506,7 @@ func Migrate(database *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_poll_options_message ON poll_options(message_id, position)`,
 		`CREATE INDEX IF NOT EXISTS idx_poll_votes_message ON poll_votes(message_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_members_favorites ON conversation_members(user_id, favorite_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_key_envelopes_user ON conversation_key_envelopes(user_id, conversation_id, key_epoch)`,
 	} {
 		if _, err := tx.Exec(statement); err != nil {
 			return fmt.Errorf("create federation index: %w", err)
@@ -476,6 +516,14 @@ func Migrate(database *sql.DB) error {
 		SELECT id,pinned_by,pinned_at FROM messages
 		WHERE pinned_by IS NOT NULL AND pinned_at IS NOT NULL`); err != nil {
 		return fmt.Errorf("backfill personal message pins: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO conversation_key_envelopes(
+		conversation_id,key_epoch,user_id,encrypted_conversation_key,sender_public_key,created_at)
+		SELECT cm.conversation_id,1,cm.user_id,cm.encrypted_conversation_key,u.public_key,c.created_at
+		FROM conversation_members cm
+		JOIN conversations c ON c.id=cm.conversation_id AND c.type='group'
+		JOIN users u ON u.id=c.created_by`); err != nil {
+		return fmt.Errorf("backfill group key envelopes: %w", err)
 	}
 	if _, err := tx.Exec(`UPDATE users SET is_admin=1
 		WHERE id=(SELECT id FROM users ORDER BY id LIMIT 1)

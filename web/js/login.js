@@ -1,5 +1,10 @@
 import { api, getInstanceURL, hasStoredInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js";
-import { createIdentity } from "./crypto.js";
+import {
+  assessNewPassphrase,
+  createIdentity,
+  generateStrongPassphrase,
+  NEW_PASSPHRASE_POLICY_MESSAGE,
+} from "./crypto.js";
 import { recordSuccessfulLogin } from "./device-vault.js";
 import {
   registerServiceWorker,
@@ -17,11 +22,56 @@ const loginInstanceURLLabel = document.querySelector("#login-instance-url-label"
 const errorRegion = document.querySelector("#auth-error");
 const loginTab = document.querySelector("#login-tab");
 const registerTab = document.querySelector("#register-tab");
+const registerPhraseInput = document.querySelector("#register-phrase");
+const passphraseStrength = document.querySelector("#passphrase-strength");
+const passphraseStrengthMeter = document.querySelector("#passphrase-strength-meter");
+const generatedPassphrasePanel = document.querySelector("#generated-passphrase-panel");
+const generatedPassphraseOutput = document.querySelector("#generated-passphrase");
 let retryLoginAfterInstanceUpdate = false;
 let registrationSettingsRequest = 0;
 let termsAcceptancePromise = null;
 const SHARE_RETURN_STORAGE_KEY = "vibration.file_share_return";
 const invitationLinkCode = new URLSearchParams(location.search).get("invitation")?.trim().toLowerCase() || "";
+
+function updatePassphraseStrength() {
+  const assessment = assessNewPassphrase(registerPhraseInput.value);
+  passphraseStrengthMeter.value = assessment.score;
+  passphraseStrength.dataset.state = assessment.valid ? "strong" : (assessment.reason === "empty" ? "empty" : "weak");
+  passphraseStrength.textContent = assessment.valid
+    ? t("Phrase suffisamment robuste.")
+    : t(assessment.reason === "empty" ? "Saisissez une phrase secrète." : "Phrase trop faible.");
+  registerPhraseInput.setAttribute("aria-invalid", String(assessment.reason !== "empty" && !assessment.valid));
+  return assessment;
+}
+
+registerPhraseInput.addEventListener("input", () => {
+  if (generatedPassphraseOutput.value && registerPhraseInput.value !== generatedPassphraseOutput.value) {
+    generatedPassphrasePanel.hidden = true;
+  }
+  updatePassphraseStrength();
+});
+
+document.querySelector("#generate-passphrase").addEventListener("click", () => {
+  const phrase = generateStrongPassphrase();
+  registerPhraseInput.value = phrase;
+  registerForm.elements.phrase_confirm.value = phrase;
+  generatedPassphraseOutput.value = phrase;
+  generatedPassphrasePanel.hidden = false;
+  updatePassphraseStrength();
+  registerPhraseInput.focus({ preventScroll: true });
+});
+
+document.querySelector("#copy-passphrase").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  try {
+    await navigator.clipboard.writeText(generatedPassphraseOutput.value);
+    button.textContent = t("Phrase copiée.");
+    setTimeout(() => { button.textContent = t("Copier la phrase"); }, 1800);
+  } catch {
+    generatedPassphraseOutput.focus({ preventScroll: true });
+    errorRegion.textContent = t("Copie impossible. Sélectionnez la phrase affichée.");
+  }
+});
 
 function postAuthenticationDestination() {
   if (new URLSearchParams(location.search).get("return_share") !== "1") return "/";
@@ -338,6 +388,12 @@ registerForm.addEventListener("submit", async (event) => {
   }
   if (data.phrase !== data.phrase_confirm) {
     errorRegion.textContent = t("Les phrases secrètes diffèrent.");
+    registerForm.elements.phrase_confirm.focus({ preventScroll: true });
+    return;
+  }
+  if (!assessNewPassphrase(data.phrase).valid) {
+    errorRegion.textContent = t("Phrase secrète trop faible. {policy}", { policy: t(NEW_PASSPHRASE_POLICY_MESSAGE) });
+    registerPhraseInput.focus({ preventScroll: true });
     return;
   }
   const notificationPermission = requestNotificationPermissionOnSignIn().catch(() => "default");

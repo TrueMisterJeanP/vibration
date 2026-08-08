@@ -11,6 +11,7 @@ import (
 type eventInput struct {
 	EncryptedContent string `json:"encrypted_content"`
 	IV               string `json:"iv"`
+	KeyEpoch         int64  `json:"key_epoch"`
 	StartsAt         string `json:"starts_at"`
 	EndsAt           string `json:"ends_at"`
 }
@@ -31,9 +32,9 @@ func (h *Handler) CreateEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	event := &Event{StartsAt: input.StartsAt, EndsAt: input.EndsAt}
-	message, err := h.insert(conversationID, userID, &input.EncryptedContent, input.IV, nil, nil, nil, 0, event)
+	message, err := h.insert(conversationID, userID, &input.EncryptedContent, input.IV, input.KeyEpoch, nil, nil, nil, 0, event)
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "event creation failed")
+		h.writeCreateError(w, err)
 		return
 	}
 	h.broadcast(message)
@@ -102,7 +103,7 @@ func (h *Handler) UpdateEvent(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserID(r)
 	rows, err := h.DB.Query(`SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,
-		m.encrypted_content,m.iv,m.created_at,m.updated_at,e.starts_at,e.ends_at
+		m.encrypted_content,m.iv,m.key_epoch,m.created_at,m.updated_at,e.starts_at,e.ends_at
 		FROM message_events e JOIN messages m ON m.id=e.message_id JOIN users u ON u.id=m.sender_id
 		JOIN conversation_members cm ON cm.conversation_id=m.conversation_id AND cm.user_id=? AND cm.role<>'pending'
 		WHERE m.created_at>=cm.created_at ORDER BY e.starts_at,e.ends_at,m.id`, userID)
@@ -116,7 +117,7 @@ func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 		var message Message
 		var event Event
 		if rows.Scan(&message.ID, &message.ConversationID, &message.SenderID, &message.SenderUsername, &message.SenderAvatar,
-			&message.EncryptedContent, &message.IV, &message.CreatedAt, &message.UpdatedAt, &event.StartsAt, &event.EndsAt) == nil {
+			&message.EncryptedContent, &message.IV, &message.KeyEpoch, &message.CreatedAt, &message.UpdatedAt, &event.StartsAt, &event.EndsAt) == nil {
 			message.Event = &event
 			result = append(result, message)
 		}

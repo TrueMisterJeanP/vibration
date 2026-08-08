@@ -5,6 +5,19 @@ const path = require("node:path");
 const root = path.join(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "web/js/office-preview.js"), "utf8");
 assert.match(source, /async function rasterizeOfficeElement\(element, width, height\)/);
+assert.match(source, /async function rasterizeOfficeElementWithHTMLCanvas\(element, width, height\)/);
+assert.match(source, /vendor\/html2canvas\/html2canvas\.min\.js/);
+assert.match(source, /return await rasterizeOfficeElementWithHTMLCanvas\(element, width, height\)/);
+assert.match(source, /const OFFICE_RASTER_MAX_WIDTH = 640/);
+assert.match(source, /const OFFICE_RASTER_MAX_HEIGHT = 800/);
+assert.match(source, /export async function officeFallbackPreviewBlob\(file\)/);
+assert.match(source, /async function wordContentPreview\(data\)/);
+assert.match(source, /async function excelWorksheetContentPreview\(worksheet, locale\)/);
+assert.match(source, /async function powerpointContentPreview\(data, width = 640, height = 360\)/);
+assert.match(source, /word: \{ label: "DOCX"/);
+assert.match(source, /excel: \{ label: "XLSX"/);
+assert.match(source, /powerpoint: \{ label: "PPTX"/);
+assert.match(source, /Math\.min\(1, OFFICE_RASTER_MAX_WIDTH \/ naturalWidth, OFFICE_RASTER_MAX_HEIGHT \/ naturalHeight\)/);
 assert.match(source, /officeCanvasJPEG\(canvas\)/);
 assert.match(source, /\{ type: "image\/png" \}/);
 assert.match(source, /setTimeout\(\(\) => \{/);
@@ -16,8 +29,11 @@ assert.match(source, /frame\.style\.marginLeft = "auto"/);
 assert.match(source, /appendOfficeImagePreview\(container, preview\)/);
 assert.match(source, /image\.style\.objectPosition = "center center"/);
 assert.match(source, /const declaredHeight = cssPixelLength\(computed\.minHeight\)/);
-assert.match(source, /cropWordDOMToFirstPage\(page, bodyContainer, naturalWidth, naturalHeight\)/);
+assert.match(source, /isolateFirstWordPage\(page, bodyContainer, naturalWidth, naturalHeight\)/);
 assert.match(source, /page\.style\.maxHeight = `\$\{height\}px`/);
+assert.match(source, /if \(!rasterOnly\) \{[\s\S]*fitOfficeDOMPreview\(frame, bodyContainer, naturalWidth, naturalHeight, container\)/);
+assert.match(source, /function createOfficePreviewStage\(container, kind\)/);
+assert.match(source, /commitOfficePreviewStage\(renderContainer, container\)/);
 assert.match(source, /renderSingleSlide\(0\)/);
 assert.match(source, /slideCount = Number\(previewer\.slideCount\)/);
 assert.match(source, /officeDataURLPreview\(presentation\?\.thumbnail, 960, slideHeight\)/);
@@ -35,6 +51,7 @@ const moduleURL = `data:text/javascript;base64,${Buffer.from(source).toString("b
 (async () => {
   const {
     copiedArrayBuffer,
+    extractedWordParagraphs,
     firstSlidePowerPointArchive,
     modernOfficeKind,
     officeDataURLPreview,
@@ -71,6 +88,14 @@ const moduleURL = `data:text/javascript;base64,${Buffer.from(source).toString("b
   assert.equal(thumbnail.width, 960);
   assert.equal(thumbnail.height, 540);
   assert.equal(officeDataURLPreview("not-a-data-url", 960, 540), null);
+
+  assert.deepEqual(extractedWordParagraphs(`<w:document><w:body>
+    <w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>Rapport annuel</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Chiffre</w:t></w:r><w:tab/><w:r><w:t>d’affaires</w:t></w:r></w:p>
+  </w:body></w:document>`), [
+    { text: "Rapport annuel", style: "Title", bold: false },
+    { text: "Chiffre d’affaires", style: "", bold: false },
+  ]);
 
   globalThis.getComputedStyle = () => ({ width: "816px", minHeight: "1056px" });
   const wordViewport = wordPageViewport({

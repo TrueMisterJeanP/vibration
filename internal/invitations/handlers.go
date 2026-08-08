@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -102,8 +103,21 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.DB.Query(`SELECT id,first_name,last_name,email,phone,expires_at,used_at,revoked_at,created_at
-		FROM invitation_contacts ORDER BY id DESC`)
+	paged := r.URL.Query().Has("page")
+	query := `SELECT id,first_name,last_name,email,phone,expires_at,used_at,revoked_at,created_at
+		FROM invitation_contacts ORDER BY id DESC`
+	args := make([]any, 0, 2)
+	total, page, limit, offset, totalPages := 0, 1, 0, 0, 1
+	if paged {
+		if err := h.DB.QueryRow(`SELECT COUNT(*) FROM invitation_contacts`).Scan(&total); err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "invitation count failed")
+			return
+		}
+		page, limit, offset, totalPages = invitationPagination(r, total)
+		query += ` LIMIT ? OFFSET ?`
+		args = append(args, limit, offset)
+	}
+	rows, err := h.DB.Query(query, args...)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "invitation lookup failed")
 		return
@@ -123,6 +137,16 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		deadline, parseErr := time.Parse(time.RFC3339Nano, item.ExpiresAt)
 		item.Active = !usedAt.Valid && !revokedAt.Valid && parseErr == nil && deadline.After(now)
 		items = append(items, item)
+	}
+	if paged {
+		httpx.JSON(w, http.StatusOK, map[string]any{
+			"items":       items,
+			"page":        page,
+			"page_size":   limit,
+			"total":       total,
+			"total_pages": totalPages,
+		})
+		return
 	}
 	httpx.JSON(w, http.StatusOK, items)
 }
@@ -203,6 +227,25 @@ func nullable(value sql.NullString) *string {
 	}
 	result := value.String
 	return &result
+}
+
+func invitationPagination(r *http.Request, total int) (page, limit, offset, totalPages int) {
+	limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 100 {
+		limit = 10
+	}
+	totalPages = (total + limit - 1) / limit
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	page, _ = strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	return page, limit, (page - 1) * limit, totalPages
 }
 
 func (h *Handler) audit(r *http.Request, id int64, action, details string) error {

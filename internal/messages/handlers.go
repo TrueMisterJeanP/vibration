@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"chat-pwa-go/internal/auth"
+	"chat-pwa-go/internal/groupkeys"
 	"chat-pwa-go/internal/httpx"
 )
 
@@ -36,6 +37,7 @@ type FederationRouter interface {
 	QueueGroupDelete(conversationID, userID int64)
 	QueueGroupMemberAdd(conversationID, memberID int64)
 	QueueGroupMemberRemove(conversationID, memberID int64)
+	QueueGroupRotation(conversationID int64, removedMemberIDs, addedMemberIDs []int64)
 	QueuePollUpdate(messageID int64, encryptedContent, iv string, optionCount int, expiresAt *string)
 	QueuePollDelete(conversationID, messageID, userID int64)
 	QueuePollVote(messageID, userID int64, optionPosition int, votedAt string)
@@ -58,6 +60,7 @@ type Message struct {
 	SenderAvatar     *string    `json:"sender_avatar"`
 	EncryptedContent *string    `json:"encrypted_content"`
 	IV               string     `json:"iv"`
+	KeyEpoch         int64      `json:"key_epoch"`
 	ReplyTo          *int64     `json:"reply_to"`
 	ExpiresAt        *string    `json:"expires_at"`
 	IsPinned         bool       `json:"is_pinned"`
@@ -133,7 +136,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	h.deleteExpired(conversationID)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	query := `SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,m.encrypted_content,m.iv,m.reply_to,m.expires_at,mp.user_id,mp.created_at,m.created_at,m.updated_at,
+	query := `SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,m.encrypted_content,m.iv,m.key_epoch,m.reply_to,m.expires_at,mp.user_id,mp.created_at,m.created_at,m.updated_at,
 		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,f.preview_size,
 		CASE
 			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status<>'read') THEN 'read'
@@ -156,7 +159,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		var fileID, pinnedBy sql.NullInt64
 		var fileName, fileMIME, fileIV, expiresAt, pinnedAt sql.NullString
 		var fileSize, previewSize sql.NullInt64
-		if rows.Scan(&item.ID, &item.ConversationID, &item.SenderID, &item.SenderUsername, &item.SenderAvatar, &item.EncryptedContent, &item.IV,
+		if rows.Scan(&item.ID, &item.ConversationID, &item.SenderID, &item.SenderUsername, &item.SenderAvatar, &item.EncryptedContent, &item.IV, &item.KeyEpoch,
 			&item.ReplyTo, &expiresAt, &pinnedBy, &pinnedAt, &item.CreatedAt, &item.UpdatedAt, &fileID, &fileName, &fileMIME, &fileIV, &fileSize, &previewSize, &item.Status) == nil {
 			if expiresAt.Valid {
 				item.ExpiresAt = &expiresAt.String
@@ -197,7 +200,7 @@ func (h *Handler) ListPinned(w http.ResponseWriter, r *http.Request) {
 	}
 	h.deleteExpired(conversationID)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	rows, err := h.DB.Query(`SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,m.encrypted_content,m.iv,m.reply_to,m.expires_at,mp.user_id,mp.created_at,m.created_at,m.updated_at,
+	rows, err := h.DB.Query(`SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,m.encrypted_content,m.iv,m.key_epoch,m.reply_to,m.expires_at,mp.user_id,mp.created_at,m.created_at,m.updated_at,
 		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,f.preview_size,
 		CASE
 			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status<>'read') THEN 'read'
@@ -221,7 +224,7 @@ func (h *Handler) ListPinned(w http.ResponseWriter, r *http.Request) {
 		var fileID, pinnedBy sql.NullInt64
 		var fileName, fileMIME, fileIV, expiresAt, pinnedAt sql.NullString
 		var fileSize, previewSize sql.NullInt64
-		if rows.Scan(&item.ID, &item.ConversationID, &item.SenderID, &item.SenderUsername, &item.SenderAvatar, &item.EncryptedContent, &item.IV,
+		if rows.Scan(&item.ID, &item.ConversationID, &item.SenderID, &item.SenderUsername, &item.SenderAvatar, &item.EncryptedContent, &item.IV, &item.KeyEpoch,
 			&item.ReplyTo, &expiresAt, &pinnedBy, &pinnedAt, &item.CreatedAt, &item.UpdatedAt, &fileID, &fileName, &fileMIME, &fileIV, &fileSize, &previewSize, &item.Status) == nil {
 			if expiresAt.Valid {
 				item.ExpiresAt = &expiresAt.String
@@ -254,6 +257,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		IV               string `json:"iv"`
 		ReplyTo          *int64 `json:"reply_to"`
 		ExpiresInSeconds int64  `json:"expires_in_seconds"`
+		KeyEpoch         int64  `json:"key_epoch"`
 	}
 	if !httpx.Decode(w, r, &input) {
 		return
@@ -267,9 +271,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid message expiration")
 		return
 	}
-	message, err := h.insert(conversationID, userID, &input.EncryptedContent, input.IV, input.ReplyTo, expiresAt, nil, 0, nil)
+	message, err := h.insert(conversationID, userID, &input.EncryptedContent, input.IV, input.KeyEpoch, input.ReplyTo, expiresAt, nil, 0, nil)
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "message creation failed")
+		h.writeCreateError(w, err)
 		return
 	}
 	h.broadcast(message)
@@ -279,15 +283,19 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, message)
 }
 
-func (h *Handler) insert(conversationID, userID int64, content *string, iv string, replyTo *int64, expiresAt, pollExpiresAt *string, pollOptionCount int, event *Event) (Message, error) {
+func (h *Handler) insert(conversationID, userID int64, content *string, iv string, keyEpoch int64, replyTo *int64, expiresAt, pollExpiresAt *string, pollOptionCount int, event *Event) (Message, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := h.DB.Begin()
 	if err != nil {
 		return Message{}, err
 	}
 	defer tx.Rollback()
-	result, err := tx.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,reply_to,expires_at,poll_expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)`,
-		conversationID, userID, content, iv, replyTo, expiresAt, pollExpiresAt, now)
+	keyEpoch, err = groupkeys.ValidateSend(tx, conversationID, userID, keyEpoch)
+	if err != nil {
+		return Message{}, err
+	}
+	result, err := tx.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,key_epoch,reply_to,expires_at,poll_expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+		conversationID, userID, content, iv, keyEpoch, replyTo, expiresAt, pollExpiresAt, now)
 	if err != nil {
 		return Message{}, err
 	}
@@ -349,7 +357,18 @@ func (h *Handler) insert(conversationID, userID int64, content *string, iv strin
 		return Message{}, err
 	}
 	return Message{ID: id, ConversationID: conversationID, SenderID: userID, SenderUsername: username,
-		SenderAvatar: avatar, EncryptedContent: content, IV: iv, ReplyTo: replyTo, ExpiresAt: expiresAt, CreatedAt: now, Poll: poll, Event: event, Status: "sent"}, nil
+		SenderAvatar: avatar, EncryptedContent: content, IV: iv, KeyEpoch: keyEpoch, ReplyTo: replyTo, ExpiresAt: expiresAt, CreatedAt: now, Poll: poll, Event: event, Status: "sent"}, nil
+}
+
+func (h *Handler) writeCreateError(w http.ResponseWriter, err error) {
+	switch err {
+	case groupkeys.ErrNotMember:
+		httpx.Error(w, http.StatusNotFound, err.Error())
+	case groupkeys.ErrRotationRequired, groupkeys.ErrStaleEpoch:
+		httpx.Error(w, http.StatusConflict, err.Error())
+	default:
+		httpx.Error(w, http.StatusInternalServerError, "message creation failed")
+	}
 }
 
 func (h *Handler) Read(w http.ResponseWriter, r *http.Request) {

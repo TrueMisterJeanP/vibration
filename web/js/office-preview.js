@@ -1,4 +1,8 @@
 const OFFICE_PREVIEW_BUILD = "office-preview-v254";
+const OFFICE_RASTER_MAX_WIDTH = 640;
+const OFFICE_RASTER_MAX_HEIGHT = 800;
+const OFFICE_FALLBACK_WIDTH = 640;
+const OFFICE_FALLBACK_HEIGHT = 420;
 const scriptLoads = new Map();
 const previewCleanups = new Set();
 
@@ -139,6 +143,67 @@ function officeCanvasJPEG(canvas, quality = 0.82) {
   });
 }
 
+function fittedOfficeFilename(context, name, maxWidth) {
+  const source = String(name || "Document Office");
+  if (context.measureText(source).width <= maxWidth) return source;
+  let end = source.length;
+  while (end > 1 && context.measureText(`${source.slice(0, end)}…`).width > maxWidth) end -= 1;
+  return `${source.slice(0, Math.max(1, end))}…`;
+}
+
+export async function officeFallbackPreviewBlob(file) {
+  const kind = modernOfficeKind(file);
+  if (!kind) return null;
+  if (file?.data) {
+    try {
+      const contentPreview = await officeContentPreview(file, kind);
+      if (contentPreview?.size > 0) return contentPreview;
+    } catch (error) {
+      console.warn("Création de l’aperçu Office à partir du contenu impossible", error);
+    }
+  }
+  const presentation = {
+    word: { label: "DOCX", color: "#2563eb", pale: "#dbeafe" },
+    excel: { label: "XLSX", color: "#15803d", pale: "#dcfce7" },
+    powerpoint: { label: "PPTX", color: "#c2410c", pale: "#ffedd5" },
+  }[kind];
+  const canvas = document.createElement("canvas");
+  canvas.width = OFFICE_FALLBACK_WIDTH;
+  canvas.height = OFFICE_FALLBACK_HEIGHT;
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) return null;
+
+  context.fillStyle = "#f8fafc";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = presentation.pale;
+  context.fillRect(0, 0, canvas.width, 116);
+  context.fillStyle = presentation.color;
+  context.fillRect(48, 50, 126, 154);
+  context.fillStyle = "#ffffff";
+  context.fillRect(66, 70, 90, 104);
+  context.fillStyle = presentation.color;
+  context.fillRect(66, 70, 90, 32);
+  context.font = "700 19px system-ui, -apple-system, sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillStyle = "#ffffff";
+  context.fillText(presentation.label, 111, 86);
+
+  context.textAlign = "left";
+  context.fillStyle = "#172124";
+  context.font = "700 32px system-ui, -apple-system, sans-serif";
+  context.fillText(presentation.label, 206, 91);
+  context.font = "600 25px system-ui, -apple-system, sans-serif";
+  context.fillText(fittedOfficeFilename(context, file?.name, 536), 52, 272);
+  context.fillStyle = "#64748b";
+  context.font = "400 20px system-ui, -apple-system, sans-serif";
+  context.fillText("Aperçu du document", 52, 318);
+  context.fillStyle = presentation.color;
+  context.fillRect(52, 353, 536, 5);
+
+  return officeCanvasJPEG(canvas, 0.72);
+}
+
 async function rasterizeOfficeElement(element, width, height) {
   const naturalWidth = Math.max(1, Math.ceil(width || element.scrollWidth || element.getBoundingClientRect().width));
   const naturalHeight = Math.max(1, Math.ceil(height || element.scrollHeight || element.getBoundingClientRect().height));
@@ -165,19 +230,64 @@ async function rasterizeOfficeElement(element, width, height) {
     } catch {
       await loadSource(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
     }
+    const scale = Math.min(1, OFFICE_RASTER_MAX_WIDTH / naturalWidth, OFFICE_RASTER_MAX_HEIGHT / naturalHeight);
     const canvas = document.createElement("canvas");
-    canvas.width = naturalWidth;
-    canvas.height = naturalHeight;
+    canvas.width = Math.max(1, Math.round(naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(naturalHeight * scale));
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("Le contexte de rendu image est indisponible.");
     context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, naturalWidth, naturalHeight);
-    context.drawImage(source, 0, 0, naturalWidth, naturalHeight);
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
     const blob = await officeCanvasJPEG(canvas);
     if (!blob) throw new Error("La conversion image du document Office est indisponible.");
-    return { blob, width: naturalWidth, height: naturalHeight };
+    return { blob, width: canvas.width, height: canvas.height };
   } finally {
     URL.revokeObjectURL(sourceURL);
+  }
+}
+
+async function htmlCanvasRenderer() {
+  await loadScript(
+    `/vendor/html2canvas/html2canvas.min.js?v=office-faithful-preview-v265`,
+    () => typeof globalThis.html2canvas === "function",
+  );
+  return globalThis.html2canvas;
+}
+
+async function rasterizeOfficeElementWithHTMLCanvas(element, width, height) {
+  const html2canvas = await htmlCanvasRenderer();
+  const naturalWidth = Math.max(1, Math.ceil(width || element.scrollWidth || element.getBoundingClientRect().width));
+  const naturalHeight = Math.max(1, Math.ceil(height || element.scrollHeight || element.getBoundingClientRect().height));
+  const scale = Math.min(1, OFFICE_RASTER_MAX_WIDTH / naturalWidth, OFFICE_RASTER_MAX_HEIGHT / naturalHeight);
+  const captureID = `office-capture-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  element.dataset.officeCaptureId = captureID;
+  try {
+    const canvas = await html2canvas(element, {
+      allowTaint: false,
+      backgroundColor: "#ffffff",
+      imageTimeout: 10000,
+      logging: false,
+      onclone: (clonedDocument) => {
+        const clonedElement = clonedDocument.querySelector(`[data-office-capture-id="${captureID}"]`);
+        for (let current = clonedElement; current; current = current.parentElement) {
+          current.style.visibility = "visible";
+          current.style.opacity = "1";
+        }
+      },
+      removeContainer: true,
+      scale,
+      useCORS: false,
+      width: naturalWidth,
+      height: naturalHeight,
+      windowWidth: Math.max(document.documentElement.clientWidth, naturalWidth),
+      windowHeight: Math.max(document.documentElement.clientHeight, naturalHeight),
+    });
+    const blob = await officeCanvasJPEG(canvas, 0.8);
+    if (!blob) throw new Error("La capture fidèle du document Office est indisponible.");
+    return { blob, width: canvas.width, height: canvas.height };
+  } finally {
+    delete element.dataset.officeCaptureId;
   }
 }
 
@@ -185,9 +295,15 @@ async function tryRasterizeOfficeElement(element, width, height) {
   try {
     return await rasterizeOfficeElement(element, width, height);
   } catch (error) {
-    // Rendering the Office DOM remains useful even when a browser blocks
-    // SVG/foreignObject rasterization or canvas export.
-    console.warn("Conversion image du document Office impossible", error);
+    console.warn("Conversion SVG du document Office impossible", error);
+  }
+  try {
+    // html2canvas reproduit directement les styles calculés, images, tableaux
+    // et couleurs sans dépendre de SVG/foreignObject, bloqué par certains
+    // moteurs Safari et Firefox.
+    return await rasterizeOfficeElementWithHTMLCanvas(element, width, height);
+  } catch (error) {
+    console.warn("Capture fidèle du document Office impossible", error);
     return null;
   }
 }
@@ -234,6 +350,28 @@ function appendOfficeImagePreview(container, preview) {
   container.replaceChildren(image);
 }
 
+function createOfficePreviewStage(container, kind) {
+  const bounds = container.getBoundingClientRect();
+  const fallbackWidth = container.classList.contains("message-reply-file-thumb") ? 72 : 460;
+  const width = Math.max(1, Math.ceil(bounds.width || fallbackWidth));
+  const stage = document.createElement("div");
+  stage.className = `file-preview office-file-preview office-${kind}-file-preview office-preview-stage`;
+  stage.inert = true;
+  stage.style.position = "fixed";
+  stage.style.left = "-100000px";
+  stage.style.top = "0";
+  stage.style.width = `${width}px`;
+  stage.style.maxWidth = `${width}px`;
+  stage.style.visibility = "hidden";
+  stage.style.pointerEvents = "none";
+  document.body.append(stage);
+  return stage;
+}
+
+function commitOfficePreviewStage(stage, container) {
+  container.replaceChildren(...stage.childNodes);
+}
+
 export function officeDataURLPreview(source, width, height) {
   const match = /^data:([^;,]+)?(;base64)?,([\s\S]*)$/i.exec(String(source || ""));
   if (!match) return null;
@@ -275,11 +413,16 @@ function loadScript(source, available) {
   return load;
 }
 
-async function wordRenderer() {
+async function zipRenderer() {
   await loadScript(
     `/vendor/jszip/jszip.min.js?v=${OFFICE_PREVIEW_BUILD}`,
     () => typeof globalThis.JSZip === "function",
   );
+  return globalThis.JSZip;
+}
+
+async function wordRenderer() {
+  await zipRenderer();
   await loadScript(
     `/vendor/docx-preview/docx-preview.min.js?v=${OFFICE_PREVIEW_BUILD}`,
     () => typeof globalThis.docx?.renderAsync === "function",
@@ -296,10 +439,7 @@ async function excelRenderer() {
 }
 
 async function powerpointRenderer() {
-  await loadScript(
-    `/vendor/jszip/jszip.min.js?v=${OFFICE_PREVIEW_BUILD}`,
-    () => typeof globalThis.JSZip === "function",
-  );
+  await zipRenderer();
   await loadScript(
     `/vendor/pptx-preview/pptx-preview.umd.js?v=${OFFICE_PREVIEW_BUILD}`,
     () => typeof globalThis.pptxPreview?.init === "function",
@@ -480,6 +620,242 @@ function decodedXMLText(value) {
     .replace(/&amp;/gi, "&");
 }
 
+function wrappedOfficeCanvasLines(context, value, maxWidth, maxLines = Infinity) {
+  const paragraphs = String(value || "").split(/\r?\n/);
+  const lines = [];
+  for (const paragraph of paragraphs) {
+    const words = paragraph.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      if (lines.length < maxLines) lines.push("");
+      continue;
+    }
+    let line = "";
+    for (const word of words) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (!line || context.measureText(candidate).width <= maxWidth) {
+        line = candidate;
+      } else {
+        lines.push(line);
+        if (lines.length >= maxLines) return lines;
+        line = word;
+      }
+    }
+    if (line && lines.length < maxLines) lines.push(line);
+    if (lines.length >= maxLines) return lines;
+  }
+  return lines;
+}
+
+async function encodedOfficeCanvas(canvas, quality = 0.78) {
+  const blob = await officeCanvasJPEG(canvas, quality);
+  return blob ? { blob, width: canvas.width, height: canvas.height } : null;
+}
+
+async function embeddedOfficeThumbnail(data, width, height) {
+  const JSZip = await zipRenderer();
+  const archive = await JSZip.loadAsync(copiedArrayBuffer(data));
+  const thumbnailPath = Object.keys(archive.files).find((path) => (
+    /^docProps\/thumbnail\.(?:gif|jpe?g|png|webp)$/i.test(path)
+  ));
+  if (!thumbnailPath) return null;
+  const mime = powerpointImageMIME(thumbnailPath);
+  const thumbnailFile = archive.file(thumbnailPath);
+  if (!mime || !thumbnailFile) return null;
+  const bytes = await thumbnailFile.async("uint8array");
+  return rasterizedPowerPointImage(new Blob([bytes], { type: mime }), width, height);
+}
+
+export function extractedWordParagraphs(documentXML) {
+  return [...String(documentXML || "").matchAll(/<(?:[A-Za-z_][\w.-]*:)?p\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?p\s*>/gi)]
+    .map((paragraph) => {
+      const body = paragraph[1];
+      const text = [...body.matchAll(/<(?:[A-Za-z_][\w.-]*:)?t\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?t\s*>|<(?:[A-Za-z_][\w.-]*:)?(?:tab|br)\b[^>]*\/?\s*>/gi)]
+        .map((part) => {
+          if (/:(?:tab)\b|<tab\b/i.test(part[0])) return " ";
+          if (/:(?:br)\b|<br\b/i.test(part[0])) return "\n";
+          return decodedXMLText(part[1] || "");
+        })
+        .join("")
+        .replace(/[ \t]+/g, " ")
+        .trim();
+      const styleTag = /<(?:[A-Za-z_][\w.-]*:)?pStyle\b[^>]*>/i.exec(body)?.[0] || "";
+      const style = xmlAttribute(styleTag, "w:val") || xmlAttribute(styleTag, "val");
+      const bold = /<(?:[A-Za-z_][\w.-]*:)?b(?:\s[^>]*)?\s*\/?\s*>/i.test(body);
+      return { text, style, bold };
+    })
+    .filter((paragraph) => paragraph.text);
+}
+
+async function wordContentPreview(data) {
+  const embedded = await embeddedOfficeThumbnail(data, 566, 732).catch(() => null);
+  if (embedded) return embedded;
+  const JSZip = await zipRenderer();
+  const archive = await JSZip.loadAsync(copiedArrayBuffer(data));
+  const documentFile = archive.file("word/document.xml");
+  if (!documentFile) return null;
+  const paragraphs = extractedWordParagraphs(await documentFile.async("text"));
+  if (!paragraphs.length) return null;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 566;
+  canvas.height = 732;
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) return null;
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#172124";
+  context.textAlign = "left";
+  context.textBaseline = "alphabetic";
+  let y = 64;
+  const maxWidth = canvas.width - 104;
+  for (const paragraph of paragraphs) {
+    const heading = /(?:title|heading|titre)/i.test(paragraph.style);
+    const fontSize = heading ? 25 : 16;
+    const lineHeight = heading ? 32 : 23;
+    context.font = `${heading || paragraph.bold ? 700 : 400} ${fontSize}px Georgia, "Times New Roman", serif`;
+    const availableLines = Math.max(0, Math.floor((canvas.height - 54 - y) / lineHeight));
+    if (!availableLines) break;
+    const lines = wrappedOfficeCanvasLines(context, paragraph.text, maxWidth, availableLines);
+    for (const line of lines) {
+      context.fillText(line, 52, y);
+      y += lineHeight;
+    }
+    y += heading ? 13 : 9;
+    if (y >= canvas.height - 54) break;
+  }
+  return encodedOfficeCanvas(canvas, 0.8);
+}
+
+function excelCellFill(cell) {
+  const argb = String(cell?.fill?.fgColor?.argb || "").replace(/^FF/i, "");
+  return /^[0-9a-f]{6}$/i.test(argb) ? `#${argb}` : "#ffffff";
+}
+
+async function excelWorksheetContentPreview(worksheet, locale) {
+  if (!worksheet) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = 640;
+  canvas.height = 420;
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) return null;
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#15803d";
+  context.fillRect(0, 0, canvas.width, 44);
+  context.fillStyle = "#ffffff";
+  context.font = "700 18px system-ui, -apple-system, sans-serif";
+  context.textAlign = "left";
+  context.textBaseline = "middle";
+  context.fillText(fittedOfficeFilename(context, worksheet.name || "Feuille 1", 590), 24, 22);
+
+  const maxRows = Math.min(13, Math.max(1, worksheet.actualRowCount || worksheet.rowCount || 1));
+  const maxColumns = Math.min(7, Math.max(1, worksheet.actualColumnCount || worksheet.columnCount || 1));
+  const rowHeaderWidth = 34;
+  const columnHeaderHeight = 26;
+  const rowHeight = Math.floor((canvas.height - 44 - columnHeaderHeight) / maxRows);
+  const columnWidth = (canvas.width - rowHeaderWidth) / maxColumns;
+  context.font = "600 12px system-ui, -apple-system, sans-serif";
+  context.textAlign = "center";
+  context.fillStyle = "#eef3f4";
+  context.fillRect(0, 44, canvas.width, columnHeaderHeight);
+  context.fillStyle = "#475569";
+  for (let column = 1; column <= maxColumns; column += 1) {
+    context.fillText(String.fromCharCode(64 + column), rowHeaderWidth + (column - 0.5) * columnWidth, 44 + columnHeaderHeight / 2);
+  }
+
+  for (let rowNumber = 1; rowNumber <= maxRows; rowNumber += 1) {
+    const top = 44 + columnHeaderHeight + (rowNumber - 1) * rowHeight;
+    context.fillStyle = "#f8fafc";
+    context.fillRect(0, top, rowHeaderWidth, rowHeight);
+    context.fillStyle = "#64748b";
+    context.textAlign = "center";
+    context.font = "500 11px system-ui, -apple-system, sans-serif";
+    context.fillText(String(rowNumber), rowHeaderWidth / 2, top + rowHeight / 2);
+    const row = worksheet.getRow(rowNumber);
+    for (let column = 1; column <= maxColumns; column += 1) {
+      const left = rowHeaderWidth + (column - 1) * columnWidth;
+      const cell = row.getCell(column);
+      context.fillStyle = excelCellFill(cell);
+      context.fillRect(left, top, columnWidth, rowHeight);
+      context.save();
+      context.beginPath();
+      context.rect(left + 5, top + 1, columnWidth - 10, rowHeight - 2);
+      context.clip();
+      context.fillStyle = "#172124";
+      context.textAlign = "left";
+      context.font = `${cell?.font?.bold ? 700 : 400} 12px system-ui, -apple-system, sans-serif`;
+      context.fillText(officeCellText(cell.value, locale), left + 6, top + rowHeight / 2);
+      context.restore();
+      context.strokeStyle = "#dfe5e7";
+      context.strokeRect(left, top, columnWidth, rowHeight);
+    }
+  }
+  return encodedOfficeCanvas(canvas, 0.8);
+}
+
+async function powerpointContentPreview(data, width = 640, height = 360) {
+  const embedded = await embeddedOfficeThumbnail(data, width, height).catch(() => null);
+  if (embedded) return embedded;
+  await zipRenderer();
+  const extracted = await extractedFirstPowerPointSlide(data, width, height);
+  if (!extracted) return null;
+  if (extracted.image && !extracted.text.length) return extracted.image;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) return null;
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+  if (extracted.image) {
+    const imageURL = URL.createObjectURL(extracted.image.blob);
+    try {
+      const source = new Image();
+      await new Promise((resolve, reject) => {
+        source.onload = resolve;
+        source.onerror = reject;
+        source.src = imageURL;
+      });
+      context.drawImage(source, 0, 0, width, height);
+    } finally {
+      URL.revokeObjectURL(imageURL);
+    }
+    context.fillStyle = "rgb(255 255 255 / 0.88)";
+    context.fillRect(28, 28, Math.min(390, width - 56), height - 56);
+  }
+  const textWidth = extracted.image ? Math.min(338, width - 112) : width - 112;
+  context.fillStyle = "#172124";
+  context.textAlign = "left";
+  context.textBaseline = "alphabetic";
+  context.font = "700 31px system-ui, -apple-system, sans-serif";
+  let y = 86;
+  for (const line of wrappedOfficeCanvasLines(context, extracted.text[0] || "", textWidth, 3)) {
+    context.fillText(line, 56, y);
+    y += 38;
+  }
+  y += 12;
+  context.font = "400 19px system-ui, -apple-system, sans-serif";
+  for (const line of wrappedOfficeCanvasLines(context, extracted.text.slice(1).join("\n"), textWidth, 7)) {
+    context.fillText(line, 56, y);
+    y += 26;
+    if (y > height - 42) break;
+  }
+  return encodedOfficeCanvas(canvas, 0.8);
+}
+
+async function officeContentPreview(file, kind = modernOfficeKind(file)) {
+  if (kind === "word") return (await wordContentPreview(file.data))?.blob || null;
+  if (kind === "excel") {
+    const ExcelJS = await excelRenderer();
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(copiedArrayBuffer(file.data));
+    return (await excelWorksheetContentPreview(workbook.worksheets[0], "fr-FR"))?.blob || null;
+  }
+  if (kind === "powerpoint") return (await powerpointContentPreview(file.data))?.blob || null;
+  return null;
+}
+
 function powerpointImageMIME(path) {
   const extension = path.split(".").pop()?.toLowerCase();
   return {
@@ -566,12 +942,21 @@ async function extractedFirstPowerPointSlide(data, width, height) {
 async function renderExtractedPowerPointSlide(file, container, frame, content, slideHeight, compact, translate, rasterOnly) {
   const extracted = await extractedFirstPowerPointSlide(file.data, 960, slideHeight);
   if (!extracted) throw new Error("Impossible de lire la première diapositive PowerPoint.");
-  if (extracted.image) {
+  if (extracted.image && !extracted.text.length) {
     if (!rasterOnly) {
       appendOfficeImagePreview(container, extracted.image);
       if (!compact) appendLimitNote(container, translate("Aperçu limité à la première diapositive."));
     }
     return extracted.image;
+  }
+
+  const contentPreview = await powerpointContentPreview(file.data, 640, Math.max(1, Math.round(640 * (slideHeight / 960))));
+  if (contentPreview) {
+    if (!rasterOnly) {
+      appendOfficeImagePreview(container, contentPreview);
+      if (!compact) appendLimitNote(container, translate("Aperçu limité à la première diapositive."));
+    }
+    return contentPreview;
   }
 
   content.replaceChildren();
@@ -647,7 +1032,12 @@ export function wordPageViewport(page) {
   return { width, height };
 }
 
-function cropWordDOMToFirstPage(page, bodyContainer, width, height) {
+function isolateFirstWordPage(page, bodyContainer, width, height) {
+  page.style.boxSizing = "border-box";
+  page.style.position = "relative";
+  page.style.inset = "auto";
+  page.style.flex = "0 0 auto";
+  page.style.margin = "0";
   page.style.width = `${width}px`;
   page.style.height = `${height}px`;
   page.style.minHeight = `${height}px`;
@@ -655,6 +1045,9 @@ function cropWordDOMToFirstPage(page, bodyContainer, width, height) {
   page.style.overflow = "hidden";
   const wrapper = page.parentElement;
   if (wrapper) {
+    wrapper.style.alignItems = "flex-start";
+    wrapper.style.padding = "0";
+    wrapper.style.margin = "0";
     wrapper.style.width = `${width}px`;
     wrapper.style.height = `${height}px`;
     wrapper.style.maxHeight = `${height}px`;
@@ -702,22 +1095,21 @@ async function renderWordPreview(file, container, compact, translate, rasterOnly
   const page = pages[0] || bodyContainer.firstElementChild;
   if (!page) throw new Error("Le document Word est vide.");
   const { width: naturalWidth, height: naturalHeight } = wordPageViewport(page);
-  cropWordDOMToFirstPage(page, bodyContainer, naturalWidth, naturalHeight);
+  isolateFirstWordPage(page, bodyContainer, naturalWidth, naturalHeight);
   await nextFrame();
-  const preview = await tryRasterizeOfficeElement(page, naturalWidth, naturalHeight);
-  if (!preview) {
-    if (rasterOnly) return null;
-    fitOfficeDOMPreview(frame, bodyContainer, naturalWidth, naturalHeight, container);
-  }
+
+  // For the visible preview, keep the renderer's real page in the DOM. It is
+  // more faithful than an SVG/foreignObject screenshot and avoids the clipped
+  // edges that WebKit can introduce while rasterizing a DOCX page. The parent
+  // preview remains inert, so this DOM cannot intercept neighbouring controls.
   if (!rasterOnly) {
-    if (preview) {
-      appendOfficeImagePreview(container, preview);
-      if (!compact) appendLimitNote(container, translate("Aperçu limité à la première page."));
-    } else if (!compact) {
-      appendLimitNote(container, translate("Aperçu affiché dans le document Office."));
-    }
+    fitOfficeDOMPreview(frame, bodyContainer, naturalWidth, naturalHeight, container);
+    if (!compact) appendLimitNote(container, translate("Aperçu limité à la première page."));
+    return null;
   }
-  return preview;
+
+  const preview = await tryRasterizeOfficeElement(page, naturalWidth, naturalHeight);
+  return preview || wordContentPreview(file.data);
 }
 
 async function renderExcelPreview(file, container, compact, translate, locale, rasterOnly) {
@@ -765,7 +1157,7 @@ async function renderExcelPreview(file, container, compact, translate, locale, r
     Math.max(1, table.scrollWidth || table.getBoundingClientRect().width),
     Math.max(1, table.scrollHeight || table.getBoundingClientRect().height),
   );
-  if (rasterOnly && !preview) return null;
+  if (rasterOnly && !preview) return excelWorksheetContentPreview(worksheet, locale);
   if (!rasterOnly && preview) appendOfficeImagePreview(container, preview);
   return preview;
 }
@@ -854,7 +1246,18 @@ async function renderPowerPointPreview(file, container, compact, translate, rast
       renderedSlide.height,
     );
     if (!preview) {
-      if (rasterOnly) return thumbnail;
+      if (rasterOnly) {
+        return thumbnail || renderExtractedPowerPointSlide(
+          file,
+          container,
+          frame,
+          content,
+          slideHeight,
+          compact,
+          translate,
+          true,
+        );
+      }
       if (!thumbnail) {
         fitOfficeDOMPreview(frame, content, renderedSlide.width, renderedSlide.height, container);
       }
@@ -885,21 +1288,28 @@ export async function renderModernOfficePreview(file, container, options = {}) {
   loading.textContent = translate("Chargement…");
   container.append(loading);
   container.classList.add("office-file-preview", `office-${kind}-file-preview`);
+  container.setAttribute("aria-busy", "true");
   // Les aperçus Office sont uniquement visuels. Dans Safari, le contenu DOCX/PPTX
   // de secours est une grande couche DOM mise à l’échelle avec transform. WebKit
   // peut conserver sa zone de hit-test d’origine au-delà du cadre visible et bloquer
   // des commandes voisines, notamment le lien Administration de la barre latérale.
   container.inert = true;
   container.style.pointerEvents = "none";
+  const renderContainer = rasterOnly ? container : createOfficePreviewStage(container, kind);
   try {
+    let preview;
     if (kind === "word") {
-      return (await renderWordPreview(file, container, compact, translate, rasterOnly))?.blob || null;
+      preview = await renderWordPreview(file, renderContainer, compact, translate, rasterOnly);
     } else if (kind === "excel") {
-      return (await renderExcelPreview(file, container, compact, translate, locale, rasterOnly))?.blob || null;
+      preview = await renderExcelPreview(file, renderContainer, compact, translate, locale, rasterOnly);
     } else {
-      return (await renderPowerPointPreview(file, container, compact, translate, rasterOnly))?.blob || null;
+      preview = await renderPowerPointPreview(file, renderContainer, compact, translate, rasterOnly);
     }
+    if (!rasterOnly) commitOfficePreviewStage(renderContainer, container);
+    return preview?.blob || null;
   } finally {
+    if (renderContainer !== container) renderContainer.remove();
     loading.remove();
+    container.removeAttribute("aria-busy");
   }
 }

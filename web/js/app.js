@@ -32,7 +32,7 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=modal-files-dialog-v259";
+} from "./notifications.js?v=passphrase-strength-v276";
 import { ChatSocket } from "./websocket.js?v=ios17-pdf-v199";
 import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios17-pdf-v211";
 import { locale, t } from "./i18n.js";
@@ -45,10 +45,20 @@ import {
 import {
   clearOfficePreviewResources,
   modernOfficeKind,
+  officeFallbackPreviewBlob,
   preloadModernOfficePreview,
   renderModernOfficePreview,
-} from "./office-preview.js?v=safari-office-hit-test-v258";
-import { openConversationCache } from "./conversation-cache.js?v=cache-v1";
+} from "./office-preview.js?v=office-faithful-preview-v265";
+import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
+import {
+  acceptPendingIdentity,
+  canonicalPublicKey,
+  formatPublicKeyFingerprint,
+  getIdentityTrust,
+  markIdentityVerified,
+  observeIdentityKey,
+  publicKeyFingerprint,
+} from "./identity-trust.js?v=passphrase-strength-v276";
 
 const CALL_INVITE_TIMEOUT_MS = 45000;
 const CALL_SIGNAL_LOSS_GRACE_MS = 15000;
@@ -62,7 +72,7 @@ const BACKGROUND_THUMBNAIL_PRELOAD_BUDGET_BYTES = 4 * 1024 * 1024;
 const BACKGROUND_PRELOAD_TTL_MS = 2 * 60 * 1000;
 const BACKGROUND_PRELOAD_NETWORK_FRESH_MS = 15 * 1000;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "modal-files-dialog-v259";
+const APP_BUILD = "passphrase-strength-v276";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 
 window.VIBRATION_BUILD = APP_BUILD;
@@ -79,7 +89,12 @@ const state = {
   conversations: [],
   current: null,
   keys: new Map(),
+  keyEnvelopes: new Map(),
+  keyEnvelopeLoads: new Map(),
   members: new Map(),
+  identityConfirmations: new Map(),
+  identityWarnings: new Set(),
+  conversationInfoIdentity: null,
   socket: null,
   typing: new Map(),
   typingTimers: new Map(),
@@ -157,6 +172,10 @@ const elements = {
   conversationInfoAddress: document.querySelector("#conversation-info-address"),
   conversationInfoInstance: document.querySelector("#conversation-info-instance"),
   conversationInfoDescription: document.querySelector("#conversation-info-description"),
+  conversationInfoFingerprintRow: document.querySelector("#conversation-info-fingerprint-row"),
+  conversationInfoFingerprint: document.querySelector("#conversation-info-fingerprint"),
+  conversationInfoTrustStatus: document.querySelector("#conversation-info-trust-status"),
+  conversationInfoVerify: document.querySelector("#conversation-info-verify"),
   title: document.querySelector("#chat-title"),
   description: document.querySelector("#chat-description"),
   typing: document.querySelector("#typing-label"),
@@ -649,6 +668,7 @@ async function boot() {
   adminLink.addEventListener("click", prepareAdminNavigation);
   await unlock();
   bindUI();
+  await trustedPublicKey(state.me, { interactive: true });
   connectSocket();
   await refreshAll();
   appReady = true;
@@ -767,6 +787,7 @@ function bindUI() {
       refreshRememberedKeyStatus(),
       refreshNotificationStatus(),
       loadSharedCalendarFeedState(),
+      refreshOwnIdentityFingerprint(),
     ]);
   };
   document.querySelector("#profile-button").onclick = openProfileDialog;
@@ -777,9 +798,12 @@ function bindUI() {
   document.querySelector("#profile-calendar-revoke").onclick = revokeSharedCalendarFeed;
   document.querySelector("#profile-calendar-export").onclick = exportCalendarICalendar;
   document.querySelector("#conversation-info-close").onclick = () => elements.conversationInfoDialog.close();
+  elements.conversationInfoVerify.onclick = verifyCurrentConversationIdentity;
   elements.chatAvatar.onclick = () => {
     openCurrentConversationInfo().catch((error) => {
-      toast(frenchErrorMessage(error, "Impossible d’afficher ces informations."), "error");
+      if (!reportIdentitySecurityError(error)) {
+        toast(frenchErrorMessage(error, "Impossible d’afficher ces informations."), "error");
+      }
     });
   };
   elements.chatIdentity.onclick = () => {
@@ -1196,6 +1220,162 @@ function conversationContactAddress(username, instance) {
   return `${normalizedUsername}@${normalizedInstance}`;
 }
 
+function identityTrustInput(identity) {
+  const userID = identity?.user_id ?? identity?.contact_user_id ?? identity?.id;
+  return {
+    instanceURL: getInstanceURL(),
+    userID,
+    username: identity?.remote_username || identity?.username || "",
+    displayName: identity?.display_name || "",
+    publicKey: identity?.public_key,
+  };
+}
+
+function identityTrustLabel(identity) {
+  return identity?.display_name || identity?.remote_username || identity?.username || t("ce contact");
+}
+
+function identitySecurityError(result, identity, message = "") {
+  const error = new Error(message || t("La clé de sécurité de {name} a changé.", {
+    name: identityTrustLabel(identity),
+  }));
+  error.code = "IDENTITY_KEY_CHANGED";
+  error.identityTrust = result;
+  error.identity = identity;
+  return error;
+}
+
+function isIdentitySecurityError(error) {
+  return ["IDENTITY_KEY_CHANGED", "IDENTITY_KEY_INVALID", "IDENTITY_TRUST_UNAVAILABLE"].includes(error?.code);
+}
+
+function reportIdentitySecurityError(error) {
+  if (!isIdentitySecurityError(error)) return false;
+  const warningID = error.identityTrust?.record?.id
+    || `${getInstanceURL()}:${error.identity?.user_id ?? error.identity?.contact_user_id ?? error.identity?.id ?? "unknown"}`;
+  if (!state.identityWarnings.has(warningID)) {
+    state.identityWarnings.add(warningID);
+    toast(error.message, "error");
+  }
+  return true;
+}
+
+async function updateAcceptedIdentityPublicKey(userID, publicKey) {
+  if (sameID(state.me?.id, userID)) state.me.public_key = publicKey;
+  state.contacts = state.contacts.map((contact) => (
+    sameID(contact.contact_user_id, userID) ? { ...contact, public_key: publicKey } : contact
+  ));
+  for (const [conversationID, members] of state.members) {
+    const updated = members.map((member) => (
+      sameID(member.user_id, userID) ? { ...member, public_key: publicKey } : member
+    ));
+    state.members.set(conversationID, updated);
+    await state.cache?.saveMembers(conversationID, updated);
+  }
+  state.keys.clear();
+  state.keyEnvelopes.clear();
+  state.keyEnvelopeLoads.clear();
+  state.preloadedMessages.clear();
+}
+
+async function confirmIdentityKeyChange(result, identity) {
+  return runKeyedTask(state.identityConfirmations, result.record.id, async () => {
+    const current = await getIdentityTrust(identityTrustInput(identity));
+    if (current.status !== "changed") return current.record?.publicKey || null;
+    const label = identityTrustLabel(identity);
+    const confirmed = await actionDialog({
+      title: "Clé de sécurité modifiée",
+      message: t(
+        "La clé de sécurité de {name} n’est plus la même. Comparez les deux empreintes avec cette personne par un autre moyen avant d’accepter.\n\nAncienne empreinte :\n{old}\n\nNouvelle empreinte :\n{next}",
+        {
+          name: label,
+          old: formatPublicKeyFingerprint(current.record.fingerprint),
+          next: formatPublicKeyFingerprint(current.record.pendingFingerprint),
+        },
+      ),
+      confirmLabel: "Accepter la nouvelle clé",
+      danger: true,
+    });
+    if (!confirmed) throw identitySecurityError(current, identity);
+    const accepted = await acceptPendingIdentity(identityTrustInput(identity), current.record.pendingFingerprint);
+    await updateAcceptedIdentityPublicKey(accepted.record.userID, accepted.record.publicKey);
+    state.identityWarnings.delete(accepted.record.id);
+    toast(t("Nouvelle clé acceptée. Vérifiez son empreinte dès que possible."), "success");
+    return accepted.record.publicKey;
+  });
+}
+
+async function trustedPublicKey(identity, { interactive = false } = {}) {
+  let result;
+  try {
+    result = await observeIdentityKey(identityTrustInput(identity));
+  } catch (cause) {
+    const invalidKey = cause?.message === "Clé publique invalide.";
+    const error = new Error(invalidKey
+      ? t("La clé de sécurité de {name} est invalide.", { name: identityTrustLabel(identity) })
+      : t("Le registre local des identités est indisponible. La discussion reste bloquée."), { cause });
+    error.code = invalidKey ? "IDENTITY_KEY_INVALID" : "IDENTITY_TRUST_UNAVAILABLE";
+    error.identity = identity;
+    throw error;
+  }
+  if (result.status !== "changed") return result.record.publicKey;
+  state.keys.clear();
+  state.keyEnvelopes.clear();
+  state.keyEnvelopeLoads.clear();
+  state.preloadedMessages.clear();
+  if (!interactive) throw identitySecurityError(result, identity);
+  return confirmIdentityKeyChange(result, identity);
+}
+
+async function trustMembers(members, options = {}) {
+  const trusted = [];
+  for (const member of members || []) {
+    trusted.push({ ...member, public_key: await trustedPublicKey(member, options) });
+  }
+  return trusted;
+}
+
+function identityVerificationStatus(record) {
+  if (!record?.verifiedAt) return t("Clé observée sur cet appareil, mais pas encore comparée.");
+  return `${t("Identité vérifiée.")} ${new Date(record.verifiedAt).toLocaleString(locale)}`;
+}
+
+async function refreshOwnIdentityFingerprint() {
+  const fingerprint = document.querySelector("#profile-identity-fingerprint");
+  const status = document.querySelector("#profile-identity-status");
+  if (!fingerprint || !status) return;
+  const publicKey = await trustedPublicKey(state.me, { interactive: true });
+  const trust = await getIdentityTrust({ ...identityTrustInput(state.me), publicKey });
+  fingerprint.textContent = formatPublicKeyFingerprint(trust.record?.fingerprint);
+  status.textContent = t("Cette empreinte identifie votre clé publique. Comparez-la avec vos correspondants par un autre moyen.");
+}
+
+async function refreshConversationIdentityTrust() {
+  const identity = state.conversationInfoIdentity;
+  if (!identity || !elements.conversationInfoDialog.open) return;
+  const trust = await getIdentityTrust(identity);
+  elements.conversationInfoFingerprint.textContent = formatPublicKeyFingerprint(trust.record?.fingerprint);
+  elements.conversationInfoTrustStatus.textContent = identityVerificationStatus(trust.record);
+  elements.conversationInfoVerify.hidden = Boolean(trust.record?.verifiedAt);
+}
+
+async function verifyCurrentConversationIdentity(event) {
+  const identity = state.conversationInfoIdentity;
+  if (!identity) return;
+  const button = event.currentTarget;
+  setBusy(button, true);
+  try {
+    const current = await getIdentityTrust(identity);
+    await markIdentityVerified(identity, current.record?.fingerprint);
+    await refreshConversationIdentityTrust();
+    toast(t("Identité vérifiée."), "success");
+  } catch (error) {
+    if (!reportIdentitySecurityError(error)) toast(frenchErrorMessage(error), "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
 function setConversationInfoTrigger(conversation) {
   const enabled = Boolean(conversation && !conversation.is_personal && ["private", "group"].includes(conversation.type));
   const label = enabled
@@ -1222,6 +1402,7 @@ async function openCurrentConversationInfo() {
   const conversation = state.current;
   if (!conversation || conversation.is_personal || !["private", "group"].includes(conversation.type)) return;
   const isGroup = conversation.type === "group";
+  state.conversationInfoIdentity = null;
   elements.conversationInfoTitle.textContent = t(isGroup ? "Informations du groupe" : "Informations du contact");
   elements.conversationInfoKind.textContent = t(isGroup ? "Groupe" : "Contact");
   elements.conversationInfoName.textContent = t("Chargement…");
@@ -1233,17 +1414,20 @@ async function openCurrentConversationInfo() {
   elements.conversationInfoAddress.textContent = "—";
   elements.conversationInfoInstance.textContent = "—";
   elements.conversationInfoDescription.textContent = "—";
+  elements.conversationInfoFingerprintRow.hidden = isGroup;
+  elements.conversationInfoFingerprint.textContent = "—";
+  elements.conversationInfoTrustStatus.textContent = "";
+  elements.conversationInfoVerify.hidden = true;
   replaceAvatarContent(elements.conversationInfoAvatar, null, isGroup ? "G" : "?");
   if (!elements.conversationInfoDialog.open) elements.conversationInfoDialog.showModal();
   elements.conversationInfoTitle.setAttribute("tabindex", "-1");
   elements.conversationInfoTitle.focus({ preventScroll: true });
 
-  const [display, members] = await Promise.all([
-    resolveConversationDisplay(conversation),
-    getMembers(conversation.id),
-  ]);
+  const members = await getMembers(conversation.id, { fresh: true, interactive: true });
+  const display = await resolveConversationDisplay(conversation);
   if (!elements.conversationInfoDialog.open) return;
   const peer = isGroup ? null : members.find((member) => member.user_id !== state.me.id);
+  if (!isGroup && !peer) throw new Error("Participant introuvable.");
   const displayName = isGroup
     ? display.title
     : peer?.display_name || peer?.username || display.title;
@@ -1268,6 +1452,10 @@ async function openCurrentConversationInfo() {
     display.avatar,
     conversationAvatarFallback(display, conversation),
   );
+  if (peer) {
+    state.conversationInfoIdentity = identityTrustInput(peer);
+    await refreshConversationIdentityTrust();
+  }
 }
 
 function renderConversationHeader(conversation, display) {
@@ -1967,10 +2155,14 @@ function preloadConversationInBackground(conversation, session) {
     try {
       const messages = await api(`/api/conversations/${conversation.id}/messages?limit=50`);
       await state.cache?.putMessages(messages);
-      const conversationKey = await getConversationKey(conversation);
-      const decrypted = await Promise.all(messages.map(async (message) => ({
+      const keyedMessages = await Promise.all(messages.map(async (message) => ({
         message,
-        clear: await decryptMessageContent(message, conversationKey),
+        key: await getMessageKey(message, conversation),
+      })));
+      const decrypted = await Promise.all(keyedMessages.map(async ({ message, key }) => ({
+        message,
+        key,
+        clear: await decryptMessageContent(message, key),
       })));
       if (conversationPreloadVersion(conversation.id) !== version) return null;
       const result = {
@@ -2153,7 +2345,16 @@ async function renderConversations({ freshMembers = false } = {}) {
   const displays = await Promise.all(listedConversations.map(async (conversation) => {
     try {
       return await resolveConversationDisplay(conversation, { freshMembers });
-    } catch {
+    } catch (error) {
+      error.conversationID = conversation.id;
+      if (reportIdentitySecurityError(error)) {
+        return {
+          title: conversation.type === "group" ? t("Groupe") : identityTrustLabel(error.identity),
+          description: t("Vérification de sécurité requise"),
+          avatar: conversation.type === "group" ? null : error.identity?.avatar || null,
+          securityBlocked: true,
+        };
+      }
       return null;
     }
   }));
@@ -2166,8 +2367,10 @@ async function renderConversations({ freshMembers = false } = {}) {
       conversationOnline(conversation).catch(() => false),
     ]);
     let preview = "";
-    if (display && !typing && !callState) {
+    if (display && !display.securityBlocked && !typing && !callState) {
       preview = await conversationListPreview(conversation, display).catch(() => "");
+    } else if (display?.securityBlocked) {
+      preview = display.description;
     }
     return { conversation, display, callState, typing, online, preview };
   }));
@@ -2192,6 +2395,7 @@ async function renderConversations({ freshMembers = false } = {}) {
       conversation.favorite_at,
       display?.title || "",
       display?.avatar || "",
+      display?.securityBlocked || false,
       callState?.media || "",
       callState?.incoming || false,
       callState?.outgoing || false,
@@ -2228,6 +2432,7 @@ async function renderConversations({ freshMembers = false } = {}) {
       "conversation-item",
       "swipe-surface",
       sameID(activeID, conversation.id) ? "active" : "",
+      display?.securityBlocked ? "identity-warning" : "",
       callState ? "call-highlight" : "",
       callState?.incoming ? "call-incoming" : "",
     ].filter(Boolean).join(" ");
@@ -2398,7 +2603,7 @@ async function refuseGroupInvitation(conversation, button) {
   setBusy(button, true);
   try {
     await api(`/api/conversations/${conversation.id}`, { method: "DELETE" });
-    state.keys.delete(conversation.id);
+    clearConversationKeys(conversation.id);
     state.members.delete(conversation.id);
     await refreshAll();
     toast("Invitation de groupe refusée.", "success");
@@ -2503,53 +2708,80 @@ async function editConversation(conversation, row) {
   const removedMemberIDs = result
     ? [...currentMemberIDs].filter((userID) => !selectedMemberIDs.has(userID))
     : [];
+  const needsRotation = addedMemberIDs.length > 0 || removedMemberIDs.length > 0 || conversation.rotation_required === true;
   if (!result || (
     result.name === current.title
     && result.description === currentDescription
     && result.avatar === current.customAvatar
-    && addedMemberIDs.length === 0
-    && removedMemberIDs.length === 0
+    && !needsRotation
   )) {
     row.dispatchEvent(new Event("swipe-close"));
     return;
   }
   try {
-    const encryptedTitle = await encryptEnvelope(key, result.name);
-    const encryptedDescription = result.description
-      ? await encryptEnvelope(key, result.description)
-      : null;
-    const encryptedAvatar = result.avatar
-      ? await encryptEnvelope(key, result.avatar)
-      : null;
-    await api(`/api/conversations/${conversation.id}`, {
-      method: "PUT",
-      body: {
-        encrypted_title: encryptedTitle,
-        encrypted_description: encryptedDescription,
-        encrypted_avatar: encryptedAvatar,
-      },
-    });
-    for (const userID of addedMemberIDs) {
-      const invitedUser = result.invitedUsers?.find((item) => item.id === userID);
-      const contact = state.contacts.find((item) => item.contact_user_id === userID);
-      const memberPublicKey = contact?.public_key || invitedUser?.public_key;
-      const memberLabel = contact?.display_name || contact?.username || invitedUser?.display_name || invitedUser?.username || "ce membre";
-      if (!memberPublicKey) throw new Error("Utilisateur introuvable.");
-      let encryptedConversationKey;
-      try {
-        const publicKey = JSON.parse(memberPublicKey);
-        if (publicKey.kty !== "EC" || !publicKey.crv || !publicKey.x || !publicKey.y) throw new Error();
-        encryptedConversationKey = await wrapGroupKey(key, state.privateKey, memberPublicKey, state.me.id);
-      } catch {
-        throw new Error(`La clé de chiffrement de ${memberLabel} est invalide. Ce compte doit être recréé.`);
+    let metadataKey = key;
+    let encryptedKeys = null;
+    let nextEpoch = conversationKeyEpoch(conversation);
+    if (needsRotation) {
+      metadataKey = await generateGroupKey();
+      nextEpoch += 1;
+      encryptedKeys = {};
+      const finalMembers = [
+        { ...state.me, user_id: state.me.id },
+        ...[...selectedMemberIDs].map((userID) => {
+          const existing = members.find((member) => sameID(member.user_id, userID));
+          const contact = state.contacts.find((item) => sameID(item.contact_user_id, userID));
+          const invited = result.invitedUsers?.find((item) => sameID(item.id, userID));
+          return existing || contact || { ...invited, id: userID, user_id: userID };
+        }),
+      ];
+      for (const member of finalMembers) {
+        const memberID = Number(member.user_id ?? member.contact_user_id ?? member.id);
+        if (!memberID || !member.public_key) throw new Error("Utilisateur introuvable.");
+        const trustedMemberPublicKey = await trustedPublicKey(member, { interactive: true });
+        try {
+          encryptedKeys[String(memberID)] = await wrapGroupKey(
+            metadataKey,
+            state.privateKey,
+            trustedMemberPublicKey,
+            state.me.id,
+          );
+        } catch {
+          const memberLabel = member.display_name || member.username || "ce membre";
+          throw new Error(`La clé de chiffrement de ${memberLabel} est invalide. Ce compte doit être recréé.`);
+        }
       }
-      await api(`/api/conversations/${conversation.id}/members`, {
-        method: "POST",
-        body: { user_id: userID, encrypted_conversation_key: encryptedConversationKey },
-      });
     }
-    for (const userID of removedMemberIDs) {
-      await api(`/api/conversations/${conversation.id}/members/${userID}`, { method: "DELETE" });
+    const encryptedTitle = await encryptEnvelope(metadataKey, result.name);
+    const encryptedDescription = result.description ? await encryptEnvelope(metadataKey, result.description) : null;
+    const encryptedAvatar = result.avatar ? await encryptEnvelope(metadataKey, result.avatar) : null;
+    if (needsRotation) {
+      await api(`/api/conversations/${conversation.id}/rotate-keys`, {
+        method: "POST",
+        body: {
+          key_epoch: nextEpoch,
+          removed_user_ids: removedMemberIDs,
+          added_user_ids: addedMemberIDs,
+          encrypted_keys: encryptedKeys,
+          encrypted_title: encryptedTitle,
+          encrypted_description: encryptedDescription,
+          encrypted_avatar: encryptedAvatar,
+        },
+      });
+      conversation.current_key_epoch = nextEpoch;
+      conversation.rotation_required = false;
+      conversation.encrypted_conversation_key = encryptedKeys[String(state.me.id)];
+      clearConversationKeys(conversation.id);
+      state.keys.set(conversationKeyCacheID(conversation.id, nextEpoch), metadataKey);
+    } else {
+      await api(`/api/conversations/${conversation.id}`, {
+        method: "PUT",
+        body: {
+          encrypted_title: encryptedTitle,
+          encrypted_description: encryptedDescription,
+          encrypted_avatar: encryptedAvatar,
+        },
+      });
     }
     conversation.encrypted_title = encryptedTitle;
     conversation.encrypted_description = encryptedDescription;
@@ -2569,6 +2801,55 @@ async function editConversation(conversation, row) {
     row.dispatchEvent(new Event("swipe-close"));
     toast(frenchErrorMessage(error, "Impossible de modifier le groupe."), "error");
   }
+}
+
+async function repairRequiredGroupRotation(conversation) {
+  if (conversation.type !== "group" || conversation.rotation_required !== true || !sameID(conversation.created_by, state.me.id)) return false;
+  const members = await getMembers(conversation.id, { fresh: true, interactive: true });
+  const previousKey = await getConversationKey(conversation);
+  const [title, description, avatar] = await Promise.all([
+    decryptEnvelope(previousKey, conversation.encrypted_title),
+    conversation.encrypted_description ? decryptEnvelope(previousKey, conversation.encrypted_description) : null,
+    conversation.encrypted_avatar ? decryptEnvelope(previousKey, conversation.encrypted_avatar) : null,
+  ]);
+  const nextKey = await generateGroupKey();
+  const nextEpoch = conversationKeyEpoch(conversation) + 1;
+  const encryptedKeys = {};
+  for (const member of members) {
+    const trustedMemberPublicKey = await trustedPublicKey(member, { interactive: true });
+    encryptedKeys[String(member.user_id)] = await wrapGroupKey(
+      nextKey,
+      state.privateKey,
+      trustedMemberPublicKey,
+      state.me.id,
+    );
+  }
+  const encryptedTitle = await encryptEnvelope(nextKey, title);
+  const encryptedDescription = description ? await encryptEnvelope(nextKey, description) : null;
+  const encryptedAvatar = avatar ? await encryptEnvelope(nextKey, avatar) : null;
+  await api(`/api/conversations/${conversation.id}/rotate-keys`, {
+    method: "POST",
+    body: {
+      key_epoch: nextEpoch,
+      removed_user_ids: [],
+      added_user_ids: [],
+      encrypted_keys: encryptedKeys,
+      encrypted_title: encryptedTitle,
+      encrypted_description: encryptedDescription,
+      encrypted_avatar: encryptedAvatar,
+    },
+  });
+  Object.assign(conversation, {
+    current_key_epoch: nextEpoch,
+    rotation_required: false,
+    encrypted_conversation_key: encryptedKeys[String(state.me.id)],
+    encrypted_title: encryptedTitle,
+    encrypted_description: encryptedDescription,
+    encrypted_avatar: encryptedAvatar,
+  });
+  clearConversationKeys(conversation.id);
+  state.keys.set(conversationKeyCacheID(conversation.id, nextEpoch), nextKey);
+  return true;
 }
 
 function closeCurrentConversation(conversationID) {
@@ -2631,7 +2912,7 @@ async function deleteConversation(conversation, button) {
   try {
     const result = await api(`/api/conversations/${conversation.id}`, { method: "DELETE" });
     closeCurrentConversation(conversation.id);
-    state.keys.delete(conversation.id);
+    clearConversationKeys(conversation.id);
     state.members.delete(conversation.id);
     state.messageClears.delete(conversation.id);
     state.cache?.deleteConversation(conversation.id);
@@ -2644,19 +2925,26 @@ async function deleteConversation(conversation, button) {
   }
 }
 
-async function getMembers(conversationID, { fresh = false } = {}) {
+async function getMembers(conversationID, { fresh = false, interactive = false } = {}) {
   if (fresh) {
     try {
-      const members = await api(`/api/conversations/${conversationID}/members`);
+      const members = await trustMembers(
+        await api(`/api/conversations/${conversationID}/members`),
+        { interactive },
+      );
       state.members.set(conversationID, members);
-      state.cache?.saveMembers(conversationID, members);
+      await state.cache?.saveMembers(conversationID, members);
       return members;
     } catch (error) {
-      if (state.members.has(conversationID)) return state.members.get(conversationID);
+      if (isIdentitySecurityError(error)) throw error;
+      if (state.members.has(conversationID)) {
+        return trustMembers(state.members.get(conversationID), { interactive });
+      }
       const cached = await state.cache?.getMembers(conversationID);
       if (cached?.length) {
-        state.members.set(conversationID, cached);
-        return cached;
+        const members = await trustMembers(cached, { interactive });
+        state.members.set(conversationID, members);
+        return members;
       }
       throw error;
     }
@@ -2664,20 +2952,24 @@ async function getMembers(conversationID, { fresh = false } = {}) {
   if (!state.members.has(conversationID)) {
     const cached = await state.cache?.getMembers(conversationID);
     if (cached?.length) {
-      state.members.set(conversationID, cached);
+      state.members.set(conversationID, await trustMembers(cached, { interactive }));
       api(`/api/conversations/${conversationID}/members`)
-        .then((members) => {
+        .then((members) => trustMembers(members))
+        .then(async (members) => {
           state.members.set(conversationID, members);
-          state.cache?.saveMembers(conversationID, members);
+          await state.cache?.saveMembers(conversationID, members);
         })
-        .catch(() => {});
+        .catch((error) => reportIdentitySecurityError(error));
     } else {
-      const members = await api(`/api/conversations/${conversationID}/members`);
+      const members = await trustMembers(
+        await api(`/api/conversations/${conversationID}/members`),
+        { interactive },
+      );
       state.members.set(conversationID, members);
-      state.cache?.saveMembers(conversationID, members);
+      await state.cache?.saveMembers(conversationID, members);
     }
   }
-  return state.members.get(conversationID);
+  return trustMembers(state.members.get(conversationID), { interactive });
 }
 
 async function conversationOnline(conversation) {
@@ -2778,9 +3070,53 @@ async function setTypingUser(conversationID, userID, typing) {
   await refreshTypingIndicators(conversationID);
 }
 
-async function getConversationKey(conversation) {
-  if (state.keys.has(conversation.id)) return state.keys.get(conversation.id);
+function conversationKeyEpoch(conversation) {
+  return conversation?.type === "group" ? Math.max(1, Number(conversation.current_key_epoch) || 1) : 1;
+}
+
+function messageKeyEpoch(message, conversation) {
+  return conversation?.type === "group" ? Math.max(1, Number(message?.key_epoch) || 1) : 1;
+}
+
+function conversationKeyCacheID(conversationID, keyEpoch) {
+  return `${conversationID}:${Math.max(1, Number(keyEpoch) || 1)}`;
+}
+
+function clearConversationKeys(conversationID) {
+  const prefix = `${conversationID}:`;
+  for (const key of state.keys.keys()) {
+    if (String(key).startsWith(prefix) || sameID(key, conversationID)) state.keys.delete(key);
+  }
+  state.keyEnvelopes.delete(String(conversationID));
+  state.keyEnvelopeLoads.delete(String(conversationID));
+}
+
+async function getConversationKeyEnvelopes(conversation, { fresh = false } = {}) {
+  const conversationID = String(conversation.id);
+  if (!fresh && state.keyEnvelopes.has(conversationID)) return state.keyEnvelopes.get(conversationID);
+  if (!fresh && state.keyEnvelopeLoads.has(conversationID)) return state.keyEnvelopeLoads.get(conversationID);
+  const load = (async () => {
+    let envelopes = [];
+    try {
+      envelopes = await api(`/api/conversations/${conversation.id}/keys`);
+      await state.cache?.saveKeyEnvelopes(conversation.id, envelopes);
+    } catch (error) {
+      envelopes = await state.cache?.getKeyEnvelopes(conversation.id) || [];
+      if (!envelopes.length) throw error;
+    }
+    const byEpoch = new Map(envelopes.map((envelope) => [Math.max(1, Number(envelope.key_epoch) || 1), envelope]));
+    state.keyEnvelopes.set(conversationID, byEpoch);
+    return byEpoch;
+  })().finally(() => state.keyEnvelopeLoads.delete(conversationID));
+  state.keyEnvelopeLoads.set(conversationID, load);
+  return load;
+}
+
+async function getConversationKey(conversation, requestedEpoch = conversationKeyEpoch(conversation)) {
   const members = await getMembers(conversation.id);
+  const keyEpoch = conversation?.type === "group" ? Math.max(1, Number(requestedEpoch) || 1) : 1;
+  const cacheID = conversationKeyCacheID(conversation.id, keyEpoch);
+  if (state.keys.has(cacheID)) return state.keys.get(cacheID);
   let key;
   if (conversation.is_personal) {
     const ownMember = members.find((member) => member.user_id === state.me.id);
@@ -2791,13 +3127,38 @@ async function getConversationKey(conversation) {
     if (!peer) throw new Error("Participant introuvable.");
     key = await privateConversationKey(state.privateKey, peer.public_key, conversation.id, conversation.federation_key_id || "");
   } else {
-    const envelope = JSON.parse(conversation.encrypted_conversation_key);
-    const sender = members.find((member) => member.user_id === envelope.sender_id);
-    if (!sender) throw new Error("Créateur du groupe introuvable.");
-    key = await unwrapGroupKey(conversation.encrypted_conversation_key, state.privateKey, sender.public_key);
+    const envelopes = await getConversationKeyEnvelopes(conversation);
+    const stored = envelopes.get(keyEpoch);
+    if (stored) {
+      const envelope = JSON.parse(stored.encrypted_conversation_key);
+      if (!sameID(envelope.sender_id, conversation.created_by)) throw new Error("Auteur de l’enveloppe de groupe invalide.");
+      const sender = members.find((member) => sameID(member.user_id, envelope.sender_id));
+      if (!sender) throw new Error("Créateur du groupe introuvable.");
+      const storedSenderKey = canonicalPublicKey(stored.sender_public_key);
+      if (storedSenderKey !== canonicalPublicKey(sender.public_key)) {
+        const trust = await getIdentityTrust(identityTrustInput(sender));
+        const storedFingerprint = await publicKeyFingerprint(storedSenderKey);
+        if (!trust.record?.history?.some((entry) => entry.fingerprint === storedFingerprint)) {
+          throw new Error("La clé ayant créé cette enveloppe de groupe n’est pas une identité connue.");
+        }
+      }
+      key = await unwrapGroupKey(stored.encrypted_conversation_key, state.privateKey, storedSenderKey);
+    } else if (keyEpoch === conversationKeyEpoch(conversation) && conversation.encrypted_conversation_key) {
+      const envelope = JSON.parse(conversation.encrypted_conversation_key);
+      if (!sameID(envelope.sender_id, conversation.created_by)) throw new Error("Auteur de l’enveloppe de groupe invalide.");
+      const sender = members.find((member) => sameID(member.user_id, envelope.sender_id));
+      if (!sender) throw new Error("Créateur du groupe introuvable.");
+      key = await unwrapGroupKey(conversation.encrypted_conversation_key, state.privateKey, sender.public_key);
+    } else {
+      throw new Error(`Clé de groupe historique ${keyEpoch} introuvable.`);
+    }
   }
-  state.keys.set(conversation.id, key);
+  state.keys.set(cacheID, key);
   return key;
+}
+
+async function getMessageKey(message, conversation) {
+  return getConversationKey(conversation, messageKeyEpoch(message, conversation));
 }
 
 async function resolveConversationTitle(conversation) {
@@ -2844,7 +3205,7 @@ async function conversationListPreview(conversation, display) {
   if (conversation.last_message_has_file) return "Fichier chiffré";
   if (conversation.last_message_encrypted_content && conversation.last_message_iv) {
     try {
-      const key = await getConversationKey(conversation);
+      const key = await getConversationKey(conversation, conversation.last_message_key_epoch || 1);
       const clear = await decryptText(key, conversation.last_message_encrypted_content, conversation.last_message_iv);
       try {
         const structured = JSON.parse(clear);
@@ -2870,6 +3231,19 @@ function compactPreviewText(value) {
 async function selectConversation(conversation, targetMessageID = null) {
   if (conversation.role === "pending") {
     toast("Acceptez cette invitation avant d’ouvrir le groupe.", "error");
+    return;
+  }
+  try {
+    await getMembers(conversation.id, { fresh: true, interactive: true });
+    if (conversation.rotation_required && sameID(conversation.created_by, state.me.id)) {
+      await repairRequiredGroupRotation(conversation);
+      toast("La clé du groupe a été renouvelée après le départ d’un membre.", "success");
+    }
+  } catch (error) {
+    error.conversationID = conversation.id;
+    if (!reportIdentitySecurityError(error)) {
+      toast(frenchErrorMessage(error, "Impossible de vérifier les participants de cette discussion."), "error");
+    }
     return;
   }
   const conversationChanged = !sameID(state.current?.id, conversation.id);
@@ -2898,6 +3272,14 @@ async function selectConversation(conversation, targetMessageID = null) {
   elements.pollButton.disabled = false;
   elements.eventButton.disabled = false;
   elements.pinnedWindowButton.disabled = false;
+  if (conversation.rotation_required) {
+    elements.input.disabled = true;
+    elements.send.disabled = true;
+    elements.voiceButton.disabled = true;
+    elements.pollButton.disabled = true;
+    elements.eventButton.disabled = true;
+    toast("Les nouveaux envois sont suspendus jusqu’au renouvellement de la clé par le propriétaire du groupe.", "error");
+  }
   updateCallButtons();
   const selectedID = conversation.id;
   const messagesLoading = loadMessages(targetMessageID).then(() => null, (error) => error);
@@ -2913,7 +3295,11 @@ async function selectConversation(conversation, targetMessageID = null) {
   if (!elements.pinnedPanel.hidden) await loadPinnedMessages();
   updateCallUI();
   elements.input.focus({ preventScroll: true });
-  if (targetMessageID) await revealMessage(targetMessageID);
+  if (targetMessageID) {
+    await revealMessage(targetMessageID);
+  } else {
+    await scrollMessagesToLatest(selectedID);
+  }
 }
 
 function canSignalCall(conversation = state.current) {
@@ -3216,6 +3602,7 @@ async function sendCallHistoryMessage(conversationID, text) {
       iv: encrypted.iv,
       reply_to: null,
       expires_in_seconds: 86400,
+      key_epoch: conversationKeyEpoch(conversation),
     },
   });
   if (state.current?.id === conversationID) await appendMessage(message, false);
@@ -4596,6 +4983,7 @@ async function loadMessages(targetMessageID = null, useCache = true) {
   const conversationID = conversation.id;
   closeReactionPicker();
   let cachedDisplayed = false;
+  let displayedMessages = null;
   let prepared = null;
   if (!targetMessageID && useCache) {
     prepared = preparedConversationMessages(conversation);
@@ -4603,6 +4991,8 @@ async function loadMessages(targetMessageID = null, useCache = true) {
       try {
         await renderMessages(prepared.messages, conversation, prepared.decrypted);
         cachedDisplayed = true;
+        displayedMessages = prepared.messages;
+        await scrollMessagesToLatest(conversationID);
       } catch (error) {
         console.warn("Affichage du préchargement impossible", error);
       }
@@ -4612,6 +5002,8 @@ async function loadMessages(targetMessageID = null, useCache = true) {
         try {
           await renderMessages(cachedMessages, conversation);
           cachedDisplayed = true;
+          displayedMessages = cachedMessages;
+          await scrollMessagesToLatest(conversationID);
         } catch (error) {
           console.warn("Affichage du cache local impossible", error);
         }
@@ -4647,6 +5039,14 @@ async function loadMessages(targetMessageID = null, useCache = true) {
       if (!sameID(state.current?.id, conversationID)) return;
       state.cache?.replaceMessages(conversationID, messages);
     }
+    // Safari laisse le premier rendu Office visible assez longtemps pour que
+    // la reconstruction cache -> réseau ressemble à un double aperçu. Si la
+    // réponse réseau est identique au snapshot déjà affiché, conserver le DOM
+    // actuel évite ce second rendu sans masquer les véritables changements.
+    if (cachedDisplayed && sameMessageSnapshots(displayedMessages, messages, ["status"])) {
+      updateRenderedMessageStatuses(messages);
+      return;
+    }
     await renderMessages(messages, conversation);
   } catch (error) {
     if (cachedDisplayed && sameID(state.current?.id, conversationID)) {
@@ -4654,6 +5054,17 @@ async function loadMessages(targetMessageID = null, useCache = true) {
       return;
     }
     throw error;
+  }
+}
+
+function updateRenderedMessageStatuses(messages) {
+  for (const message of messages) {
+    if (!sameID(message.sender_id, state.me?.id)) continue;
+    const time = elements.messages.querySelector(`[data-id="${message.id}"] time`);
+    if (!time) continue;
+    const status = { sent: " ✓", delivered: " ✓✓", read: " ✓✓" }[message.status] || "";
+    time.textContent = `${time.textContent.replace(/\s✓✓?$/, "")}${status}`;
+    time.classList.toggle("read", message.status === "read");
   }
 }
 
@@ -4670,23 +5081,21 @@ async function renderMessages(messages, conversation, preparedDecrypted = null) 
     elements.messages.replaceChildren(empty);
     return;
   }
-  const key = await getConversationKey(conversation);
+  const decrypted = preparedDecrypted || await Promise.all(messages.map(async (message) => {
+    const key = await getMessageKey(message, conversation);
+    return { message, key, clear: await decryptMessageContent(message, key) };
+  }));
   if (!sameID(state.current?.id, conversationID)) return;
-  prefetchRecentFileThumbnails(messages, key);
-  const decrypted = preparedDecrypted || await Promise.all(messages.map(async (message) => ({
-      message,
-      clear: await decryptMessageContent(message, key),
-    })));
-  if (!sameID(state.current?.id, conversationID)) return;
+  prefetchRecentFileThumbnails(decrypted);
   prewarmFilePreviewRenderers(decrypted);
-  prefetchRecentFullFilePreviews(decrypted, key);
+  prefetchRecentFullFilePreviews(decrypted);
   const clearByID = messageClearCache(conversationID);
   for (const { message, clear } of [...decrypted].reverse()) {
-    clearByID.set(message.id, clear);
+    clearByID.set(message.id, { clear, keyEpoch: messageKeyEpoch(message, conversation) });
   }
   const fragment = document.createDocumentFragment();
   const previews = [];
-  for (const { message, clear } of decrypted) {
+  for (const { message, clear, key } of decrypted) {
     if (!scheduleMessageExpiration(message)) continue;
     const displayMessage = withReplyPreview(messageWithCurrentUserProfile(message), clearByID);
     renderMessage(
@@ -4694,14 +5103,14 @@ async function renderMessages(messages, conversation, preparedDecrypted = null) 
       displayMessage,
       clear,
       displayMessage.sender_id === state.me.id,
-      (fileMessage, preview) => previews.push([fileMessage, preview]),
+      (fileMessage, preview) => previews.push([fileMessage, preview, key]),
       downloadFile,
       editMessage,
       deleteMessage,
       setReplyTarget,
       reactToMessage,
       togglePinnedMessage,
-      (replyPreview, container) => scheduleReplyFilePreview(replyPreview, container, key),
+      (replyPreview, container) => scheduleReplyFilePreview(replyPreview, container, conversation),
       votePoll,
       openFileShareDialog,
     );
@@ -4710,7 +5119,7 @@ async function renderMessages(messages, conversation, preparedDecrypted = null) 
     }
   }
   elements.messages.replaceChildren(fragment);
-  for (const [message, preview] of previews) scheduleFilePreview(message, preview, key);
+  for (const [message, preview, key] of previews) scheduleFilePreview(message, preview, key);
 }
 
 async function decryptMessageContent(message, key) {
@@ -4760,14 +5169,15 @@ async function isIncomingCallHistoryMessage(message) {
   if (!message || message.file || !message.encrypted_content || !message.iv) return false;
   const conversation = state.conversations.find((item) => sameID(item.id, message.conversation_id));
   if (!conversation) return false;
-  const key = await getConversationKey(conversation);
-  const clear = await decryptMessageContent(message, key);
+  const clear = await decryptMessageContent(message, await getMessageKey(message, conversation));
   return isCallHistoryText(clear);
 }
 
 function withReplyPreview(message, clearByID) {
   if (!message.reply_to || !clearByID.has(message.reply_to)) return message;
-  const parent = clearByID.get(message.reply_to);
+  const cachedParent = clearByID.get(message.reply_to);
+  const parent = cachedParent?.clear ?? cachedParent;
+  const parentKeyEpoch = cachedParent?.keyEpoch || 1;
   const replyPreview = typeof parent === "string"
     ? { type: "text", text: parent.slice(0, 120) }
     : parent?.question
@@ -4782,6 +5192,7 @@ function withReplyPreview(message, clearByID) {
             size: parent.size,
             hasPreview: parent.hasPreview,
             previewSize: parent.previewSize,
+            keyEpoch: parentKeyEpoch,
           };
   return {
     ...message,
@@ -4950,10 +5361,7 @@ async function loadPinnedMessages() {
   loading.textContent = t("Chargement…");
   elements.pinnedMessages.replaceChildren(loading);
   try {
-    const [messages, key] = await Promise.all([
-      api(`/api/conversations/${conversation.id}/pinned-messages`),
-      getConversationKey(conversation),
-    ]);
+    const messages = await api(`/api/conversations/${conversation.id}/pinned-messages`);
     if (!sameID(state.current?.id, conversation.id) || elements.pinnedPanel.hidden) return;
     if (!messages.length) {
       const empty = document.createElement("p");
@@ -4964,7 +5372,7 @@ async function loadPinnedMessages() {
     }
     const decrypted = await Promise.all(messages.map(async (message) => ({
       message: messageWithCurrentUserProfile(message),
-      clear: await decryptMessageContent(message, key),
+      clear: await decryptMessageContent(message, await getMessageKey(message, conversation)),
     })));
     const fragment = document.createDocumentFragment();
     for (const { message, clear } of decrypted) {
@@ -5027,16 +5435,16 @@ async function appendMessage(message, scroll = true) {
   return runKeyedTask(state.messageAppendTasks, appendKey, async () => {
     if (elements.messages.querySelector(`[data-id="${message.id}"]`)) return;
     if (!scheduleMessageExpiration(message)) return;
-    const key = await getConversationKey(conversation);
+    const key = await getMessageKey(message, conversation);
     prefetchFileThumbnail(message, key);
     const clear = await decryptMessageContent(message, key);
     prewarmFilePreviewRenderers([{ message, clear }]);
-    prefetchRecentFullFilePreviews([{ message, clear }], key);
+    prefetchRecentFullFilePreviews([{ message, clear, key }]);
     if (!sameID(state.current?.id, conversation.id)) return;
     if (elements.messages.querySelector(`[data-id="${message.id}"]`)) return;
     document.querySelector("#empty-chat")?.remove();
     const clearByID = messageClearCache(conversation.id);
-    clearByID.set(message.id, clear);
+    clearByID.set(message.id, { clear, keyEpoch: messageKeyEpoch(message, conversation) });
     const fragment = document.createDocumentFragment();
     const displayMessage = withReplyPreview(messageWithCurrentUserProfile(message), clearByID);
     let filePreview;
@@ -5052,7 +5460,7 @@ async function appendMessage(message, scroll = true) {
       setReplyTarget,
       reactToMessage,
       togglePinnedMessage,
-      (replyPreview, container) => scheduleReplyFilePreview(replyPreview, container, key),
+      (replyPreview, container) => scheduleReplyFilePreview(replyPreview, container, conversation),
       votePoll,
       openFileShareDialog,
     );
@@ -5154,7 +5562,9 @@ async function submitPoll(event) {
   const editing = state.editingPoll;
   setBusy(elements.pollSubmit, true, "…");
   try {
-    const key = await getConversationKey(state.current);
+    const key = editing
+      ? await getMessageKey(editing.message, state.current)
+      : await getConversationKey(state.current);
     const encrypted = await encryptText(key, JSON.stringify({ v: 1, question, options }));
     if (editing) {
       await api(`/api/messages/${editing.message.id}/poll`, {
@@ -5168,7 +5578,13 @@ async function submitPoll(event) {
     } else {
       const message = await api(`/api/conversations/${state.current.id}/polls`, {
         method: "POST",
-        body: { encrypted_content: encrypted.data, iv: encrypted.iv, option_count: options.length, expires_in_seconds: expiresInSeconds },
+        body: {
+          encrypted_content: encrypted.data,
+          iv: encrypted.iv,
+          option_count: options.length,
+          expires_in_seconds: expiresInSeconds,
+          key_epoch: conversationKeyEpoch(state.current),
+        },
       });
       closePollDialog();
       await appendMessage(message);
@@ -5254,7 +5670,9 @@ async function submitEvent(event) {
   const editing = state.editingEvent;
   setBusy(elements.eventSubmit, true, "…");
   try {
-    const key = await getConversationKey(state.current);
+    const key = editing
+      ? await getMessageKey(editing.message, state.current)
+      : await getConversationKey(state.current);
     const encrypted = await encryptText(key, JSON.stringify({ v: 1, type: "event", name, description, location }));
     const body = {
       encrypted_content: encrypted.data,
@@ -5270,6 +5688,7 @@ async function submitEvent(event) {
       syncSharedCalendarFeed().catch(() => {});
       toast("Évènement modifié.", "success");
     } else {
+      body.key_epoch = conversationKeyEpoch(state.current);
       const message = await api(`/api/conversations/${state.current.id}/events`, { method: "POST", body });
       closeEventDialog();
       await appendMessage(message);
@@ -5304,7 +5723,7 @@ async function openGlobalFiles() {
       const conversation = state.conversations.find((item) => sameID(item.id, message.conversation_id));
       if (!conversation) return null;
       try {
-        const key = await getConversationKey(conversation);
+        const key = await getMessageKey(message, conversation);
         const clear = await decryptMessageContent(message, key);
         const display = await resolveConversationDisplay(conversation);
         return {
@@ -5636,7 +6055,7 @@ async function loadCalendarItems() {
     const conversation = state.conversations.find((item) => sameID(item.id, message.conversation_id));
     if (!conversation) return null;
     try {
-      const key = await getConversationKey(conversation);
+      const key = await getMessageKey(message, conversation);
       const clear = await decryptMessageContent(message, key);
       let display;
       try {
@@ -5846,6 +6265,7 @@ async function sendMessage(event) {
         iv: encrypted.iv,
         reply_to: state.replyTo?.id || null,
         expires_in_seconds: state.messageExpirationSeconds,
+        key_epoch: conversationKeyEpoch(state.current),
       },
     });
     clearReplyTarget();
@@ -6083,14 +6503,44 @@ async function officeFilePreview(file, data) {
   container.style.maxWidth = "620px";
   document.body.append(container);
   try {
-    return await renderModernOfficePreview(
-      { name: file.name, mime: normalizedFileMIME(file.type, file.name), data },
-      container,
-      { rasterOnly: true, locale, translate: t },
-    );
+    const officeFile = { name: file.name, mime: normalizedFileMIME(file.type, file.name), data };
+    let preview = null;
+    try {
+      preview = await renderModernOfficePreview(
+        officeFile,
+        container,
+        { rasterOnly: true, locale, translate: t },
+      );
+    } catch (error) {
+      console.warn("Création de la miniature Office fidèle impossible", error);
+    }
+    if (preview?.size > 0 && preview.size <= FILE_PREVIEW_MAX_BYTES) return preview;
+    if (preview?.size > FILE_PREVIEW_MAX_BYTES) {
+      console.warn("Miniature Office fidèle trop volumineuse, utilisation de la miniature de secours");
+    }
+    const fallback = await officeFallbackPreviewBlob(officeFile);
+    return fallback?.size > 0 && fallback.size <= FILE_PREVIEW_MAX_BYTES ? fallback : null;
   } finally {
     container.remove();
   }
+}
+
+async function renderTemporaryOfficeThumbnail(container) {
+  const file = { name: container.dataset.fileName || "", mime: container.dataset.fileMime || "" };
+  if (!modernOfficeKind(file)) return "";
+  const blob = await officeFallbackPreviewBlob(file);
+  if (!blob || !container.isConnected) return "";
+  const url = URL.createObjectURL(blob);
+  const image = document.createElement("img");
+  image.className = "office-page-preview office-fallback-preview";
+  image.src = url;
+  image.alt = t("Aperçu");
+  image.decoding = "async";
+  image.loading = "eager";
+  container.classList.add("office-file-preview", `office-${modernOfficeKind(file)}-file-preview`);
+  container.closest(".message-row")?.classList.add("office-message");
+  container.replaceChildren(image);
+  return url;
 }
 
 async function encryptedFilePreview(file, data, key) {
@@ -6150,6 +6600,7 @@ async function sendEncryptedFile(file, successMessage) {
         encrypted_preview_data: preview?.data || "",
         preview_iv: preview?.iv || "",
         expires_in_seconds: expiresInSeconds,
+        key_epoch: conversationKeyEpoch(conversation),
       },
     });
     state.fileQuotas.used_storage = usedStorage + data.byteLength + 16;
@@ -6355,7 +6806,7 @@ async function createFileShare(event) {
   setBusy(elements.fileShareCreate, true, "Chiffrement…");
   try {
     const { message, conversation } = state.pendingFileShare;
-    const conversationKey = await getConversationKey(conversation);
+    const conversationKey = await getMessageKey(message, conversation);
     const file = await loadDecryptedFile(message, conversationKey);
     const shareKey = await generateShareKey();
     const [encrypted, encryptedName, encryptedMIME, exportedKey] = await Promise.all([
@@ -6440,7 +6891,7 @@ async function downloadFile(message, name, button) {
     button.textContent = "…";
   }
   try {
-    const key = await getConversationKey(state.current);
+    const key = await getMessageKey(message, state.current);
     const file = await loadDecryptedFile(message, key);
     const link = document.createElement("a");
     link.href = file.url;
@@ -6479,7 +6930,7 @@ async function editMessage(message, clear, row) {
   }
   row.classList.add("action-pending");
   try {
-    const key = await getConversationKey(state.current);
+    const key = await getMessageKey(message, state.current);
     const encrypted = await encryptText(key, text);
     await api(`/api/messages/${message.id}`, {
       method: "PUT",
@@ -6773,9 +7224,9 @@ function prefetchFileThumbnail(message, key) {
   void loadDecryptedFileThumbnail(message, key).catch(() => {});
 }
 
-function prefetchRecentFileThumbnails(messages, key, limit = 16) {
+function prefetchRecentFileThumbnails(decryptedMessages, limit = 16) {
   let scheduled = 0;
-  for (const message of messages) {
+  for (const { message, key } of decryptedMessages) {
     if (message.file?.has_preview !== true) continue;
     prefetchFileThumbnail(message, key);
     scheduled++;
@@ -6804,13 +7255,12 @@ function supportsFullFilePreview(file) {
 
 function prefetchRecentFullFilePreviews(
   decryptedMessages,
-  key,
   limit = 4,
   byteBudget = FILE_PREVIEW_PREFETCH_BUDGET_BYTES,
 ) {
   let scheduled = 0;
   let remainingBytes = byteBudget;
-  for (const { message, clear } of decryptedMessages) {
+  for (const { message, clear, key } of decryptedMessages) {
     if (!message.file || message.file.has_preview === true || !supportsFullFilePreview(clear || {})) continue;
     const size = Number(message.file.size) || 0;
     if (size <= 0 || size > remainingBytes) continue;
@@ -6836,7 +7286,7 @@ function scheduleFilePreview(message, container, key) {
   observer.observe(container.closest(".file-attachment") || container);
 }
 
-function scheduleReplyFilePreview(replyPreview, container, key) {
+function scheduleReplyFilePreview(replyPreview, container, conversation) {
   if (!replyPreview.fileID) {
     renderUnavailableReplyPreview(container);
     return;
@@ -6849,15 +7299,23 @@ function scheduleReplyFilePreview(replyPreview, container, key) {
       preview_size: replyPreview.previewSize || 0,
     },
   };
+  const render = async () => {
+    try {
+      const key = await getConversationKey(conversation, replyPreview.keyEpoch || 1);
+      renderReplyFilePreview(message, container, key);
+    } catch {
+      renderUnavailableReplyPreview(container);
+    }
+  };
   if (!("IntersectionObserver" in window)) {
-    renderReplyFilePreview(message, container, key);
+    void render();
     return;
   }
   const observer = new IntersectionObserver((entries) => {
     if (!entries.some((entry) => entry.isIntersecting)) return;
     observer.disconnect();
     state.filePreviewObservers.delete(observer);
-    renderReplyFilePreview(message, container, key);
+    void render();
   }, { root: elements.messages, rootMargin: "1200px 0px" });
   state.filePreviewObservers.add(observer);
   observer.observe(container.closest(".message-reply-preview") || container);
@@ -7161,8 +7619,12 @@ function renderVideoPlayer(file, container, { poster = "", preload = "auto", aut
 }
 
 async function renderFilePreview(message, container, key) {
+  let temporaryOfficeThumbnailURL = "";
   try {
     if (await renderEncryptedFileThumbnail(message, container, key) || !container.isConnected) return;
+    if (message.file.has_preview !== true) {
+      temporaryOfficeThumbnailURL = await renderTemporaryOfficeThumbnail(container);
+    }
     const file = await loadDecryptedFile(message, key);
     if (!container.isConnected) return;
     const mime = mimeEssence(file.mime);
@@ -7228,6 +7690,8 @@ async function renderFilePreview(message, container, key) {
     console.error("Chargement de l’aperçu impossible", error);
     container.textContent = frenchErrorMessage(error, "Impossible de charger l’aperçu.");
     container.classList.add("file-preview-error");
+  } finally {
+    if (temporaryOfficeThumbnailURL) URL.revokeObjectURL(temporaryOfficeThumbnailURL);
   }
 }
 
@@ -7512,28 +7976,28 @@ async function createGroup(event) {
   try {
     const groupKey = await generateGroupKey();
     const members = [
-      { id: state.me.id, public_key: state.me.public_key },
+      state.me,
       ...state.contacts
         .filter((contact) => contact.status === "accepted" && selectedIDs.includes(contact.contact_user_id))
-        .map((contact) => ({ id: contact.contact_user_id, public_key: contact.public_key })),
+        .map((contact) => ({ ...contact, id: contact.contact_user_id })),
     ];
     const encryptedKeys = {};
-    await Promise.all(members.map(async (member) => {
+    for (const member of members) {
+      const memberID = member.contact_user_id ?? member.id;
+      const trustedMemberPublicKey = await trustedPublicKey(member, { interactive: true });
       try {
-        const publicKey = JSON.parse(member.public_key);
-        if (publicKey.kty !== "EC" || !publicKey.crv || !publicKey.x || !publicKey.y) throw new Error();
-        encryptedKeys[String(member.id)] = await wrapGroupKey(
+        encryptedKeys[String(memberID)] = await wrapGroupKey(
           groupKey,
           state.privateKey,
-          member.public_key,
+          trustedMemberPublicKey,
           state.me.id,
         );
       } catch {
-        const contact = state.contacts.find((item) => item.contact_user_id === member.id);
-        const identity = member.id === state.me.id ? "votre compte" : contact?.display_name || contact?.username || "ce membre";
+        const contact = state.contacts.find((item) => item.contact_user_id === memberID);
+        const identity = memberID === state.me.id ? "votre compte" : contact?.display_name || contact?.username || "ce membre";
         throw new Error(`La clé de chiffrement de ${identity} est invalide. Ce compte doit être recréé.`);
       }
-    }));
+    }
     const encryptedTitle = await encryptEnvelope(groupKey, name);
     const encryptedDescription = description ? await encryptEnvelope(groupKey, description) : null;
     const encryptedAvatar = groupAvatar ? await encryptEnvelope(groupKey, groupAvatar) : null;
@@ -7554,7 +8018,7 @@ async function createGroup(event) {
     await refreshAll();
     const conversation = state.conversations.find((item) => item.id === result.id);
     if (conversation) {
-      state.keys.set(conversation.id, groupKey);
+      state.keys.set(conversationKeyCacheID(conversation.id, 1), groupKey);
       await selectConversation(conversation);
     }
   } catch (error) {
@@ -7607,9 +8071,16 @@ async function handleSocketEvent(event) {
   } else if (event.type === "conversation_updated") {
     invalidateConversationPreload(event.conversation_id);
     const currentID = state.current?.id;
+    let profileIdentityBlocked = false;
     state.members.delete(event.conversation_id);
     if (event.profile_updated) {
-      await getMembers(event.conversation_id, { fresh: true });
+      try {
+        await getMembers(event.conversation_id, { fresh: true });
+      } catch (error) {
+        error.conversationID = event.conversation_id;
+        if (!reportIdentitySecurityError(error)) throw error;
+        profileIdentityBlocked = true;
+      }
     }
     if (event.removal_notice) {
       const title = t("Retrait d’un groupe");
@@ -7619,16 +8090,25 @@ async function handleSocketEvent(event) {
     }
     if ((event.deleted || event.removed) && sameID(currentID, event.conversation_id)) {
       closeCurrentConversation(event.conversation_id);
-      state.keys.delete(event.conversation_id);
+      clearConversationKeys(event.conversation_id);
     }
     state.conversations = await api("/api/conversations");
+    const refreshedCurrent = state.conversations.find((conversation) => sameID(conversation.id, currentID));
+    if (refreshedCurrent?.rotation_required && sameID(refreshedCurrent.created_by, state.me.id)) {
+      try {
+        await repairRequiredGroupRotation(refreshedCurrent);
+        toast("La clé du groupe a été renouvelée après le départ d’un membre.", "success");
+      } catch (error) {
+        toast(frenchErrorMessage(error, "Impossible de renouveler immédiatement la clé du groupe."), "error");
+      }
+    }
     state.cache?.saveConversations(state.conversations);
     await renderConversations();
     if (event.deleted || event.removed) state.cache?.deleteConversation(event.conversation_id);
-    if (!(event.deleted || event.removed) && sameID(currentID, event.conversation_id)) {
+    if (!profileIdentityBlocked && !(event.deleted || event.removed) && sameID(currentID, event.conversation_id)) {
       await refreshCurrentConversationHeader(currentID);
     }
-    if ((event.deleted_message_id || event.updated_message_id || event.reaction_message_id || event.pinned_message_id || event.poll_message_id || event.profile_updated) && sameID(currentID, event.conversation_id)) {
+    if (!profileIdentityBlocked && (event.deleted_message_id || event.updated_message_id || event.reaction_message_id || event.pinned_message_id || event.poll_message_id || event.profile_updated) && sameID(currentID, event.conversation_id)) {
       await loadMessages(null, false);
       if (event.pinned_message_id && !elements.pinnedPanel.hidden) await loadPinnedMessages();
     }
@@ -7663,6 +8143,18 @@ function sendTyping() {
 
 function scrollToBottom() {
   elements.messages.scrollTop = 0;
+}
+
+async function scrollMessagesToLatest(conversationID) {
+  // Firefox conserve parfois l'ancien scrollTop négatif d'un conteneur
+  // column-reverse lorsque le placeholder est remplacé. Deux frames laissent
+  // le moteur recalculer la hauteur, l'ordre CSS et la transition du panneau.
+  scrollToBottom();
+  for (let frame = 0; frame < 2; frame += 1) {
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    if (!sameID(state.current?.id, conversationID)) return;
+    scrollToBottom();
+  }
 }
 
 function debounce(fn, wait) {
