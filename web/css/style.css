@@ -489,9 +489,12 @@ html.ios-pwa-splash-positioned #startup-splash svg { visibility: visible; }
 .calendar-dialog { width: min(94vw, 760px); }
 .calendar-dialog > section { position: relative; display: grid; gap: .8rem; }
 .calendar-help { color: var(--muted); }
-.calendar-toolbar { display: grid; grid-template-columns: auto minmax(10rem, 1fr) auto auto; align-items: center; gap: .5rem; padding-right: 2.5rem; }
-.calendar-toolbar strong { text-align: center; font-size: 1.1rem; }
+.calendar-toolbar { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; grid-template-areas: "previous spacer today next"; align-items: center; gap: .5rem; margin-top: .75rem; }
+.calendar-toolbar strong { position: absolute; left: 50%; transform: translateX(-50%); text-align: center; font-size: 1.1rem; }
 .calendar-toolbar button { min-width: 2.5rem; padding: .5rem .75rem; }
+#calendar-previous { grid-area: previous; }
+#calendar-today { grid-area: today; }
+#calendar-next { grid-area: next; }
 .calendar-scroll { max-height: min(68vh, 620px); overflow: auto; border: 1px solid var(--line); border-radius: .75rem; background: var(--panel-2); }
 .calendar-weekdays, .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(6rem, 1fr)); min-width: 672px; }
 .calendar-weekdays { position: sticky; top: 0; z-index: 2; border-bottom: 1px solid var(--line); background: var(--panel); }
@@ -800,19 +803,35 @@ fieldset { min-width: 0; border: 1px solid var(--line); border-radius: .8rem; }
   /* iOS zooms the whole page when a focused form control is smaller than 16px. */
   input, textarea, select { font-size: 16px !important; }
   .event-date-fields { grid-template-columns: 1fr; }
-  .calendar-dialog { width: calc(100dvw - .5rem); max-width: calc(100dvw - .5rem); }
-  .carnet-dialog { width: calc(100dvw - .5rem); max-width: calc(100dvw - .5rem); }
-  .global-files-dialog { width: calc(100dvw - .5rem); max-width: calc(100dvw - .5rem); }
+  .calendar-dialog {
+    width: calc(100dvw - 1.5rem);
+    max-width: calc(100dvw - 1.5rem);
+    max-height: min(86dvh, 44rem);
+  }
+  .carnet-dialog, .global-files-dialog {
+    width: calc(100dvw - 1.5rem);
+    max-width: calc(100dvw - 1.5rem);
+  }
   .carnet-toolbar { align-items: center; flex-direction: row; }
   .carnet-row { grid-template-columns: auto minmax(0, 1fr); }
   .carnet-actions { grid-column: 1 / -1; justify-content: stretch; }
   .carnet-actions button { flex: 1 1 0; }
-  .calendar-toolbar { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "previous label next" "today today today"; padding-right: 2rem; }
-  #calendar-previous { grid-area: previous; }
-  #calendar-month-label { grid-area: label; }
-  #calendar-today { grid-area: today; }
-  #calendar-next { grid-area: next; }
-  .calendar-weekdays, .calendar-grid { grid-template-columns: repeat(7, minmax(6.5rem, 1fr)); min-width: 728px; }
+  .calendar-toolbar {
+    grid-template-columns: 2.5rem minmax(0, 1fr) 2.5rem;
+    grid-template-areas: "previous label next" "today today today";
+    margin-top: .75rem;
+    padding-right: 0;
+  }
+  #calendar-month-label { position: static; left: auto; grid-area: label; justify-self: center; transform: none; }
+  .calendar-scroll { max-height: min(52dvh, 26rem); overscroll-behavior: contain; }
+  .calendar-weekdays, .calendar-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); min-width: 0; }
+  .calendar-weekdays span { padding: .4rem .1rem; font-size: .68rem; }
+  .calendar-grid { grid-template-rows: repeat(6, minmax(3.75rem, auto)); }
+  .calendar-day { min-height: 3.75rem; padding: .2rem; }
+  .calendar-day-number { width: 1.45rem; height: 1.45rem; margin: 0 auto .15rem; font-size: .72rem; }
+  .calendar-day-events { gap: .15rem; max-height: 2.85rem; }
+  .calendar-day-event { display: block; min-height: 1.25rem; padding: .18rem .2rem; font-size: .64rem; }
+  .calendar-day-event-avatar, .calendar-day-event-time { display: none; }
   #app-shell {
     position: relative;
     display: block;

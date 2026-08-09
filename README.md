@@ -6,7 +6,7 @@ Application de messagerie web installable, responsive et chiffrée côté naviga
   <img src="docs/interface-community.png" alt="Interface de Vibration Community avec conversations, sondage, évènement, fichier partagé et messages épinglés" width="900">
 </p>
 
-<p align="center"><strong>Vibration Community 1.0.15</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
+<p align="center"><strong>Vibration Community 1.0.16</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
 
 ## Philosophie
 
@@ -30,8 +30,12 @@ Elle inclut :
 - **expérience web et mobile** : interface responsive en six langues, PWA, cache de l’interface, notifications Web Push et reconnexion automatique ;
 - **auto-hébergement** : serveur Go compact, base SQLite locale et aucun service d’analytique ou de télémétrie Vibration requis.
 
-## Nouveautés de Community 1.0.15
+## Nouveautés de Community 1.0.16
 
+- **Dossier complet et fiable** : les images et les fichiers dont les empreintes de contrôle sont absentes apparaissent désormais correctement dans la liste globale.
+- **Dossier adapté aux longues listes** : les fichiers sont chargés par pages au fil du défilement ; la première page et ses noms déchiffrés sont préparés en arrière-plan pour rendre l’ouverture immédiate sans conserver de données en clair sur le serveur.
+- **Mises à jour ciblées du Dossier** : l’index local n’est invalidé que lorsqu’un fichier est ajouté, supprimé, expiré ou modifié, ce qui évite les rechargements inutiles.
+- **Calendrier mobile remanié** : la grille tient dans la largeur d’un iPhone sans défilement horizontal, la fenêtre conserve les mêmes marges que Dossier et Carnet, et le mois reste centré avec des commandes correctement espacées en portrait comme en paysage.
 - **Ouverture immédiate des discussions** : un clic sélectionne et affiche désormais la conversation sans attendre les vérifications asynchrones, tout en conservant les contrôles de sécurité avant les actions sensibles.
 - **Dossier de fichiers plus réactif** : les noms déjà déchiffrés sont réutilisés et la liste s’affiche progressivement dès que chaque fichier est prêt, sans bloquer toute l’interface pendant le chargement.
 - **Carnet de contacts instantané** : les contacts déjà chargés apparaissent dès l’ouverture, puis sont actualisés en arrière-plan sans vider inutilement la liste.
@@ -354,6 +358,7 @@ Messages et fichiers :
 - `PUT /api/messages/{id}`
 - `DELETE /api/messages/{id}`
 - `POST /api/files`
+- `GET /api/files?limit=40&before=`
 - `GET /api/files/{id}`
 
 Push :

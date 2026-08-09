@@ -1,8 +1,8 @@
-const CACHE = "chat-pwa-go-v304";
+const CACHE = "chat-pwa-go-v311";
 const SHELL = [
-  "/", "/index.html", "/login.html", "/link-device.html", "/share.html", "/css/style.css?v=ios-landscape-splash-v304",
-  "/js/app.js?v=ios-landscape-splash-v304", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios-resume-v297", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=ios-landscape-splash-v304",
-  "/js/notifications.js?v=ios-landscape-splash-v304", "/js/device-vault.js?v=trusted-device-v300", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js?v=ios-resume-v297", "/js/ui.js?v=ios-resume-v297", "/js/share.js?v=ios17-pdf-v199", "/js/login.js?v=ios-landscape-splash-v304", "/js/link-device.js?v=ios-resume-v297", "/js/qr-scanner.js?v=qr-scanner-v296", "/manifest.json?v=desktop-titlebar-v252",
+  "/", "/index.html", "/login.html", "/link-device.html", "/share.html", "/css/style.css?v=calendar-toolbar-grid-v311",
+  "/js/app.js?v=calendar-toolbar-grid-v311", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios-resume-v297", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=calendar-toolbar-grid-v311",
+  "/js/notifications.js?v=calendar-toolbar-grid-v311", "/js/device-vault.js?v=trusted-device-v300", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js?v=calendar-toolbar-grid-v311", "/js/ui.js?v=ios-resume-v297", "/js/share.js?v=ios17-pdf-v199", "/js/login.js?v=calendar-toolbar-grid-v311", "/js/link-device.js?v=ios-resume-v297", "/js/qr-scanner.js?v=qr-scanner-v296", "/manifest.json?v=desktop-titlebar-v252",
   "/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2",
   "/vendor/jsqr/jsQR.js?v=qr-scanner-v296",
   "/js/pdf-preview-compat.js?v=ios17-pdf-v199",

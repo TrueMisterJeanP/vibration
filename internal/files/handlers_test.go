@@ -128,6 +128,10 @@ func TestUploadDownloadFileAndMarkDeliveredWhenRecipientOnline(t *testing.T) {
 	if !hasEvent(hub.sent, 1, "message_delivered") || !hasEvent(hub.sent, 2, "new_message") {
 		t.Fatalf("missing delivery events: %#v", hub.sent)
 	}
+	if !hasEventValue(hub.sent, 1, "conversation_updated", "files_changed", true) ||
+		!hasEventValue(hub.sent, 2, "conversation_updated", "files_changed", true) {
+		t.Fatalf("missing file index invalidation events: %#v", hub.sent)
+	}
 	select {
 	case userID := <-push.users:
 		if userID != 2 {
@@ -229,6 +233,63 @@ func TestUploadWithoutPreviewRemainsCompatible(t *testing.T) {
 	download := fileRequest(t, mux, http.MethodGet, "/api/files/"+formatID(response.File.ID), nil, recipient)
 	if download.Code != http.StatusOK {
 		t.Fatalf("download status=%d body=%s", download.Code, download.Body.String())
+	}
+	listed := fileRequest(t, mux, http.MethodGet, "/api/files", nil, recipient)
+	if listed.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", listed.Code, listed.Body.String())
+	}
+	var listedMessages []listedFileMessage
+	if err := json.Unmarshal(listed.Body.Bytes(), &listedMessages); err != nil {
+		t.Fatal(err)
+	}
+	if len(listedMessages) != 1 || listedMessages[0].File == nil || listedMessages[0].File.ID != response.File.ID || listedMessages[0].File.HasPreview {
+		t.Fatalf("listed file without preview=%+v", listedMessages)
+	}
+}
+
+func TestListFilesUsesStableCursorPagination(t *testing.T) {
+	db, conversationID, sender, recipient := setupFileConversation(t)
+	defer db.Close()
+
+	handler := &Handler{DB: db}
+	mux := fileMux(authHandlerForTest(db), handler)
+	messageIDs := make([]int64, 0, 3)
+	for range 3 {
+		uploaded := fileRequest(t, mux, http.MethodPost, "/api/files", uploadBody(conversationID), sender)
+		if uploaded.Code != http.StatusCreated {
+			t.Fatalf("upload status=%d body=%s", uploaded.Code, uploaded.Body.String())
+		}
+		var response struct {
+			ID int64 `json:"id"`
+		}
+		if err := json.Unmarshal(uploaded.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		messageIDs = append(messageIDs, response.ID)
+	}
+
+	firstPage := fileRequest(t, mux, http.MethodGet, "/api/files?limit=2", nil, recipient)
+	if firstPage.Code != http.StatusOK {
+		t.Fatalf("first page status=%d body=%s", firstPage.Code, firstPage.Body.String())
+	}
+	var first []listedFileMessage
+	if err := json.Unmarshal(firstPage.Body.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 2 || first[0].ID != messageIDs[2] || first[1].ID != messageIDs[1] {
+		t.Fatalf("first page=%+v message IDs=%v", first, messageIDs)
+	}
+
+	secondPage := fileRequest(t, mux, http.MethodGet, "/api/files?limit=2&before="+formatID(first[1].ID), nil, recipient)
+	if secondPage.Code != http.StatusOK {
+		t.Fatalf("second page status=%d body=%s", secondPage.Code, secondPage.Body.String())
+	}
+	var second []listedFileMessage
+	if err := json.Unmarshal(secondPage.Body.Bytes(), &second); err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 1 || second[0].ID != messageIDs[0] {
+		t.Fatalf("second page=%+v message IDs=%v", second, messageIDs)
 	}
 }
 
@@ -625,6 +686,19 @@ func hasEvent(events []sentEvent, userID int64, eventType string) bool {
 		}
 		event, ok := sent.event.(map[string]any)
 		if ok && event["type"] == eventType {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEventValue(events []sentEvent, userID int64, eventType, key string, value any) bool {
+	for _, sent := range events {
+		if sent.userID != userID {
+			continue
+		}
+		event, ok := sent.event.(map[string]any)
+		if ok && event["type"] == eventType && event[key] == value {
 			return true
 		}
 	}

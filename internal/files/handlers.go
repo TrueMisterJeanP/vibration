@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"net/http"
+	"strconv"
 	"time"
 
 	"chat-pwa-go/internal/auth"
@@ -79,6 +80,14 @@ type listedFileMessage struct {
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	userID := auth.UserID(r)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+	if before <= 0 {
+		before = 1<<63 - 1
+	}
 	rows, err := h.DB.Query(`SELECT m.id,m.conversation_id,m.sender_id,COALESCE(u.remote_username,u.username),u.avatar,
 		m.encrypted_content,m.iv,m.key_epoch,m.expires_at,m.created_at,m.updated_at,m.client_message_id,COALESCE(m.signature_conversation_id,''),COALESCE(m.signature_sender_id,''),COALESCE(m.signature_reply_to,''),m.signature_version,m.signing_key_id,m.signature,m.message_kind,m.revision,
 		f.id,f.encrypted_name,f.encrypted_mime,f.iv,f.size,f.preview_size,f.ciphertext_sha256,f.preview_sha256,
@@ -86,8 +95,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 			AND fs.revoked_at IS NULL AND fs.expires_at>?)
 		FROM files f JOIN messages m ON m.id=f.message_id JOIN users u ON u.id=m.sender_id
 		JOIN conversation_members cm ON cm.conversation_id=m.conversation_id AND cm.user_id=? AND cm.role<>'pending'
-		WHERE m.created_at>=cm.created_at AND (m.expires_at IS NULL OR m.expires_at>?)
-		ORDER BY m.created_at DESC,m.id DESC`, userID, now, userID, now)
+		WHERE m.id<? AND m.created_at>=cm.created_at AND (m.expires_at IS NULL OR m.expires_at>?)
+		ORDER BY m.id DESC LIMIT ?`, userID, now, userID, before, now, limit)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "file lookup failed")
 		return
@@ -98,17 +107,26 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		var message listedFileMessage
 		var file listedFile
 		var previewSize sql.NullInt64
-		if rows.Scan(&message.ID, &message.ConversationID, &message.SenderID, &message.SenderUsername, &message.SenderAvatar,
+		var ciphertextSHA256, previewSHA256 sql.NullString
+		if err := rows.Scan(&message.ID, &message.ConversationID, &message.SenderID, &message.SenderUsername, &message.SenderAvatar,
 			&message.EncryptedContent, &message.IV, &message.KeyEpoch, &message.ExpiresAt, &message.CreatedAt, &message.UpdatedAt,
 			&message.ClientMessageID, &message.SignatureConversationID, &message.SignatureSenderID, &message.SignatureReplyTo, &message.SignatureVersion, &message.SigningKeyID, &message.Signature, &message.MessageKind, &message.Revision,
-			&file.ID, &file.EncryptedName, &file.EncryptedMIME, &file.IV, &file.Size, &previewSize, &file.CiphertextSHA256, &file.PreviewSHA256, &file.ActiveShareCount) == nil {
-			if previewSize.Valid && previewSize.Int64 > 0 {
-				file.HasPreview = true
-				file.PreviewSize = previewSize.Int64
-			}
-			message.File = &file
-			result = append(result, message)
+			&file.ID, &file.EncryptedName, &file.EncryptedMIME, &file.IV, &file.Size, &previewSize, &ciphertextSHA256, &previewSHA256, &file.ActiveShareCount); err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "file lookup failed")
+			return
 		}
+		file.CiphertextSHA256 = ciphertextSHA256.String
+		file.PreviewSHA256 = previewSHA256.String
+		if previewSize.Valid && previewSize.Int64 > 0 {
+			file.HasPreview = true
+			file.PreviewSize = previewSize.Int64
+		}
+		message.File = &file
+		result = append(result, message)
+	}
+	if err := rows.Err(); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "file lookup failed")
+		return
 	}
 	httpx.JSON(w, http.StatusOK, result)
 }
@@ -319,7 +337,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 			h.Hub.SendToUser(id, map[string]any{"type": "new_message", "message": message})
 		}
 		if h.Hub != nil {
-			h.Hub.SendToUser(id, map[string]any{"type": "conversation_updated", "conversation_id": input.ConversationID})
+			h.Hub.SendToUser(id, map[string]any{"type": "conversation_updated", "conversation_id": input.ConversationID, "files_changed": true})
 		}
 	}
 	if h.Federation != nil {

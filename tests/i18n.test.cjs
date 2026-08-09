@@ -70,6 +70,7 @@ async function load(language) {
     assert.equal(i18n.t("Déconnexion"), label);
     assert.equal(i18n.t("Version {version}", { version: 7 }).includes("7"), true);
     assert.equal(i18n.t("{count} fichiers dans vos discussions.", { count: 3 }).includes("3"), true);
+    assert.equal(i18n.t("{count} fichiers chargés. Faites défiler pour afficher la suite.", { count: 40 }).includes("40"), true);
     assert.equal(i18n.t("{visible} évènements ce mois · {total} au total", { visible: 2, total: 8 }).includes("8"), true);
     assert.notEqual(i18n.t("Droits administrateur accordés"), "", true);
     assert.notEqual(i18n.translateMultiline("CONDITIONS D’UTILISATION DE VIBRATION"), "", true);

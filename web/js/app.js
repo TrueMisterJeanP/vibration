@@ -39,10 +39,10 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=ios-landscape-splash-v304";
+} from "./notifications.js?v=calendar-toolbar-grid-v311";
 import { ChatSocket } from "./websocket.js?v=ios-resume-v297";
 import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios-resume-v297";
-import { locale, t } from "./i18n.js?v=ios-resume-v297";
+import { locale, t } from "./i18n.js?v=calendar-toolbar-grid-v311";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
 import { nonWhiteImageBounds } from "./file-preview-image.js?v=ios17-pdf-v199";
 import {
@@ -79,8 +79,11 @@ const BACKGROUND_THUMBNAIL_PRELOAD_CONCURRENCY = 2;
 const BACKGROUND_THUMBNAIL_PRELOAD_BUDGET_BYTES = 4 * 1024 * 1024;
 const BACKGROUND_PRELOAD_TTL_MS = 2 * 60 * 1000;
 const BACKGROUND_PRELOAD_NETWORK_FRESH_MS = 15 * 1000;
+const GLOBAL_FILES_PAGE_SIZE = 40;
+const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
+const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "ios-landscape-splash-v304";
+const APP_BUILD = "calendar-toolbar-grid-v311";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 
 window.VIBRATION_BUILD = APP_BUILD;
@@ -122,6 +125,14 @@ const state = {
   conversationPreloadVersions: new Map(),
   messageClears: new Map(),
   globalFileClears: new Map(),
+  globalFileClearLoads: new Map(),
+  globalFileMessages: [],
+  globalFilesLoaded: false,
+  globalFilesHasMore: true,
+  globalFilesNextBefore: null,
+  globalFilesGeneration: 0,
+  globalFilesFirstPageLoad: null,
+  globalFilesNextPageLoad: null,
   messageExpiryTimers: new Map(),
   messageAppendTasks: new Map(),
   filePreviewObservers: new Set(),
@@ -155,6 +166,7 @@ let conversationRenderVersion = 0;
 let conversationListRenderKey = "";
 let conversationSelectionVersion = 0;
 let globalFilesLoadVersion = 0;
+let globalFilesPreloadScheduled = false;
 let carnetLoadVersion = 0;
 let appReady = false;
 let appShellPrepared = false;
@@ -675,6 +687,9 @@ function clearConversationMessageExpirations(conversationID) {
 
 async function expireRenderedMessage(conversationID, messageID) {
   invalidateConversationPreload(conversationID);
+  forgetGlobalFileClearByMessageID(messageID);
+  invalidateGlobalFilesIndex();
+  if (appReady) scheduleGlobalFilesPreload();
   state.cache?.deleteMessage(conversationID, messageID);
   state.messageClears.get(conversationID)?.delete(messageID);
   const key = messageTimerKey(conversationID, messageID);
@@ -769,6 +784,7 @@ async function boot() {
   if (!state.socket || state.socket.closed) connectSocket();
   await refreshAll();
   appReady = true;
+  scheduleGlobalFilesPreload();
   if (!appNotificationsStarted) {
     appNotificationsStarted = true;
     initializeNotificationsAfterBoot();
@@ -1171,6 +1187,11 @@ function bindUI() {
   });
   elements.carnetDeleteAll.addEventListener("click", deleteAllCarnetEntries);
   document.querySelector("#global-files-close").addEventListener("click", () => elements.globalFilesDialog.close());
+  elements.globalFilesList.addEventListener("scroll", handleGlobalFilesScroll, { passive: true });
+  elements.globalFilesDialog.addEventListener("close", () => {
+    globalFilesLoadVersion += 1;
+    elements.globalFilesList.removeAttribute("aria-busy");
+  });
   elements.fileShareForm.addEventListener("submit", createFileShare);
   document.querySelector("#file-share-close").addEventListener("click", closeFileShareDialog);
   document.querySelector("#file-share-cancel").addEventListener("click", closeFileShareDialog);
@@ -1518,6 +1539,8 @@ async function updateAcceptedIdentityPublicKey(userID, publicKey, signingPublicK
   state.keyEnvelopeLoads.clear();
   state.preloadedMessages.clear();
   state.globalFileClears.clear();
+  state.globalFileClearLoads.clear();
+  invalidateGlobalFilesIndex();
 }
 
 async function confirmIdentityKeyChange(result, identity) {
@@ -1570,6 +1593,8 @@ async function trustedPublicKey(identity, { interactive = false } = {}) {
   state.keyEnvelopeLoads.clear();
   state.preloadedMessages.clear();
   state.globalFileClears.clear();
+  state.globalFileClearLoads.clear();
+  invalidateGlobalFilesIndex();
   if (!interactive) throw identitySecurityError(result, identity);
   return confirmIdentityKeyChange(result, identity);
 }
@@ -2997,6 +3022,9 @@ function preloadConversationInBackground(conversation, session) {
         key,
         clear: await decryptMessageContent(message, key),
       })));
+      for (const { message, clear } of decrypted) {
+        if (message.file) rememberGlobalFileClear(message, clear);
+      }
       if (conversationPreloadVersion(conversation.id) !== version) return null;
       const result = {
         messages,
@@ -6080,6 +6108,7 @@ async function renderMessages(messages, conversation, preparedDecrypted = null) 
   const clearByID = messageClearCache(conversationID);
   for (const { message, clear } of [...decrypted].reverse()) {
     clearByID.set(message.id, { clear, keyEpoch: messageKeyEpoch(message, conversation) });
+    if (message.file) rememberGlobalFileClear(message, clear);
   }
   const fragment = document.createDocumentFragment();
   const previews = [];
@@ -6443,6 +6472,7 @@ async function appendMessage(message, scroll = true) {
     const key = await getMessageKey(message, conversation);
     prefetchFileThumbnail(message, key);
     const clear = await decryptMessageContent(message, key);
+    if (message.file) rememberGlobalFileClear(message, clear);
     prewarmFilePreviewRenderers([{ message, clear }]);
     prefetchRecentFullFilePreviews([{ message, clear, key }]);
     if (!sameID(state.current?.id, conversation.id)) return;
@@ -6722,6 +6752,104 @@ function datetimeLocalValue(value) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function globalFilesPageURL(before = null) {
+  const parameters = new URLSearchParams({ limit: String(GLOBAL_FILES_PAGE_SIZE) });
+  if (before != null) parameters.set("before", String(before));
+  return `/api/files?${parameters}`;
+}
+
+function globalFileEntries(messages) {
+  return messages.map((message) => {
+    const conversation = state.conversations.find((item) => sameID(item.id, message.conversation_id));
+    return conversation ? { message, conversation } : null;
+  }).filter(Boolean);
+}
+
+function rememberGlobalFilesFirstPage(messages, generation) {
+  if (generation !== state.globalFilesGeneration) return false;
+  state.globalFileMessages = messages;
+  state.globalFilesLoaded = true;
+  state.globalFilesHasMore = messages.length === GLOBAL_FILES_PAGE_SIZE;
+  state.globalFilesNextBefore = messages.at(-1)?.id ?? null;
+  return true;
+}
+
+function rememberNextGlobalFilesPage(messages, generation) {
+  if (generation !== state.globalFilesGeneration) return false;
+  const byID = new Map(state.globalFileMessages.map((message) => [String(message.id), message]));
+  for (const message of messages) byID.set(String(message.id), message);
+  state.globalFileMessages = [...byID.values()].sort((left, right) => Number(right.id) - Number(left.id));
+  state.globalFilesHasMore = messages.length === GLOBAL_FILES_PAGE_SIZE;
+  state.globalFilesNextBefore = messages.at(-1)?.id ?? null;
+  return true;
+}
+
+function invalidateGlobalFilesIndex() {
+  state.globalFilesGeneration += 1;
+  state.globalFileMessages = [];
+  state.globalFilesLoaded = false;
+  state.globalFilesHasMore = true;
+  state.globalFilesNextBefore = null;
+  state.globalFilesFirstPageLoad = null;
+  state.globalFilesNextPageLoad = null;
+  state.globalFileClearLoads.clear();
+  elements.globalFilesList?.removeAttribute("aria-busy");
+}
+
+function loadGlobalFilesFirstPage() {
+  if (state.globalFilesLoaded) return Promise.resolve(state.globalFileMessages);
+  if (state.globalFilesFirstPageLoad) return state.globalFilesFirstPageLoad;
+  const generation = state.globalFilesGeneration;
+  const pending = api(globalFilesPageURL()).then((messages) => {
+    if (!rememberGlobalFilesFirstPage(messages, generation)) return null;
+    return messages;
+  }).finally(() => {
+    if (state.globalFilesFirstPageLoad === pending) state.globalFilesFirstPageLoad = null;
+  });
+  state.globalFilesFirstPageLoad = pending;
+  return pending;
+}
+
+async function prewarmGlobalFileEntries(entries, generation) {
+  const displayTasks = new Map();
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(GLOBAL_FILES_BACKGROUND_CONCURRENCY, entries.length) }, async () => {
+    while (nextIndex < entries.length && generation === state.globalFilesGeneration) {
+      const index = nextIndex++;
+      await prepareGlobalFileItem(entries[index], displayTasks);
+    }
+  });
+  await Promise.all(workers);
+}
+
+async function preloadGlobalFiles() {
+  const generation = state.globalFilesGeneration;
+  const messages = await loadGlobalFilesFirstPage();
+  if (!messages || generation !== state.globalFilesGeneration) return;
+  await prewarmGlobalFileEntries(globalFileEntries(messages), generation);
+}
+
+function scheduleGlobalFilesPreload() {
+  if (globalFilesPreloadScheduled || state.globalFilesLoaded) return;
+  globalFilesPreloadScheduled = true;
+  const run = () => {
+    globalFilesPreloadScheduled = false;
+    preloadGlobalFiles().catch((error) => console.warn("Préchargement du Dossier impossible", error));
+  };
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(run, { timeout: 2500 });
+  } else {
+    window.setTimeout(run, 0);
+  }
+}
+
+async function renderGlobalFileMessages(messages, loadVersion, { append = false } = {}) {
+  const entries = globalFileEntries(messages);
+  const dateFormatter = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
+  const placeholders = renderGlobalFilePlaceholders(entries, dateFormatter, { append });
+  await decryptGlobalFilesProgressively(entries, placeholders, dateFormatter, loadVersion);
+}
+
 async function openGlobalFiles() {
   const loadVersion = ++globalFilesLoadVersion;
   elements.globalFilesStatus.textContent = t("Chargement des fichiers…");
@@ -6730,19 +6858,11 @@ async function openGlobalFiles() {
     document.querySelector("#global-files-close").focus({ preventScroll: true });
   }
   try {
-    const messages = await api("/api/files");
+    const messages = state.globalFilesLoaded ? state.globalFileMessages : await loadGlobalFilesFirstPage();
+    if (!messages || loadVersion !== globalFilesLoadVersion) return;
+    await renderGlobalFileMessages(messages, loadVersion);
     if (loadVersion !== globalFilesLoadVersion) return;
-    const entries = messages.map((message) => {
-      const conversation = state.conversations.find((item) => sameID(item.id, message.conversation_id));
-      return conversation ? { message, conversation } : null;
-    }).filter(Boolean);
-    const currentFileIDs = new Set(entries.map(({ message }) => String(message.file.id)));
-    for (const fileID of state.globalFileClears.keys()) {
-      if (!currentFileIDs.has(fileID)) state.globalFileClears.delete(fileID);
-    }
-    const dateFormatter = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
-    const placeholders = renderGlobalFilePlaceholders(entries, dateFormatter);
-    await decryptGlobalFilesProgressively(entries, placeholders, dateFormatter, loadVersion);
+    await fillGlobalFilesViewport(loadVersion);
   } catch (error) {
     if (loadVersion !== globalFilesLoadVersion) return;
     elements.globalFilesStatus.textContent = frenchErrorMessage(error, "Impossible de charger les fichiers.");
@@ -6768,9 +6888,9 @@ function globalFileMessagesMatch(left, right) {
     && Number(left?.file?.size || 0) === Number(right?.file?.size || 0);
 }
 
-function clearGlobalFileClearsForConversation(conversationID) {
+function forgetGlobalFileClearByMessageID(messageID) {
   for (const [fileID, cached] of state.globalFileClears) {
-    if (sameID(cached.message?.conversation_id, conversationID)) state.globalFileClears.delete(fileID);
+    if (sameID(cached.message?.id, messageID)) state.globalFileClears.delete(fileID);
   }
 }
 
@@ -6779,13 +6899,18 @@ function validGlobalFileClear(clear) {
 }
 
 function rememberGlobalFileClear(message, clear) {
-  if (!validGlobalFileClear(clear)) return;
+  if (!message?.file || !validGlobalFileClear(clear)) return;
   state.globalFileClears.set(String(message.file.id), { message, clear });
 }
 
 function cachedGlobalFileClear(message) {
   const cached = state.globalFileClears.get(String(message.file.id));
   if (cached && globalFileMessagesMatch(cached.message, message)) return cached.clear;
+  const rendered = state.messageClears.get(message.conversation_id)?.get(message.id);
+  if (validGlobalFileClear(rendered?.clear) && Number(rendered.keyEpoch || 1) === Number(message.key_epoch || 1)) {
+    rememberGlobalFileClear(message, rendered.clear);
+    return rendered.clear;
+  }
   const prepared = state.preloadedMessages.get(conversationPreloadKey(message.conversation_id));
   const preparedEntry = prepared?.decrypted?.find(({ message: cachedMessage }) => globalFileMessagesMatch(cachedMessage, message));
   if (!validGlobalFileClear(preparedEntry?.clear)) return null;
@@ -6820,13 +6945,25 @@ async function globalFileConversationDisplay(conversation, displayTasks) {
 async function prepareGlobalFileItem({ message, conversation }, displayTasks) {
   let clear = cachedGlobalFileClear(message);
   if (!clear) {
-    try {
-      const key = await getMessageKey(message, conversation);
-      clear = await decryptMessageContent(message, key);
-      rememberGlobalFileClear(message, clear);
-    } catch {
-      clear = null;
+    const fileID = String(message.file.id);
+    const generation = state.globalFilesGeneration;
+    let pending = state.globalFileClearLoads.get(fileID);
+    if (!pending) {
+      pending = (async () => {
+        try {
+          const key = await getMessageKey(message, conversation);
+          const decrypted = await decryptMessageContent(message, key);
+          if (generation === state.globalFilesGeneration) rememberGlobalFileClear(message, decrypted);
+          return decrypted;
+        } catch {
+          return null;
+        }
+      })().finally(() => {
+        if (state.globalFileClearLoads.get(fileID) === pending) state.globalFileClearLoads.delete(fileID);
+      });
+      state.globalFileClearLoads.set(fileID, pending);
     }
+    clear = await pending;
   }
   let display;
   try {
@@ -6844,7 +6981,12 @@ async function prepareGlobalFileItem({ message, conversation }, displayTasks) {
   };
 }
 
-function globalFileStatus(count) {
+function globalFileStatus(count, hasMore = false) {
+  if (count && hasMore) {
+    return t(count === 1
+      ? "{count} fichier chargé. Faites défiler pour afficher la suite."
+      : "{count} fichiers chargés. Faites défiler pour afficher la suite.", { count });
+  }
   return count
     ? t(count === 1 ? "{count} fichier dans vos discussions." : "{count} fichiers dans vos discussions.", { count })
     : t("Aucun fichier dans vos discussions.");
@@ -6856,6 +6998,15 @@ function globalFileMetaText(message, dateFormatter) {
     ? ` · ${t(shareCount === 1 ? "Partagé ({count} lien)" : "Partagé ({count} liens)", { count: shareCount })}`
     : "";
   return `${formatFileSize(message.file.size)} · ${dateFormatter.format(new Date(message.created_at))}${shared}`;
+}
+
+function updateCachedGlobalFileShareCount(fileID, count) {
+  const normalized = Math.max(0, Number(count) || 0);
+  for (const message of state.globalFileMessages) {
+    if (sameID(message.file?.id, fileID)) message.file.active_share_count = normalized;
+  }
+  const pendingMessage = state.pendingFileShare?.message;
+  if (sameID(pendingMessage?.file?.id, fileID)) pendingMessage.file.active_share_count = normalized;
 }
 
 function createGlobalFilePlaceholder({ message, conversation }, dateFormatter) {
@@ -6888,11 +7039,11 @@ function createGlobalFilePlaceholder({ message, conversation }, dateFormatter) {
   return { row, name };
 }
 
-function renderGlobalFilePlaceholders(entries, dateFormatter) {
-  elements.globalFilesList.replaceChildren();
-  elements.globalFilesStatus.textContent = globalFileStatus(entries.length);
+function renderGlobalFilePlaceholders(entries, dateFormatter, { append = false } = {}) {
+  if (!append) elements.globalFilesList.replaceChildren();
+  elements.globalFilesStatus.textContent = globalFileStatus(state.globalFileMessages.length, state.globalFilesHasMore);
   if (!entries.length) {
-    renderGlobalFiles([]);
+    if (!append && !state.globalFileMessages.length) renderGlobalFiles([]);
     return [];
   }
   return entries.map((entry) => {
@@ -6916,9 +7067,56 @@ async function decryptGlobalFilesProgressively(entries, placeholders, dateFormat
   await Promise.all(workers);
 }
 
+function loadNextGlobalFilesPage(loadVersion = globalFilesLoadVersion) {
+  if (!state.globalFilesLoaded || !state.globalFilesHasMore || state.globalFilesNextBefore == null) return Promise.resolve(null);
+  if (state.globalFilesNextPageLoad) return state.globalFilesNextPageLoad;
+  const generation = state.globalFilesGeneration;
+  const before = state.globalFilesNextBefore;
+  const pending = (async () => {
+    elements.globalFilesList.setAttribute("aria-busy", "true");
+    const messages = await api(globalFilesPageURL(before));
+    if (!rememberNextGlobalFilesPage(messages, generation)) return null;
+    if (!elements.globalFilesDialog.open || loadVersion !== globalFilesLoadVersion) return messages;
+    await renderGlobalFileMessages(messages, loadVersion, { append: true });
+    return messages;
+  })().catch((error) => {
+    if (elements.globalFilesDialog.open && loadVersion === globalFilesLoadVersion) {
+      elements.globalFilesStatus.textContent = frenchErrorMessage(error, "Impossible de charger les fichiers.");
+    }
+    throw error;
+  }).finally(() => {
+    if (state.globalFilesNextPageLoad === pending) {
+      state.globalFilesNextPageLoad = null;
+      elements.globalFilesList.removeAttribute("aria-busy");
+    }
+  });
+  state.globalFilesNextPageLoad = pending;
+  return pending;
+}
+
+async function fillGlobalFilesViewport(loadVersion = globalFilesLoadVersion) {
+  while (elements.globalFilesDialog.open && loadVersion === globalFilesLoadVersion && state.globalFilesHasMore) {
+    const remaining = elements.globalFilesList.scrollHeight - elements.globalFilesList.scrollTop - elements.globalFilesList.clientHeight;
+    if (remaining > GLOBAL_FILES_SCROLL_THRESHOLD_PX) return;
+    const before = state.globalFilesNextBefore;
+    await loadNextGlobalFilesPage(loadVersion);
+    if (before === state.globalFilesNextBefore) return;
+  }
+}
+
+function handleGlobalFilesScroll() {
+  if (!elements.globalFilesDialog.open) return;
+  const remaining = elements.globalFilesList.scrollHeight - elements.globalFilesList.scrollTop - elements.globalFilesList.clientHeight;
+  if (remaining > GLOBAL_FILES_SCROLL_THRESHOLD_PX) return;
+  const loadVersion = globalFilesLoadVersion;
+  loadNextGlobalFilesPage(loadVersion)
+    .then(() => fillGlobalFilesViewport(loadVersion))
+    .catch(() => {});
+}
+
 function renderGlobalFiles(items) {
   elements.globalFilesList.replaceChildren();
-  elements.globalFilesStatus.textContent = globalFileStatus(items.length);
+  elements.globalFilesStatus.textContent = globalFileStatus(items.length, false);
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "global-files-empty";
@@ -6992,6 +7190,7 @@ function createGlobalFileRow(item, dateFormatter) {
       cancelShare.setAttribute("aria-busy", "true");
       try {
         await api(`/api/files/${item.message.file.id}/shares`, { method: "DELETE" });
+        updateCachedGlobalFileShareCount(item.message.file.id, 0);
         item.message.file.active_share_count = 0;
         cancelShare.remove();
         updateMeta();
@@ -7010,7 +7209,7 @@ function createGlobalFileRow(item, dateFormatter) {
 
 async function openGlobalFile(item) {
   elements.globalFilesDialog.close();
-  await selectConversation(item.conversation);
+  await selectConversation(item.conversation, item.message.id);
   const row = elements.messages.querySelector(`[data-id="${item.message.id}"]`);
   row?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
@@ -7791,6 +7990,16 @@ async function sendEncryptedFile(file, successMessage) {
       method: "POST",
       body,
     });
+    rememberGlobalFileClear(message, {
+      name: file.name,
+      mime: file.type || "application/octet-stream",
+      fileID: message.file.id,
+      size: message.file.size,
+      hasPreview: message.file.has_preview === true,
+      previewSize: message.file.preview_size || 0,
+    });
+    invalidateGlobalFilesIndex();
+    scheduleGlobalFilesPreload();
     state.fileQuotas.used_storage = usedStorage + data.byteLength + 16;
     updateProfileStorage();
     await appendMessage(message);
@@ -7947,6 +8156,7 @@ async function loadExistingFileShares(fileID) {
     const shares = await api(`/api/files/${fileID}/shares`);
     elements.fileShareExistingList.replaceChildren();
     const active = shares.filter((share) => share.active);
+    updateCachedGlobalFileShareCount(fileID, active.length);
     elements.fileShareExisting.hidden = active.length === 0;
     for (const share of active) {
       const row = document.createElement("div");
@@ -7967,6 +8177,7 @@ async function loadExistingFileShares(fileID) {
           await api(`/api/file-shares/${share.id}`, { method: "DELETE" });
           row.remove();
           elements.fileShareExisting.hidden = !elements.fileShareExistingList.children.length;
+          updateCachedGlobalFileShareCount(fileID, elements.fileShareExistingList.children.length);
           toast("Lien de partage désactivé.", "success");
         } catch (error) {
           setBusy(revoke, false);
@@ -8058,7 +8269,11 @@ async function revokeFileShare() {
     elements.fileShareValidity.textContent = t("Ce lien a été désactivé.");
     elements.fileShareCopy.disabled = true;
     toast("Lien de partage désactivé.", "success");
-    if (state.pendingFileShare?.message?.file?.id) loadExistingFileShares(state.pendingFileShare.message.file.id);
+    if (state.pendingFileShare?.message?.file?.id) {
+      const fileID = state.pendingFileShare.message.file.id;
+      updateCachedGlobalFileShareCount(fileID, Number(state.pendingFileShare.message.file.active_share_count || 1) - 1);
+      loadExistingFileShares(fileID);
+    }
   } catch (error) {
     elements.fileShareError.textContent = frenchErrorMessage(error, "Impossible de désactiver le lien.");
   } finally {
@@ -8163,6 +8378,9 @@ async function deleteMessage(message, row) {
       state.fileLoads.delete(message.file.id);
       state.fileThumbnails.delete(message.file.id);
       state.fileThumbnailLoads.delete(message.file.id);
+      state.globalFileClears.delete(String(message.file.id));
+      invalidateGlobalFilesIndex();
+      scheduleGlobalFilesPreload();
     }
     clearMessageExpiration(message);
     state.messageClears.get(message.conversation_id)?.delete(message.id);
@@ -9405,6 +9623,10 @@ async function handleSocketEvent(event) {
     }
   } else if (event.type === "new_message") {
     invalidateConversationPreload(event.message.conversation_id);
+    if (event.message.file) {
+      invalidateGlobalFilesIndex();
+      scheduleGlobalFilesPreload();
+    }
     state.cache?.putMessages([event.message]);
     const isCallHistory = await isIncomingCallHistoryMessage(event.message).catch(() => false);
     const sentFromOwnAccount = sameID(event.message.sender_id, state.me.id);
@@ -9442,7 +9664,10 @@ async function handleSocketEvent(event) {
     await renderConversations();
   } else if (event.type === "conversation_updated") {
     invalidateConversationPreload(event.conversation_id);
-    clearGlobalFileClearsForConversation(event.conversation_id);
+    if (event.files_changed || event.deleted_message_id || event.deleted || event.removed) {
+      invalidateGlobalFilesIndex();
+      scheduleGlobalFilesPreload();
+    }
     const currentID = state.current?.id;
     let profileIdentityBlocked = false;
     state.members.delete(event.conversation_id);

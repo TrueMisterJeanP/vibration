@@ -14,7 +14,7 @@ import {
 import {
   registerServiceWorker,
   requestNotificationPermissionOnSignIn,
-} from "./notifications.js?v=ios-landscape-splash-v304";
+} from "./notifications.js?v=calendar-toolbar-grid-v311";
 import { frenchErrorMessage } from "./ui.js?v=ios-resume-v297";
 import { t, translateMultiline } from "./i18n.js?v=ios-resume-v297";
 
