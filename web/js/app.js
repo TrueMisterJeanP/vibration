@@ -96,12 +96,15 @@ const state = {
   signingKeyID: "",
   contacts: [],
   carnet: [],
+  carnetLoaded: false,
   conversations: [],
   current: null,
   keys: new Map(),
   keyEnvelopes: new Map(),
   keyEnvelopeLoads: new Map(),
   members: new Map(),
+  verifiedConversationMembers: new Set(),
+  conversationDisplays: new Map(),
   identityConfirmations: new Map(),
   identityWarnings: new Set(),
   conversationInfoIdentity: null,
@@ -118,6 +121,7 @@ const state = {
   preloadedMessages: new Map(),
   conversationPreloadVersions: new Map(),
   messageClears: new Map(),
+  globalFileClears: new Map(),
   messageExpiryTimers: new Map(),
   messageAppendTasks: new Map(),
   filePreviewObservers: new Set(),
@@ -149,6 +153,9 @@ let pdfJSModule;
 let ios17PDFJSModule;
 let conversationRenderVersion = 0;
 let conversationListRenderKey = "";
+let conversationSelectionVersion = 0;
+let globalFilesLoadVersion = 0;
+let carnetLoadVersion = 0;
 let appReady = false;
 let appShellPrepared = false;
 let appUIBound = false;
@@ -1079,7 +1086,7 @@ function bindUI() {
   elements.personalConversationButton.onclick = () => {
     const conversation = state.conversations.find((item) => item.is_personal);
     if (conversation) {
-      keepConversationSelectedDuringMobileTransition(elements.personalConversationButton);
+      keepConversationSelectedDuringTransition(elements.personalConversationButton);
       selectConversation(conversation);
     }
   };
@@ -1158,6 +1165,10 @@ function bindUI() {
   document.querySelector("#event-cancel").addEventListener("click", closeEventDialog);
   document.querySelector("#calendar-close").addEventListener("click", () => elements.calendarDialog.close());
   document.querySelector("#carnet-close").addEventListener("click", () => elements.carnetDialog.close());
+  elements.carnetDialog.addEventListener("close", () => {
+    carnetLoadVersion += 1;
+    elements.carnetList.removeAttribute("aria-busy");
+  });
   elements.carnetDeleteAll.addEventListener("click", deleteAllCarnetEntries);
   document.querySelector("#global-files-close").addEventListener("click", () => elements.globalFilesDialog.close());
   elements.fileShareForm.addEventListener("submit", createFileShare);
@@ -1506,6 +1517,7 @@ async function updateAcceptedIdentityPublicKey(userID, publicKey, signingPublicK
   state.keyEnvelopes.clear();
   state.keyEnvelopeLoads.clear();
   state.preloadedMessages.clear();
+  state.globalFileClears.clear();
 }
 
 async function confirmIdentityKeyChange(result, identity) {
@@ -1557,6 +1569,7 @@ async function trustedPublicKey(identity, { interactive = false } = {}) {
   state.keyEnvelopes.clear();
   state.keyEnvelopeLoads.clear();
   state.preloadedMessages.clear();
+  state.globalFileClears.clear();
   if (!interactive) throw identitySecurityError(result, identity);
   return confirmIdentityKeyChange(result, identity);
 }
@@ -1775,6 +1788,7 @@ async function refreshCurrentConversationHeader(expectedID = state.current?.id) 
   const current = refreshed || state.current;
   const display = await resolveConversationDisplay(current);
   if (!sameID(state.current?.id, expectedID)) return;
+  state.conversationDisplays.set(String(expectedID), display);
   renderConversationHeader(current, display);
 }
 
@@ -3027,6 +3041,7 @@ async function refreshAll() {
   if (cachedConversations?.length) {
     state.conversations = cachedConversations;
     state.members.clear();
+    state.verifiedConversationMembers.clear();
     await renderConversations();
   }
   try {
@@ -3041,8 +3056,10 @@ async function refreshAll() {
     }
     state.contacts = contacts;
     state.carnet = carnetEntries;
+    state.carnetLoaded = true;
     state.conversations = conversations;
     state.members.clear();
+    state.verifiedConversationMembers.clear();
     state.cache?.saveConversations(conversations);
     await renderConversations({ freshMembers: true });
     const preload = scheduleBackgroundConversationPreloads(conversations);
@@ -3053,6 +3070,7 @@ async function refreshAll() {
     if (!cachedConversations?.length) throw error;
     state.conversations = cachedConversations;
     state.members.clear();
+    state.verifiedConversationMembers.clear();
     await renderConversations();
     const preload = scheduleBackgroundConversationPreloads(cachedConversations);
     if (document.documentElement.classList.contains("ios-pwa-starting")) await preload;
@@ -3064,6 +3082,7 @@ async function refreshConversationList() {
   const [conversations, carnetEntries] = await Promise.all([api("/api/conversations"), api("/api/carnet")]);
   state.conversations = conversations;
   state.carnet = carnetEntries;
+  state.carnetLoaded = true;
   state.cache?.saveConversations(state.conversations);
   await renderConversations({ freshMembers: true });
   void scheduleBackgroundConversationPreloads(state.conversations);
@@ -3147,8 +3166,7 @@ function conversationListActiveID() {
   return mobileSidebarOpen ? null : state.current?.id;
 }
 
-function keepConversationSelectedDuringMobileTransition(button) {
-  if (!window.matchMedia("(max-width: 720px)").matches) return;
+function keepConversationSelectedDuringTransition(button) {
   elements.personalConversationButton.classList.remove("active");
   elements.conversations.querySelectorAll(".conversation-item.active").forEach((item) => item.classList.remove("active"));
   button.classList.add("active");
@@ -3170,6 +3188,12 @@ async function renderPersonalConversation(isCurrentRender = () => true) {
     preview = t("Messages et fichiers personnels");
   }
   if (!isCurrentRender()) return;
+  state.conversationDisplays.set(String(conversation.id), {
+    title: t("Mes notes"),
+    description: t("Messages et fichiers personnels"),
+    avatar: null,
+    customAvatar: null,
+  });
   elements.personalConversationButton.hidden = false;
   elements.personalConversationButton.classList.toggle("active", sameID(conversationListActiveID(), conversation.id));
   elements.personalConversationUnread.hidden = unreadCount === 0;
@@ -3221,6 +3245,15 @@ async function renderConversations({ freshMembers = false } = {}) {
     return { conversation, display, callState, typing, online, preview };
   }));
   if (!isCurrentRender()) return;
+  const listedConversationIDs = new Set(state.conversations.map((conversation) => String(conversation.id)));
+  for (const conversationID of state.conversationDisplays.keys()) {
+    if (!listedConversationIDs.has(conversationID)) state.conversationDisplays.delete(conversationID);
+  }
+  listedConversations.forEach((conversation, index) => {
+    const display = displays[index];
+    if (display && !display.securityBlocked) state.conversationDisplays.set(String(conversation.id), display);
+    else state.conversationDisplays.delete(String(conversation.id));
+  });
   const activeID = conversationListActiveID();
   const renderKey = JSON.stringify({
     activeID,
@@ -3333,7 +3366,7 @@ async function renderConversations({ freshMembers = false } = {}) {
     copy.append(titleRow, subtitle);
     button.append(avatar, copy);
     button.onclick = () => {
-      keepConversationSelectedDuringMobileTransition(button);
+      keepConversationSelectedDuringTransition(button);
       selectConversation(conversation);
     };
     const canEdit = conversation.type === "group" && conversation.created_by === state.me.id;
@@ -3453,6 +3486,8 @@ async function refuseGroupInvitation(conversation, button) {
     await api(`/api/conversations/${conversation.id}`, { method: "DELETE" });
     clearConversationKeys(conversation.id);
     state.members.delete(conversation.id);
+    state.verifiedConversationMembers.delete(String(conversation.id));
+    state.conversationDisplays.delete(String(conversation.id));
     await refreshAll();
     toast("Invitation de groupe refusée.", "success");
   } catch (error) {
@@ -3638,6 +3673,8 @@ async function editConversation(conversation, row) {
     conversation.encrypted_description = encryptedDescription;
     conversation.encrypted_avatar = encryptedAvatar;
     state.members.delete(conversation.id);
+    state.verifiedConversationMembers.delete(String(conversation.id));
+    state.conversationDisplays.delete(String(conversation.id));
     if (state.current?.id === conversation.id) {
       renderConversationHeader(conversation, {
         title: result.name,
@@ -3765,6 +3802,8 @@ async function deleteConversation(conversation, button) {
     closeCurrentConversation(conversation.id);
     clearConversationKeys(conversation.id);
     state.members.delete(conversation.id);
+    state.verifiedConversationMembers.delete(String(conversation.id));
+    state.conversationDisplays.delete(String(conversation.id));
     state.messageClears.delete(conversation.id);
     state.cache?.deleteConversation(conversation.id);
     await refreshAll();
@@ -3776,7 +3815,18 @@ async function deleteConversation(conversation, button) {
   }
 }
 
+function markConversationMembersVerified(conversationID) {
+  state.verifiedConversationMembers.add(String(conversationID));
+}
+
+function conversationMembersAreVerified(conversationID) {
+  return state.verifiedConversationMembers.has(String(conversationID));
+}
+
 async function getMembers(conversationID, { fresh = false, interactive = false } = {}) {
+  if (!fresh && conversationMembersAreVerified(conversationID) && state.members.has(conversationID)) {
+    return state.members.get(conversationID);
+  }
   if (fresh) {
     try {
       const members = await trustMembers(
@@ -3784,6 +3834,7 @@ async function getMembers(conversationID, { fresh = false, interactive = false }
         { interactive },
       );
       state.members.set(conversationID, members);
+      markConversationMembersVerified(conversationID);
       await state.cache?.saveMembers(conversationID, members);
       return members;
     } catch (error) {
@@ -3808,6 +3859,7 @@ async function getMembers(conversationID, { fresh = false, interactive = false }
         .then((members) => trustMembers(members))
         .then(async (members) => {
           state.members.set(conversationID, members);
+          markConversationMembersVerified(conversationID);
           await state.cache?.saveMembers(conversationID, members);
         })
         .catch((error) => reportIdentitySecurityError(error));
@@ -3817,6 +3869,7 @@ async function getMembers(conversationID, { fresh = false, interactive = false }
         { interactive },
       );
       state.members.set(conversationID, members);
+      markConversationMembersVerified(conversationID);
       await state.cache?.saveMembers(conversationID, members);
     }
   }
@@ -4084,20 +4137,11 @@ async function selectConversation(conversation, targetMessageID = null) {
     toast("Acceptez cette invitation avant d’ouvrir le groupe.", "error");
     return;
   }
-  try {
-    await getMembers(conversation.id, { fresh: true, interactive: true });
-    if (conversation.rotation_required && sameID(conversation.created_by, state.me.id)) {
-      await repairRequiredGroupRotation(conversation);
-      toast("La clé du groupe a été renouvelée après le départ d’un membre.", "success");
-    }
-  } catch (error) {
-    error.conversationID = conversation.id;
-    if (!reportIdentitySecurityError(error)) {
-      toast(frenchErrorMessage(error, "Impossible de vérifier les participants de cette discussion."), "error");
-    }
-    return;
-  }
+  const selectionVersion = ++conversationSelectionVersion;
+  const selectedID = conversation.id;
+  const membersWereVerified = conversationMembersAreVerified(selectedID);
   const conversationChanged = !sameID(state.current?.id, conversation.id);
+  closeReactionPicker();
   if (conversationChanged) {
     clearVoiceDraft();
     clearFileCache();
@@ -4106,16 +4150,73 @@ async function selectConversation(conversation, targetMessageID = null) {
     loading.textContent = t("Chargement…");
     elements.messages.replaceChildren(loading);
   }
-  closeReactionPicker();
   state.current = conversation;
   conversation.unread_count = 0;
-  const listed = state.conversations.find((item) => sameID(item.id, conversation.id));
+  const listed = state.conversations.find((item) => sameID(item.id, selectedID));
   if (listed) listed.unread_count = 0;
   elements.shell.classList.remove("sidebar-open");
   const sidebarButton = document.querySelector("#open-sidebar-logo");
   sidebarButton.setAttribute("aria-expanded", "false");
   sidebarButton.setAttribute("aria-label", t("Afficher les contacts, groupes et conversations"));
   sidebarButton.title = t("Afficher les contacts et groupes");
+  const rememberedDisplay = state.conversationDisplays.get(String(selectedID));
+  if (rememberedDisplay) {
+    renderConversationHeader(conversation, rememberedDisplay);
+  } else {
+    elements.title.textContent = t("Chargement…");
+    elements.description.textContent = "";
+    elements.chatAvatar.hidden = true;
+    setConversationInfoTrigger(null);
+    renderMobileNavigationAvatar();
+  }
+  if (conversationChanged && !targetMessageID && !conversation.last_message_at) {
+    const empty = document.createElement("div");
+    empty.id = "empty-chat";
+    empty.textContent = t("Aucun message. Écrivez le premier message chiffré.");
+    elements.messages.replaceChildren(empty);
+  }
+  renderTypingIndicator(elements.typing, null);
+  renderTypingIndicator(elements.threadTyping, null);
+  elements.threadTyping.hidden = true;
+
+  const canInteractImmediately = membersWereVerified && !conversation.rotation_required;
+  elements.input.disabled = !canInteractImmediately;
+  elements.send.disabled = !canInteractImmediately;
+  elements.emojiButton.disabled = !canInteractImmediately;
+  elements.voiceButton.disabled = !canInteractImmediately;
+  elements.pollButton.disabled = !canInteractImmediately;
+  elements.eventButton.disabled = !canInteractImmediately;
+  elements.pinnedWindowButton.disabled = !membersWereVerified;
+  elements.audioCallButton.disabled = true;
+  elements.videoCallButton.disabled = true;
+
+  let messagesLoading = membersWereVerified
+    ? loadMessages(targetMessageID).then(() => null, (error) => error)
+    : null;
+  try {
+    await getMembers(conversation.id, {
+      fresh: !membersWereVerified,
+      interactive: true,
+    });
+    if (selectionVersion !== conversationSelectionVersion) return;
+    if (conversation.rotation_required && sameID(conversation.created_by, state.me.id)) {
+      await repairRequiredGroupRotation(conversation);
+      if (selectionVersion !== conversationSelectionVersion) return;
+      toast("La clé du groupe a été renouvelée après le départ d’un membre.", "success");
+    }
+  } catch (error) {
+    if (selectionVersion !== conversationSelectionVersion) return;
+    closeCurrentConversation(selectedID);
+    renderConversations().catch(() => {});
+    error.conversationID = conversation.id;
+    if (!reportIdentitySecurityError(error)) {
+      toast(frenchErrorMessage(error, "Impossible de vérifier les participants de cette discussion."), "error");
+    }
+    return;
+  }
+  if (!messagesLoading) {
+    messagesLoading = loadMessages(targetMessageID).then(() => null, (error) => error);
+  }
   elements.input.disabled = false;
   elements.send.disabled = false;
   elements.emojiButton.disabled = false;
@@ -4132,18 +4233,20 @@ async function selectConversation(conversation, targetMessageID = null) {
     toast("Les nouveaux envois sont suspendus jusqu’au renouvellement de la clé par le propriétaire du groupe.", "error");
   }
   updateCallButtons();
-  const selectedID = conversation.id;
-  const messagesLoading = loadMessages(targetMessageID).then(() => null, (error) => error);
   const display = await resolveConversationDisplay(conversation);
-  if (!sameID(state.current?.id, selectedID)) return;
+  if (selectionVersion !== conversationSelectionVersion || !sameID(state.current?.id, selectedID)) return;
+  state.conversationDisplays.set(String(selectedID), display);
   renderConversationHeader(conversation, display);
   const typing = await typingIndicator(conversation);
+  if (selectionVersion !== conversationSelectionVersion || !sameID(state.current?.id, selectedID)) return;
   renderTypingIndicator(elements.typing, typing);
   renderTypingIndicator(elements.threadTyping, typing);
   elements.threadTyping.hidden = !typing;
   const [, messageLoadError] = await Promise.all([renderConversations(), messagesLoading]);
+  if (selectionVersion !== conversationSelectionVersion || !sameID(state.current?.id, selectedID)) return;
   if (messageLoadError) throw messageLoadError;
   if (!elements.pinnedPanel.hidden) await loadPinnedMessages();
+  if (selectionVersion !== conversationSelectionVersion || !sameID(state.current?.id, selectedID)) return;
   updateCallUI();
   elements.input.focus({ preventScroll: true });
   if (targetMessageID) {
@@ -6620,51 +6723,202 @@ function datetimeLocalValue(value) {
 }
 
 async function openGlobalFiles() {
+  const loadVersion = ++globalFilesLoadVersion;
   elements.globalFilesStatus.textContent = t("Chargement des fichiers…");
-  elements.globalFilesList.replaceChildren();
   if (!elements.globalFilesDialog.open) {
     elements.globalFilesDialog.showModal();
     document.querySelector("#global-files-close").focus({ preventScroll: true });
   }
   try {
     const messages = await api("/api/files");
-    const items = await Promise.all(messages.map(async (message) => {
+    if (loadVersion !== globalFilesLoadVersion) return;
+    const entries = messages.map((message) => {
       const conversation = state.conversations.find((item) => sameID(item.id, message.conversation_id));
-      if (!conversation) return null;
-      try {
-        const key = await getMessageKey(message, conversation);
-        const clear = await decryptMessageContent(message, key);
-        const display = await resolveConversationDisplay(conversation);
-        return {
-          message,
-          clear,
-          conversation,
-          conversationTitle: display.title,
-          conversationAvatar: display.avatar || null,
-          conversationInitial: display.title.slice(0, 1).toUpperCase(),
-        };
-      } catch {
-        return {
-          message,
-          clear: { name: t("Fichier impossible à déchiffrer"), mime: "application/octet-stream" },
-          conversation,
-          conversationTitle: t("Conversation"),
-          conversationAvatar: null,
-          conversationInitial: conversation.is_personal ? "N" : conversation.type === "group" ? "G" : "@",
-        };
-      }
-    }));
-    renderGlobalFiles(items.filter(Boolean));
+      return conversation ? { message, conversation } : null;
+    }).filter(Boolean);
+    const currentFileIDs = new Set(entries.map(({ message }) => String(message.file.id)));
+    for (const fileID of state.globalFileClears.keys()) {
+      if (!currentFileIDs.has(fileID)) state.globalFileClears.delete(fileID);
+    }
+    const dateFormatter = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
+    const placeholders = renderGlobalFilePlaceholders(entries, dateFormatter);
+    await decryptGlobalFilesProgressively(entries, placeholders, dateFormatter, loadVersion);
   } catch (error) {
+    if (loadVersion !== globalFilesLoadVersion) return;
     elements.globalFilesStatus.textContent = frenchErrorMessage(error, "Impossible de charger les fichiers.");
   }
 }
 
+function globalFileMessagesMatch(left, right) {
+  return sameID(left?.id, right?.id)
+    && sameID(left?.conversation_id, right?.conversation_id)
+    && sameID(left?.sender_id, right?.sender_id)
+    && Number(left?.key_epoch || 1) === Number(right?.key_epoch || 1)
+    && Number(left?.revision || 1) === Number(right?.revision || 1)
+    && Number(left?.signature_version || 0) === Number(right?.signature_version || 0)
+    && String(left?.signature || "") === String(right?.signature || "")
+    && String(left?.signing_key_id || "") === String(right?.signing_key_id || "")
+    && String(left?.signature_conversation_id || "") === String(right?.signature_conversation_id || "")
+    && String(left?.signature_sender_id || "") === String(right?.signature_sender_id || "")
+    && String(left?.signature_reply_to || "") === String(right?.signature_reply_to || "")
+    && String(left?.message_kind || "") === String(right?.message_kind || "")
+    && String(left?.file?.encrypted_name || "") === String(right?.file?.encrypted_name || "")
+    && String(left?.file?.encrypted_mime || "") === String(right?.file?.encrypted_mime || "")
+    && String(left?.file?.iv || "") === String(right?.file?.iv || "")
+    && Number(left?.file?.size || 0) === Number(right?.file?.size || 0);
+}
+
+function clearGlobalFileClearsForConversation(conversationID) {
+  for (const [fileID, cached] of state.globalFileClears) {
+    if (sameID(cached.message?.conversation_id, conversationID)) state.globalFileClears.delete(fileID);
+  }
+}
+
+function validGlobalFileClear(clear) {
+  return clear && typeof clear.name === "string" && typeof clear.mime === "string";
+}
+
+function rememberGlobalFileClear(message, clear) {
+  if (!validGlobalFileClear(clear)) return;
+  state.globalFileClears.set(String(message.file.id), { message, clear });
+}
+
+function cachedGlobalFileClear(message) {
+  const cached = state.globalFileClears.get(String(message.file.id));
+  if (cached && globalFileMessagesMatch(cached.message, message)) return cached.clear;
+  const prepared = state.preloadedMessages.get(conversationPreloadKey(message.conversation_id));
+  const preparedEntry = prepared?.decrypted?.find(({ message: cachedMessage }) => globalFileMessagesMatch(cachedMessage, message));
+  if (!validGlobalFileClear(preparedEntry?.clear)) return null;
+  rememberGlobalFileClear(message, preparedEntry.clear);
+  return preparedEntry.clear;
+}
+
+function globalFileFallbackItem(message, conversation, clear = null) {
+  return {
+    message,
+    clear: clear || { name: t("Fichier impossible à déchiffrer"), mime: "application/octet-stream" },
+    conversation,
+    conversationTitle: t("Conversation"),
+    conversationAvatar: null,
+    conversationInitial: conversation.is_personal ? "N" : conversation.type === "group" ? "G" : "@",
+  };
+}
+
+async function globalFileConversationDisplay(conversation, displayTasks) {
+  const key = String(conversation.id);
+  const remembered = state.conversationDisplays.get(key);
+  if (remembered) return remembered;
+  if (!displayTasks.has(key)) {
+    displayTasks.set(key, resolveConversationDisplay(conversation).then((display) => {
+      state.conversationDisplays.set(key, display);
+      return display;
+    }));
+  }
+  return displayTasks.get(key);
+}
+
+async function prepareGlobalFileItem({ message, conversation }, displayTasks) {
+  let clear = cachedGlobalFileClear(message);
+  if (!clear) {
+    try {
+      const key = await getMessageKey(message, conversation);
+      clear = await decryptMessageContent(message, key);
+      rememberGlobalFileClear(message, clear);
+    } catch {
+      clear = null;
+    }
+  }
+  let display;
+  try {
+    display = await globalFileConversationDisplay(conversation, displayTasks);
+  } catch {
+    return globalFileFallbackItem(message, conversation, clear);
+  }
+  return {
+    message,
+    clear: clear || { name: t("Fichier impossible à déchiffrer"), mime: "application/octet-stream" },
+    conversation,
+    conversationTitle: display.title,
+    conversationAvatar: display.avatar || null,
+    conversationInitial: display.title.slice(0, 1).toUpperCase(),
+  };
+}
+
+function globalFileStatus(count) {
+  return count
+    ? t(count === 1 ? "{count} fichier dans vos discussions." : "{count} fichiers dans vos discussions.", { count })
+    : t("Aucun fichier dans vos discussions.");
+}
+
+function globalFileMetaText(message, dateFormatter) {
+  const shareCount = Number(message.file.active_share_count || 0);
+  const shared = shareCount > 0
+    ? ` · ${t(shareCount === 1 ? "Partagé ({count} lien)" : "Partagé ({count} liens)", { count: shareCount })}`
+    : "";
+  return `${formatFileSize(message.file.size)} · ${dateFormatter.format(new Date(message.created_at))}${shared}`;
+}
+
+function createGlobalFilePlaceholder({ message, conversation }, dateFormatter) {
+  const clear = cachedGlobalFileClear(message);
+  const display = state.conversationDisplays.get(String(conversation.id));
+  const row = document.createElement("div");
+  row.className = "global-file-row global-file-loading";
+  row.setAttribute("aria-busy", "true");
+  const open = document.createElement("div");
+  open.className = "global-file-open";
+  const kind = document.createElement("span");
+  kind.className = "global-file-kind";
+  kind.append(materialFileIcon(fileKindIcon(clear?.mime || "")));
+  const content = document.createElement("span");
+  content.className = "global-file-content";
+  const name = document.createElement("strong");
+  name.textContent = clear?.name || t("Chargement…");
+  const meta = document.createElement("span");
+  meta.className = "global-file-meta";
+  meta.textContent = globalFileMetaText(message, dateFormatter);
+  const source = document.createElement("span");
+  source.className = "global-file-conversation";
+  const title = document.createElement("span");
+  title.className = "global-file-conversation-title";
+  title.textContent = display?.title || t("Conversation");
+  source.append(title);
+  content.append(name, meta, source);
+  open.append(kind, content);
+  row.append(open);
+  return { row, name };
+}
+
+function renderGlobalFilePlaceholders(entries, dateFormatter) {
+  elements.globalFilesList.replaceChildren();
+  elements.globalFilesStatus.textContent = globalFileStatus(entries.length);
+  if (!entries.length) {
+    renderGlobalFiles([]);
+    return [];
+  }
+  return entries.map((entry) => {
+    const placeholder = createGlobalFilePlaceholder(entry, dateFormatter);
+    elements.globalFilesList.append(placeholder.row);
+    return placeholder;
+  });
+}
+
+async function decryptGlobalFilesProgressively(entries, placeholders, dateFormatter, loadVersion) {
+  const displayTasks = new Map();
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(4, entries.length) }, async () => {
+    while (nextIndex < entries.length) {
+      const index = nextIndex++;
+      const item = await prepareGlobalFileItem(entries[index], displayTasks);
+      if (loadVersion !== globalFilesLoadVersion) return;
+      placeholders[index].row.replaceWith(createGlobalFileRow(item, dateFormatter));
+    }
+  });
+  await Promise.all(workers);
+}
+
 function renderGlobalFiles(items) {
   elements.globalFilesList.replaceChildren();
-  elements.globalFilesStatus.textContent = items.length
-    ? t(items.length === 1 ? "{count} fichier dans vos discussions." : "{count} fichiers dans vos discussions.", { count: items.length })
-    : t("Aucun fichier dans vos discussions.");
+  elements.globalFilesStatus.textContent = globalFileStatus(items.length);
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "global-files-empty";
@@ -6674,84 +6928,84 @@ function renderGlobalFiles(items) {
   }
   const dateFormatter = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
   for (const item of items) {
-    const row = document.createElement("div");
-    row.className = "global-file-row";
-    const open = document.createElement("button");
-    open.type = "button";
-    open.className = "global-file-open";
-    const kind = document.createElement("span");
-    kind.className = "global-file-kind";
-    kind.append(materialFileIcon(fileKindIcon(item.clear.mime)));
-    const content = document.createElement("span");
-    content.className = "global-file-content";
-    const name = document.createElement("strong");
-    name.textContent = item.clear.name;
-    const meta = document.createElement("span");
-    meta.className = "global-file-meta";
-    const updateMeta = () => {
-      const shareCount = Number(item.message.file.active_share_count || 0);
-      const shared = shareCount > 0
-        ? ` · ${t(shareCount === 1 ? "Partagé ({count} lien)" : "Partagé ({count} liens)", { count: shareCount })}`
-        : "";
-      meta.textContent = `${formatFileSize(item.message.file.size)} · ${dateFormatter.format(new Date(item.message.created_at))}${shared}`;
-    };
-    updateMeta();
-    const source = document.createElement("span");
-    source.className = "global-file-conversation";
-    const avatar = createConversationBadge(item.conversationAvatar, item.conversationInitial, "global-file-conversation-avatar");
-    const title = document.createElement("span");
-    title.className = "global-file-conversation-title";
-    title.textContent = item.conversationTitle;
-    source.append(avatar, title);
-    content.append(name, meta, source);
-    open.append(kind, content);
-    open.title = t("Ouvrir {conversation}", { conversation: item.conversationTitle });
-    open.addEventListener("click", () => openGlobalFile(item));
-    const share = document.createElement("button");
-    share.type = "button";
-    share.className = "file-share-button global-file-share";
-    share.title = t("Partager {name}", { name: item.clear.name });
-    share.setAttribute("aria-label", share.title);
-    share.innerHTML = '<svg class="file-share-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><path d="m8.6 10.7 6.8-4.4"></path><path d="m8.6 13.3 6.8 4.4"></path></svg>';
-    share.addEventListener("click", () => {
-      elements.globalFilesDialog.close();
-      openFileShareDialog(item.message, item.clear, item.conversation);
-    });
-    const actions = document.createElement("div");
-    actions.className = "global-file-actions";
-    actions.append(share);
-    if (Number(item.message.file.active_share_count || 0) > 0) {
-      const cancelShare = document.createElement("button");
-      cancelShare.type = "button";
-      cancelShare.className = "file-share-button global-file-unshare";
-      cancelShare.title = t("Annuler le partage de {name}", { name: item.clear.name });
-      cancelShare.setAttribute("aria-label", cancelShare.title);
-      cancelShare.innerHTML = '<svg class="file-share-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 7h2a5 5 0 0 1 0 10h-2"></path><path d="M8 17H6A5 5 0 0 1 6 7h2"></path><path d="M9 12h6"></path><path d="m3 3 18 18"></path></svg>';
-      cancelShare.addEventListener("click", async () => {
-        const count = Number(item.message.file.active_share_count || 0);
-        const confirmation = count === 1
-          ? t("Désactiver ce lien de partage ? La personne qui le possède ne pourra plus télécharger le fichier.")
-          : t("Désactiver ces {count} liens de partage ? Les personnes qui les possèdent ne pourront plus télécharger le fichier.", { count });
-        if (!confirm(confirmation)) return;
-        cancelShare.disabled = true;
-        cancelShare.setAttribute("aria-busy", "true");
-        try {
-          await api(`/api/files/${item.message.file.id}/shares`, { method: "DELETE" });
-          item.message.file.active_share_count = 0;
-          cancelShare.remove();
-          updateMeta();
-          toast(t(count === 1 ? "Partage du fichier annulé." : "Partages du fichier annulés."), "success");
-        } catch (error) {
-          cancelShare.disabled = false;
-          cancelShare.removeAttribute("aria-busy");
-          toast(frenchErrorMessage(error, "Impossible d’annuler le partage du fichier."), "error");
-        }
-      });
-      actions.append(cancelShare);
-    }
-    row.append(open, actions);
-    elements.globalFilesList.append(row);
+    elements.globalFilesList.append(createGlobalFileRow(item, dateFormatter));
   }
+}
+
+function createGlobalFileRow(item, dateFormatter) {
+  const row = document.createElement("div");
+  row.className = "global-file-row";
+  const open = document.createElement("button");
+  open.type = "button";
+  open.className = "global-file-open";
+  const kind = document.createElement("span");
+  kind.className = "global-file-kind";
+  kind.append(materialFileIcon(fileKindIcon(item.clear.mime)));
+  const content = document.createElement("span");
+  content.className = "global-file-content";
+  const name = document.createElement("strong");
+  name.textContent = item.clear.name;
+  const meta = document.createElement("span");
+  meta.className = "global-file-meta";
+  const updateMeta = () => {
+    meta.textContent = globalFileMetaText(item.message, dateFormatter);
+  };
+  updateMeta();
+  const source = document.createElement("span");
+  source.className = "global-file-conversation";
+  const avatar = createConversationBadge(item.conversationAvatar, item.conversationInitial, "global-file-conversation-avatar");
+  const title = document.createElement("span");
+  title.className = "global-file-conversation-title";
+  title.textContent = item.conversationTitle;
+  source.append(avatar, title);
+  content.append(name, meta, source);
+  open.append(kind, content);
+  open.title = t("Ouvrir {conversation}", { conversation: item.conversationTitle });
+  open.addEventListener("click", () => openGlobalFile(item));
+  const share = document.createElement("button");
+  share.type = "button";
+  share.className = "file-share-button global-file-share";
+  share.title = t("Partager {name}", { name: item.clear.name });
+  share.setAttribute("aria-label", share.title);
+  share.innerHTML = '<svg class="file-share-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><path d="m8.6 10.7 6.8-4.4"></path><path d="m8.6 13.3 6.8 4.4"></path></svg>';
+  share.addEventListener("click", () => {
+    elements.globalFilesDialog.close();
+    openFileShareDialog(item.message, item.clear, item.conversation);
+  });
+  const actions = document.createElement("div");
+  actions.className = "global-file-actions";
+  actions.append(share);
+  if (Number(item.message.file.active_share_count || 0) > 0) {
+    const cancelShare = document.createElement("button");
+    cancelShare.type = "button";
+    cancelShare.className = "file-share-button global-file-unshare";
+    cancelShare.title = t("Annuler le partage de {name}", { name: item.clear.name });
+    cancelShare.setAttribute("aria-label", cancelShare.title);
+    cancelShare.innerHTML = '<svg class="file-share-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 7h2a5 5 0 0 1 0 10h-2"></path><path d="M8 17H6A5 5 0 0 1 6 7h2"></path><path d="M9 12h6"></path><path d="m3 3 18 18"></path></svg>';
+    cancelShare.addEventListener("click", async () => {
+      const count = Number(item.message.file.active_share_count || 0);
+      const confirmation = count === 1
+        ? t("Désactiver ce lien de partage ? La personne qui le possède ne pourra plus télécharger le fichier.")
+        : t("Désactiver ces {count} liens de partage ? Les personnes qui les possèdent ne pourront plus télécharger le fichier.", { count });
+      if (!confirm(confirmation)) return;
+      cancelShare.disabled = true;
+      cancelShare.setAttribute("aria-busy", "true");
+      try {
+        await api(`/api/files/${item.message.file.id}/shares`, { method: "DELETE" });
+        item.message.file.active_share_count = 0;
+        cancelShare.remove();
+        updateMeta();
+        toast(t(count === 1 ? "Partage du fichier annulé." : "Partages du fichier annulés."), "success");
+      } catch (error) {
+        cancelShare.disabled = false;
+        cancelShare.removeAttribute("aria-busy");
+        toast(frenchErrorMessage(error, "Impossible d’annuler le partage du fichier."), "error");
+      }
+    });
+    actions.append(cancelShare);
+  }
+  row.append(open, actions);
+  return row;
 }
 
 async function openGlobalFile(item) {
@@ -6795,18 +7049,27 @@ async function openCalendar() {
 }
 
 async function openCarnet() {
-  elements.carnetStatus.textContent = t("Chargement du carnet…");
-  elements.carnetList.replaceChildren();
-  elements.carnetList.setAttribute("aria-busy", "true");
+  const loadVersion = ++carnetLoadVersion;
+  const hadCachedCarnet = state.carnetLoaded;
+  if (hadCachedCarnet) renderCarnet();
+  else {
+    elements.carnetStatus.textContent = t("Chargement du carnet…");
+    elements.carnetList.replaceChildren();
+  }
   if (!elements.carnetDialog.open) elements.carnetDialog.showModal();
+  elements.carnetList.setAttribute("aria-busy", "true");
   try {
-    state.carnet = await api("/api/carnet");
+    const entries = await api("/api/carnet");
+    if (loadVersion !== carnetLoadVersion) return;
+    state.carnet = entries;
+    state.carnetLoaded = true;
     renderCarnet();
   } catch (error) {
+    if (loadVersion !== carnetLoadVersion) return;
+    if (!hadCachedCarnet) renderCarnet(false);
     elements.carnetStatus.textContent = frenchErrorMessage(error, "Impossible de charger le carnet.");
-    renderCarnet(false);
   } finally {
-    elements.carnetList.removeAttribute("aria-busy");
+    if (loadVersion === carnetLoadVersion) elements.carnetList.removeAttribute("aria-busy");
   }
 }
 
@@ -6881,7 +7144,10 @@ async function deleteCarnetEntry(entry, button) {
   setBusy(button, true);
   try {
     await api(`/api/carnet/${entry.id}`, { method: "DELETE" });
+    carnetLoadVersion += 1;
+    elements.carnetList.removeAttribute("aria-busy");
     state.carnet = state.carnet.filter((item) => !sameID(item.id, entry.id));
+    state.carnetLoaded = true;
     renderCarnet();
   } catch (error) {
     toast(frenchErrorMessage(error, "Impossible de supprimer ce contact du carnet."), "error");
@@ -6905,7 +7171,10 @@ async function deleteAllCarnetEntries() {
   elements.carnetDeleteAll.setAttribute("aria-busy", "true");
   try {
     await api("/api/carnet", { method: "DELETE" });
+    carnetLoadVersion += 1;
+    elements.carnetList.removeAttribute("aria-busy");
     state.carnet = state.carnet.filter((entry) => entry.active);
+    state.carnetLoaded = true;
     renderCarnet();
   } catch (error) {
     toast(frenchErrorMessage(error, "Impossible de supprimer les anciens contacts."), "error");
@@ -9173,9 +9442,12 @@ async function handleSocketEvent(event) {
     await renderConversations();
   } else if (event.type === "conversation_updated") {
     invalidateConversationPreload(event.conversation_id);
+    clearGlobalFileClearsForConversation(event.conversation_id);
     const currentID = state.current?.id;
     let profileIdentityBlocked = false;
     state.members.delete(event.conversation_id);
+    state.verifiedConversationMembers.delete(String(event.conversation_id));
+    state.conversationDisplays.delete(String(event.conversation_id));
     if (event.profile_updated) {
       try {
         await getMembers(event.conversation_id, { fresh: true });

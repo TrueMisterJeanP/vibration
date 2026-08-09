@@ -39,7 +39,7 @@ assert.match(refreshAll, /await renderConversations\(\);[\s\S]*Promise\.all/);
 assert.match(refreshAll, /await renderConversations\(\{ freshMembers: true \}\);[\s\S]*?scheduleBackgroundConversationPreloads\(conversations\)/);
 
 assert.ok(
-  selectConversation.indexOf("const messagesLoading = loadMessages") < selectConversation.indexOf("await resolveConversationDisplay"),
+  selectConversation.indexOf("loadMessages(targetMessageID)") < selectConversation.indexOf("await resolveConversationDisplay"),
   "les messages préparés doivent être rendus pendant la transition",
 );
 assert.match(loadMessages, /preparedConversationMessages\(conversation\)/);

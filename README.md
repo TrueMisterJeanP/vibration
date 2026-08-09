@@ -6,7 +6,7 @@ Application de messagerie web installable, responsive et chiffrée côté naviga
   <img src="docs/interface-community.png" alt="Interface de Vibration Community avec conversations, sondage, évènement, fichier partagé et messages épinglés" width="900">
 </p>
 
-<p align="center"><strong>Vibration Community 1.0.14</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
+<p align="center"><strong>Vibration Community 1.0.15</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
 
 ## Philosophie
 
@@ -30,8 +30,11 @@ Elle inclut :
 - **expérience web et mobile** : interface responsive en six langues, PWA, cache de l’interface, notifications Web Push et reconnexion automatique ;
 - **auto-hébergement** : serveur Go compact, base SQLite locale et aucun service d’analytique ou de télémétrie Vibration requis.
 
-## Nouveautés de Community 1.0.14
+## Nouveautés de Community 1.0.15
 
+- **Ouverture immédiate des discussions** : un clic sélectionne et affiche désormais la conversation sans attendre les vérifications asynchrones, tout en conservant les contrôles de sécurité avant les actions sensibles.
+- **Dossier de fichiers plus réactif** : les noms déjà déchiffrés sont réutilisés et la liste s’affiche progressivement dès que chaque fichier est prêt, sans bloquer toute l’interface pendant le chargement.
+- **Carnet de contacts instantané** : les contacts déjà chargés apparaissent dès l’ouverture, puis sont actualisés en arrière-plan sans vider inutilement la liste.
 - **Démarrage fiable en mode paysage sur iPhone et iPad** : le voile de lancement couvre toujours l’intégralité de l’écran et son symbole reste centré, même lorsqu’iOS fournit brièvement les anciennes dimensions portrait. L’affichage est recalculé lors des rotations et changements réels du viewport.
 - **Interface stable sur iPhone et iPad** : les champs des formulaires mobiles conservent une taille adaptée à Safari, ce qui empêche le zoom automatique de rester actif après la fermeture de **Nouveau groupe**, **Modifier le groupe** ou d’un autre dialogue. Le zoom manuel reste disponible pour l’accessibilité.
 - **Appareils de confiance** : un appareil connu prouve son identité avec une clé ECDSA locale non exportable. La création et l’enregistrement effectifs de cette clé ont été corrigés ; un nouvel appareil reste en attente jusqu’à sa validation depuis une session déjà active.
