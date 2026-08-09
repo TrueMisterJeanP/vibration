@@ -15,8 +15,12 @@ const refreshAll = app.slice(
 assert.match(theme, /isIOS[\s\S]*display-mode: standalone[\s\S]*navigator\.standalone === true/);
 assert.match(theme, /const splashSymbolSize = 120/);
 assert.match(theme, /const viewportSize = \(\) => \(\{[\s\S]*visualViewport\?\.width[\s\S]*visualViewport\?\.height/);
+assert.ok(theme.indexOf("window.innerWidth") < theme.indexOf("window.visualViewport?.width"));
 assert.match(theme, /viewportIsLandscape !== screenIsLandscape[\s\S]*\[width, height\] = \[height, width\]/);
 assert.match(theme, /previousViewport[\s\S]*measurementCount[\s\S]*requestAnimationFrame\(positionStartupSymbol\)/);
+assert.match(theme, /window\.addEventListener\("resize", scheduleStartupSymbolPosition\)/);
+assert.match(theme, /window\.addEventListener\("orientationchange", scheduleStartupSymbolPosition\)/);
+assert.match(theme, /window\.visualViewport\?\.addEventListener\?\.\("resize", scheduleStartupSymbolPosition\)/);
 assert.match(theme, /const pageTopOffset = Math\.max\(0, screenSize\.height - viewport\.height\)/);
 assert.match(theme, /--startup-symbol-y[\s\S]*\(screenSize\.height - splashSymbolSize\) \/ 2 - pageTopOffset/);
 assert.match(theme, /classList\.add\("ios-pwa-splash-positioned"\)/);
@@ -33,12 +37,14 @@ assert.match(criticalSplashStyle, /html\[data-theme="light"\]\s*\{[^}]*backgroun
 assert.match(criticalSplashStyle, /html\.ios-pwa-starting,\s*html\.ios-pwa-starting body\s*\{[^}]*background:\s*var\(--avatar-bg\)/);
 assert.match(criticalSplashStyle, /#startup-splash\s*\{\s*display:\s*none/);
 assert.match(criticalSplashStyle, /html\.ios-pwa-starting #startup-splash:not\(\[hidden\]\)\s*\{[^}]*position:\s*fixed[^}]*top:\s*0[^}]*width:\s*var\(--startup-screen-width, 100vw\)[^}]*height:\s*var\(--startup-screen-height, 100vh\)/);
+assert.match(criticalSplashStyle, /min-width:\s*100vw[^}]*min-height:\s*100vh/);
 assert.match(criticalSplashStyle, /#startup-splash svg\s*\{[^}]*position:\s*absolute[^}]*top:\s*var\(--startup-symbol-y, 0\)[^}]*visibility:\s*hidden/);
 assert.match(criticalSplashStyle, /html\.ios-pwa-splash-positioned #startup-splash svg\s*\{\s*visibility:\s*visible/);
 assert.ok(html.indexOf("<style>") < html.indexOf("/css/style.css"), "critical splash layout must be available before the external stylesheet");
 assert.match(css, /html\.ios-pwa-starting,\s*html\.ios-pwa-starting body\s*\{[^}]*background:\s*var\(--avatar-bg\)/);
 assert.match(css, /html\.ios-pwa-starting #startup-splash\s*\{[^}]*position:\s*fixed[^}]*width:\s*var\(--startup-screen-width, 100vw\)[^}]*height:\s*var\(--startup-screen-height, 100vh\)[^}]*background:\s*var\(--avatar-bg\)/);
 const splashRule = css.match(/html\.ios-pwa-starting #startup-splash\s*\{([^}]*)\}/)?.[1] || "";
+assert.match(splashRule, /min-width:\s*100vw[\s\S]*min-height:\s*100vh/);
 assert.doesNotMatch(splashRule, /100dvh|safe-area-inset/);
 assert.match(css, /#startup-splash svg\s*\{[^}]*top:\s*var\(--startup-symbol-y, 0\)[^}]*left:\s*var\(--startup-symbol-x[^}]*width:\s*120px[^}]*height:\s*120px[^}]*visibility:\s*hidden[^}]*stroke:\s*var\(--avatar-fg\)/);
 assert.doesNotMatch(css.match(/#startup-splash svg\s*\{([^}]*)\}/)?.[1] || "", /safe-area-inset-top/);
@@ -53,6 +59,7 @@ assert.match(refreshAll, /scheduleBackgroundConversationPreloads\(cachedConversa
 
 const startupProperties = new Map();
 const startupClasses = new Set();
+const windowListeners = new Map();
 const lightMedia = { matches: false, addEventListener() {} };
 const document = {
   hidden: false,
@@ -73,11 +80,11 @@ const window = {
   screen: { width: 1024, height: 1366 },
   innerWidth: 1366,
   innerHeight: 1024,
-  visualViewport: { width: 1366, height: 1024 },
+  visualViewport: { width: 1024, height: 1366, addEventListener() {} },
   matchMedia(query) {
     return query === "(display-mode: standalone)" ? { matches: true } : lightMedia;
   },
-  addEventListener() {},
+  addEventListener(name, callback) { windowListeners.set(name, callback); },
 };
 vm.runInNewContext(theme, {
   document,
@@ -92,5 +99,15 @@ assert.equal(startupProperties.get("--startup-screen-height"), "1024px");
 assert.equal(startupProperties.get("--startup-symbol-x"), "623px");
 assert.equal(startupProperties.get("--startup-symbol-y"), "452px");
 assert.ok(startupClasses.has("ios-pwa-splash-positioned"));
+
+window.innerWidth = 1024;
+window.innerHeight = 1366;
+window.visualViewport.width = 1366;
+window.visualViewport.height = 1024;
+windowListeners.get("orientationchange")();
+assert.equal(startupProperties.get("--startup-screen-width"), "1024px");
+assert.equal(startupProperties.get("--startup-screen-height"), "1366px");
+assert.equal(startupProperties.get("--startup-symbol-x"), "452px");
+assert.equal(startupProperties.get("--startup-symbol-y"), "623px");
 
 console.log("iOS PWA startup: splash remains centered in portrait and landscape until messages are ready");

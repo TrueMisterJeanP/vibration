@@ -46,7 +46,7 @@ small { color: var(--muted); }
 .muted { color: var(--muted); }
 [hidden] { display: none !important; }
 #startup-splash { display: none; }
-html.ios-pwa-starting #startup-splash { position: fixed; z-index: 100; top: 0; left: 0; width: var(--startup-screen-width, 100vw); height: var(--startup-screen-height, 100vh); overflow: hidden; background: var(--avatar-bg); }
+html.ios-pwa-starting #startup-splash { position: fixed; z-index: 100; top: 0; left: 0; width: var(--startup-screen-width, 100vw); min-width: 100vw; height: var(--startup-screen-height, 100vh); min-height: 100vh; overflow: hidden; background: var(--avatar-bg); }
 html.ios-pwa-starting #startup-splash:not([hidden]) { display: block; }
 #startup-splash svg { position: absolute; top: var(--startup-symbol-y, 0); left: var(--startup-symbol-x, calc((100vw - 120px) / 2)); display: block; width: 120px; height: 120px; visibility: hidden; fill: none; stroke: var(--avatar-fg); stroke-width: 1.25; stroke-linejoin: miter; animation: none; transition: none; }
 html.ios-pwa-splash-positioned #startup-splash svg { visibility: visible; }

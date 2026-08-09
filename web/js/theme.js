@@ -18,8 +18,10 @@
   if (isIOS && isStandalone && isAppStart) {
     const splashSymbolSize = 120;
     const viewportSize = () => ({
-      width: window.visualViewport?.width || window.innerWidth,
-      height: window.visualViewport?.height || window.innerHeight,
+      // The visual viewport can retain the previous portrait size for a few
+      // frames when an installed iOS PWA starts directly in landscape.
+      width: window.innerWidth || window.visualViewport?.width || window.screen.width,
+      height: window.innerHeight || window.visualViewport?.height || window.screen.height,
     });
     const screenSizeForViewport = (viewportWidth, viewportHeight) => {
       let width = window.screen.width || viewportWidth;
@@ -45,28 +47,39 @@
     applyStartupScreenSize(initialViewport.width, initialViewport.height);
     document.documentElement.classList.add("ios-pwa-starting");
 
-    let previousViewport = null;
-    let measurementCount = 0;
-    const positionStartupSymbol = () => {
-      const viewport = viewportSize();
-      measurementCount++;
-      const viewportIsStable = previousViewport !== null
-        && Math.abs(viewport.width - previousViewport.width) < 0.5
-        && Math.abs(viewport.height - previousViewport.height) < 0.5;
-      if (!viewportIsStable && measurementCount < 6) {
-        previousViewport = viewport;
-        requestAnimationFrame(positionStartupSymbol);
-        return;
-      }
-      const screenSize = applyStartupScreenSize(viewport.width, viewport.height);
-      const pageTopOffset = Math.max(0, screenSize.height - viewport.height);
-      document.documentElement.style.setProperty(
-        "--startup-symbol-y",
-        `${(screenSize.height - splashSymbolSize) / 2 - pageTopOffset}px`,
-      );
-      document.documentElement.classList.add("ios-pwa-splash-positioned");
+    let startupPositionGeneration = 0;
+    const scheduleStartupSymbolPosition = () => {
+      if (!document.documentElement.classList.contains("ios-pwa-starting")) return;
+      const generation = ++startupPositionGeneration;
+      let previousViewport = null;
+      let measurementCount = 0;
+      const positionStartupSymbol = () => {
+        if (generation !== startupPositionGeneration
+          || !document.documentElement.classList.contains("ios-pwa-starting")) return;
+        const viewport = viewportSize();
+        measurementCount++;
+        const viewportIsStable = previousViewport !== null
+          && Math.abs(viewport.width - previousViewport.width) < 0.5
+          && Math.abs(viewport.height - previousViewport.height) < 0.5;
+        if (!viewportIsStable && measurementCount < 12) {
+          previousViewport = viewport;
+          requestAnimationFrame(positionStartupSymbol);
+          return;
+        }
+        const screenSize = applyStartupScreenSize(viewport.width, viewport.height);
+        const pageTopOffset = Math.max(0, screenSize.height - viewport.height);
+        document.documentElement.style.setProperty(
+          "--startup-symbol-y",
+          `${(screenSize.height - splashSymbolSize) / 2 - pageTopOffset}px`,
+        );
+        document.documentElement.classList.add("ios-pwa-splash-positioned");
+      };
+      requestAnimationFrame(positionStartupSymbol);
     };
-    requestAnimationFrame(positionStartupSymbol);
+    scheduleStartupSymbolPosition();
+    window.addEventListener("resize", scheduleStartupSymbolPosition);
+    window.addEventListener("orientationchange", scheduleStartupSymbolPosition);
+    window.visualViewport?.addEventListener?.("resize", scheduleStartupSymbolPosition);
   }
   function preference() {
     const saved = localStorage.getItem(storageKey);
