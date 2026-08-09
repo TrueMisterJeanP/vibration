@@ -25,7 +25,7 @@ function browserPushSupported() {
 export async function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return null;
   if (!["http:", "https:"].includes(location.protocol)) return null;
-  const registration = await navigator.serviceWorker.register("/sw.js?v=group-member-spacing-v302");
+  const registration = await navigator.serviceWorker.register("/sw.js?v=ios-input-zoom-v303");
   // Demande immédiatement au navigateur de vérifier le nouveau shell PWA.
   // Sans cela, certains clients conservent plusieurs heures l'ancien app.js,
   // où le bouton de sondage n'est pas encore câblé.

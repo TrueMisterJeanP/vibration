@@ -797,6 +797,8 @@ fieldset { min-width: 0; border: 1px solid var(--line); border-radius: .8rem; }
   #pinned-panel { position: absolute; z-index: 5; inset: 0 0 0 auto; width: min(92%, 360px); border-left: 1px solid var(--line); }
 }
 @media (max-width: 720px) {
+  /* iOS zooms the whole page when a focused form control is smaller than 16px. */
+  input, textarea, select { font-size: 16px !important; }
   .event-date-fields { grid-template-columns: 1fr; }
   .calendar-dialog { width: calc(100dvw - .5rem); max-width: calc(100dvw - .5rem); }
   .carnet-dialog { width: calc(100dvw - .5rem); max-width: calc(100dvw - .5rem); }
