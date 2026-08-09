@@ -21,6 +21,7 @@ src-tauri/
 /tests/admin-invitations.test.cjs
 /tests/admin-pagination.test.cjs
 /tests/admin-return-navigation.test.cjs
+/tests/admin-startup-performance.test.cjs
 /tests/macos-titlebar.test.cjs
 /tests/site-hero-titlebar.test.cjs
 editions/community.package.json

@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1b5260">
-  <meta name="vibration-build" content="ios-resume-v297">
+  <meta name="vibration-build" content="group-member-spacing-v302">
   <style>
     :root { --avatar-bg: #1b5260; --avatar-fg: #a9fff4; background-color: #1b5260; }
     html[data-theme="light"] { --avatar-bg: #c9e7e4; --avatar-fg: #075e57; background-color: #c9e7e4; }
@@ -21,7 +21,7 @@
   <link rel="manifest" href="/manifest.json?v=desktop-titlebar-v252">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=qr-scanner-v296">
+  <link rel="stylesheet" href="/css/style.css?v=group-member-spacing-v302">
 </head>
 <body>
   <div class="desktop-titlebar-drag-region" data-tauri-drag-region aria-hidden="true"></div>
@@ -354,7 +354,13 @@
       <label>Description<textarea id="group-edit-description" rows="3" maxlength="280"></textarea></label>
       <label>Ajouter un membre par identifiant ou code privé<input id="group-edit-user-search" minlength="2" autocomplete="off" placeholder="alice ou VIB-…"></label>
       <div id="group-edit-user-results" class="picker-list"></div>
-      <fieldset><legend>Membres</legend><div id="group-edit-members" class="picker-list"></div></fieldset>
+      <section class="conversation-info-members" aria-labelledby="group-edit-members-title">
+        <h4 id="group-edit-members-title">
+          Membres
+          <span id="group-edit-members-count" class="conversation-info-members-count">1</span>
+        </h4>
+        <ul id="group-edit-members" class="conversation-info-member-list" aria-live="polite"></ul>
+      </section>
       <p id="group-edit-error" class="error" role="alert"></p>
       <div class="dialog-actions">
         <button id="group-edit-cancel" class="outline" type="button">Annuler</button>
@@ -562,6 +568,6 @@
   <div id="toasts" aria-live="polite"></div>
   <script src="/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2"></script>
   <script src="/vendor/jsqr/jsQR.js?v=qr-scanner-v296"></script>
-  <script type="module" src="/js/app.js?v=ios-resume-v297"></script>
+  <script type="module" src="/js/app.js?v=group-member-spacing-v302"></script>
 </body>
 </html>

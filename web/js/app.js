@@ -27,7 +27,7 @@ import {
   rememberIdentityBundle,
   resetLoginVerificationCounter,
 	trustedDeviceCredential,
-} from "./device-vault.js?v=qr-scanner-v296";
+} from "./device-vault.js?v=trusted-device-v300";
 import {
   enableNotifications,
   notificationStatus,
@@ -39,7 +39,7 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=ios-resume-v297";
+} from "./notifications.js?v=group-member-spacing-v302";
 import { ChatSocket } from "./websocket.js?v=ios-resume-v297";
 import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios-resume-v297";
 import { locale, t } from "./i18n.js?v=ios-resume-v297";
@@ -80,7 +80,7 @@ const BACKGROUND_THUMBNAIL_PRELOAD_BUDGET_BYTES = 4 * 1024 * 1024;
 const BACKGROUND_PRELOAD_TTL_MS = 2 * 60 * 1000;
 const BACKGROUND_PRELOAD_NETWORK_FRESH_MS = 15 * 1000;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "ios-resume-v297";
+const APP_BUILD = "group-member-spacing-v302";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 
 window.VIBRATION_BUILD = APP_BUILD;
@@ -483,7 +483,7 @@ function userWithDiscoveryCode(user, query) {
   return isPrivateDiscoveryCode(query) ? { ...user, discovery_code: query } : user;
 }
 
-function groupEditDialog({ name, description, avatar, contacts, members }) {
+function groupEditDialog({ name, description, avatar, members }) {
   const dialog = document.querySelector("#group-edit-dialog");
   const form = document.querySelector("#group-edit-form");
   const nameInput = document.querySelector("#group-edit-name");
@@ -493,38 +493,48 @@ function groupEditDialog({ name, description, avatar, contacts, members }) {
   const removeButton = document.querySelector("#group-edit-avatar-remove");
   const errorRegion = document.querySelector("#group-edit-error");
   const memberList = document.querySelector("#group-edit-members");
+  const memberCount = document.querySelector("#group-edit-members-count");
   const userSearch = document.querySelector("#group-edit-user-search");
   const userResults = document.querySelector("#group-edit-user-results");
   let selectedAvatar = avatar || null;
-  const selectedIDs = new Set(members.filter((member) => member.user_id !== state.me.id).map((member) => member.user_id));
+  const selectedIDs = new Set(members
+    .filter((member) => !sameID(member.user_id, state.me.id))
+    .map((member) => Number(member.user_id))
+    .filter(Boolean));
+  const existingMembers = new Map(members
+    .filter((member) => !sameID(member.user_id, state.me.id))
+    .map((member) => [Number(member.user_id), member]));
   const extraUsers = new Map();
 
   const updatePreview = () => {
     renderGroupAvatarPreview(avatarPreview, selectedAvatar);
     removeButton.hidden = !selectedAvatar;
   };
-  const renderMembers = () => renderGroupMemberPicker(memberList, contacts, {
-    selectedIDs,
-    existingMembers: members,
-    extraUsers: [...extraUsers.values()],
-    disabledIDs: new Set([state.me.id]),
-    emptyText: "Aucun contact disponible.",
-    onChange: (userID, checked) => {
-      if (checked) selectedIDs.add(userID);
-      else selectedIDs.delete(userID);
-    },
-  });
+  const renderMembers = () => {
+    const selectedMembers = [...selectedIDs]
+      .map((userID) => extraUsers.get(userID) || existingMembers.get(userID))
+      .filter(Boolean);
+    renderSelectedGroupMembers(memberList, [state.me, ...selectedMembers], {
+      countElement: memberCount,
+      onRemove: (userID) => {
+        selectedIDs.delete(userID);
+        extraUsers.delete(userID);
+        renderMembers();
+      },
+    });
+  };
   const searchUsers = debounce(async () => {
     const query = userSearch.value.trim();
     userResults.replaceChildren();
     if (query.length < 2) return;
     try {
       const users = await searchInstanceUsers(query);
-      const currentIDs = new Set([...members.map((member) => member.user_id), ...selectedIDs, ...extraUsers.keys()]);
-      for (const user of users.filter((item) => item.id !== state.me.id && !currentIDs.has(item.id))) {
+      const currentIDs = new Set([state.me.id, ...selectedIDs]);
+      for (const user of users.filter((item) => !sameID(item.id, state.me.id) && !currentIDs.has(Number(item.id)))) {
         appendGroupUserSearchResult(userResults, user, () => {
-          extraUsers.set(user.id, userWithDiscoveryCode(user, query));
-          selectedIDs.add(user.id);
+          const userID = Number(user.id);
+          extraUsers.set(userID, userWithDiscoveryCode(user, query));
+          selectedIDs.add(userID);
           userSearch.value = "";
           userResults.replaceChildren();
           renderMembers();
@@ -3536,7 +3546,6 @@ async function editConversation(conversation, row) {
     name: current.title,
     description: currentDescription,
     avatar: current.customAvatar,
-    contacts,
     members,
   });
   const selectedMemberIDs = new Set(result?.memberIDs || []);
@@ -8905,111 +8914,33 @@ async function searchContacts(event) {
   }
 }
 
-function renderGroupMemberPicker(list, contacts, options = {}) {
-  const {
-    selectedIDs = new Set(),
-    existingMembers = [],
-    extraUsers = [],
-    disabledIDs = new Set(),
-    emptyText = "Aucun contact. Ajoutez d’abord un contact.",
-    onChange = null,
-  } = options;
-  const acceptedContacts = new Map(contacts
-    .filter((contact) => contact.status === "accepted")
-    .map((contact) => [contact.contact_user_id, {
-      userID: contact.contact_user_id,
-      username: contact.username,
-      displayName: contact.display_name || contact.username,
-      description: contact.description || "",
-      accepted: true,
-    }]));
-  for (const member of existingMembers) {
-    if (member.user_id === state.me.id) continue;
-    if (!acceptedContacts.has(member.user_id)) {
-      acceptedContacts.set(member.user_id, {
-        userID: member.user_id,
-        username: member.username,
-        displayName: member.display_name || member.username,
-        description: member.role === "pending" ? "Invitation en attente" : member.description || "",
-        accepted: false,
-      });
-    } else if (member.role === "pending") {
-      const contact = acceptedContacts.get(member.user_id);
-      contact.description = contact.description || "Invitation en attente";
-    }
-  }
-  for (const user of extraUsers) {
-    if (user.id === state.me.id || acceptedContacts.has(user.id)) continue;
-    acceptedContacts.set(user.id, {
-      userID: user.id,
-      username: user.username,
-      displayName: user.display_name || user.username,
-      description: user.description || t("Invitation sans contact privé"),
-      accepted: false,
+function renderSelectedGroupMembers(list, members, { countElement = null, onRemove = null } = {}) {
+  const seen = new Set();
+  const normalizedMembers = members
+    .map((member) => ({
+      member,
+      userID: Number(member.user_id ?? member.contact_user_id ?? member.id),
+      displayName: member.display_name || member.username || t("Non renseigné"),
+      username: String(member.username || "").replace(/^@+/, ""),
+    }))
+    .filter(({ userID }) => {
+      if (!userID || seen.has(userID)) return false;
+      seen.add(userID);
+      return true;
     });
-  }
-  const candidates = [...acceptedContacts.values()]
-    .sort((left, right) => left.username.localeCompare(right.username, "fr"));
-  list.replaceChildren();
-  if (!candidates.length) {
-    const empty = document.createElement("p");
-    empty.className = "picker-empty";
-    empty.textContent = emptyText;
-    list.append(empty);
-    return;
-  }
-  for (const contact of candidates) {
-    const label = document.createElement("label");
-    label.className = "picker-row check";
-    const identity = document.createElement("span");
-    const displayName = document.createElement("strong");
-    displayName.textContent = contact.displayName;
-    const description = document.createElement("small");
-    description.className = "contact-description";
-    description.textContent = contact.description;
-    description.hidden = !contact.description;
-    const username = document.createElement("small");
-    username.textContent = `@${contact.username}`;
-    identity.append(displayName, description, username);
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.value = String(contact.userID);
-    checkbox.checked = selectedIDs.has(contact.userID);
-    checkbox.disabled = disabledIDs.has(contact.userID);
-    checkbox.addEventListener("change", () => onChange?.(contact.userID, checkbox.checked));
-    checkbox.setAttribute("aria-label", `${checkbox.checked ? "Retirer" : "Ajouter"} ${contact.displayName} du groupe`);
-    label.append(identity, checkbox);
-    list.append(label);
-  }
-}
-
-function selectedNewGroupMemberIDs() {
-  return new Set(
-    [...document.querySelectorAll("#group-members input:checked")]
-      .map((input) => Number(input.value))
-      .filter(Boolean),
-  );
-}
-
-function renderNewGroupMembers() {
-  const list = document.querySelector("#group-members");
-  const invitedUsers = [...groupInvitedUsers.values()]
-    .sort((left, right) => {
-      const leftName = left.display_name || left.username || "";
-      const rightName = right.display_name || right.username || "";
-      return leftName.localeCompare(rightName, locale, { sensitivity: "base" });
-    });
-  const members = [state.me, ...invitedUsers];
-  const count = document.querySelector("#group-members-count");
-  if (count) count.textContent = String(members.length);
+  const currentUser = normalizedMembers.find(({ userID }) => sameID(userID, state.me.id));
+  const otherMembers = normalizedMembers
+    .filter(({ userID }) => !sameID(userID, state.me.id))
+    .sort((left, right) => left.displayName.localeCompare(right.displayName, locale, { sensitivity: "base" }));
+  const displayedMembers = [currentUser, ...otherMembers].filter(Boolean);
+  if (countElement) countElement.textContent = String(displayedMembers.length);
   list.replaceChildren();
 
-  for (const [index, member] of members.entries()) {
-    const isCurrentUser = index === 0;
+  for (const { member, userID, displayName, username } of displayedMembers) {
+    const isCurrentUser = sameID(userID, state.me.id);
     const item = document.createElement("li");
     item.className = "conversation-info-member";
 
-    const displayName = member.display_name || member.username || t("Non renseigné");
     const avatar = document.createElement("span");
     avatar.className = "conversation-info-member-avatar";
     avatar.setAttribute("aria-hidden", "true");
@@ -9019,9 +8950,9 @@ function renderNewGroupMembers() {
     identity.className = "conversation-info-member-identity";
     const name = document.createElement("strong");
     name.textContent = displayName;
-    const username = document.createElement("small");
-    username.textContent = member.username ? `@${String(member.username).replace(/^@+/, "")}` : t("Non renseigné");
-    identity.append(name, username);
+    const usernameElement = document.createElement("small");
+    usernameElement.textContent = username ? `@${username}` : t("Non renseigné");
+    identity.append(name, usernameElement);
 
     const statusOrAction = document.createElement(isCurrentUser ? "span" : "label");
     statusOrAction.className = isCurrentUser
@@ -9035,13 +8966,11 @@ function renderNewGroupMembers() {
     } else {
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
-      checkbox.value = String(member.id);
+      checkbox.value = String(userID);
       checkbox.checked = true;
       checkbox.setAttribute("aria-label", t("Retirer {name} du groupe", { name: displayName }));
       checkbox.addEventListener("change", () => {
-        if (checkbox.checked) return;
-        groupInvitedUsers.delete(member.id);
-        renderNewGroupMembers();
+        if (!checkbox.checked) onRemove?.(userID);
       });
       statusOrAction.append(checkbox);
     }
@@ -9049,6 +8978,26 @@ function renderNewGroupMembers() {
     item.append(avatar, identity, statusOrAction);
     list.append(item);
   }
+}
+
+function selectedNewGroupMemberIDs() {
+  return new Set(
+    [...document.querySelectorAll("#group-members input:checked")]
+      .map((input) => Number(input.value))
+      .filter(Boolean),
+  );
+}
+
+function renderNewGroupMembers() {
+  const list = document.querySelector("#group-members");
+  const count = document.querySelector("#group-members-count");
+  renderSelectedGroupMembers(list, [state.me, ...groupInvitedUsers.values()], {
+    countElement: count,
+    onRemove: (userID) => {
+      groupInvitedUsers.delete(userID);
+      renderNewGroupMembers();
+    },
+  });
 }
 
 async function searchNewGroupMembers(event) {

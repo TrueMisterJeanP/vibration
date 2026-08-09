@@ -29,6 +29,13 @@ func TestOpenCreatesRequiredTables(t *testing.T) {
 			t.Errorf("table %s was not created", table)
 		}
 	}
+	var fileOwnerIndex int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_files_owner_size'`).Scan(&fileOwnerIndex); err != nil {
+		t.Fatal(err)
+	}
+	if fileOwnerIndex != 1 {
+		t.Fatal("files owner/size index was not created")
+	}
 }
 
 func TestOpenReadOnlyReadsExistingSQLite(t *testing.T) {

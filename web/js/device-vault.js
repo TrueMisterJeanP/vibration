@@ -86,7 +86,7 @@ function trustedDeviceID(instanceURL) {
 }
 
 function canonicalDevicePublicKey(jwk) {
-  return JSON.stringify({ kty: "EC", crv: "P-256", x: jwk.x, y: jw.y });
+  return JSON.stringify({ kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y });
 }
 
 async function sha256Hex(value) {

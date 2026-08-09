@@ -12,6 +12,7 @@ const app = fs.readFileSync(path.join(root, "web/js/app.js"), "utf8");
 const sessions = fs.readFileSync(path.join(root, "internal/auth/device_sessions.go"), "utf8");
 const authSessions = fs.readFileSync(path.join(root, "internal/auth/sessions.go"), "utf8");
 const trustedDevices = fs.readFileSync(path.join(root, "internal/auth/trusted_devices.go"), "utf8");
+const deviceVault = fs.readFileSync(path.join(root, "web/js/device-vault.js"), "utf8");
 const vault = fs.readFileSync(path.join(root, "web/js/device-vault.js"), "utf8");
 const migrations = fs.readFileSync(path.join(root, "internal/db/migrations.go"), "utf8");
 const server = fs.readFileSync(path.join(root, "cmd/server/main.go"), "utf8");
@@ -60,6 +61,8 @@ assert.match(vault, /generateKey\([\s\S]*ECDSA[\s\S]*namedCurve: "P-256"/);
 assert.match(vault, /importKey\([\s\S]*false,[\s\S]*\["sign"\]/);
 assert.match(trustedDevices, /messageauth\.VerifyRaw/);
 assert.match(trustedDevices, /DELETE FROM sessions WHERE user_id=\? AND trusted_device_id=\?/);
+assert.match(deviceVault, /x: jwk\.x, y: jwk\.y/);
+assert.doesNotMatch(deviceVault, /y: jw\.y/);
 
 assert.match(linkHTML, /id="link-device-approve"/);
 assert.match(link, /new URLSearchParams\(location\.hash\.slice\(1\)\)/);

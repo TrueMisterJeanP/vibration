@@ -6,7 +6,7 @@ Application de messagerie web installable, responsive et chiffrée côté naviga
   <img src="docs/interface-community.png" alt="Interface de Vibration Community avec conversations, sondage, évènement, fichier partagé et messages épinglés" width="900">
 </p>
 
-<p align="center"><strong>Vibration Community 1.0.11</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
+<p align="center"><strong>Vibration Community 1.0.12</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
 
 ## Philosophie
 
@@ -30,13 +30,13 @@ Elle inclut :
 - **expérience web et mobile** : interface responsive en six langues, PWA, cache de l’interface, notifications Web Push et reconnexion automatique ;
 - **auto-hébergement** : serveur Go compact, base SQLite locale et aucun service d’analytique ou de télémétrie Vibration requis.
 
-## Nouveautés de Community 1.0.11
+## Nouveautés de Community 1.0.12
 
-- **Appareils de confiance** : un appareil connu prouve son identité avec une clé ECDSA locale non exportable. Un nouvel appareil reste en attente jusqu’à sa validation depuis une session déjà active.
+- **Appareils de confiance** : un appareil connu prouve son identité avec une clé ECDSA locale non exportable. La création et l’enregistrement effectifs de cette clé ont été corrigés ; un nouvel appareil reste en attente jusqu’à sa validation depuis une session déjà active.
 - **Scanner un QR code** : le QR code d’un nouvel appareil peut être lu avec la caméra ou depuis une image. Un code court à usage unique reste disponible en complément ; les deux expirent après cinq minutes.
 - **Gestion complète des sessions** : le profil distingue les appareils approuvés des sessions ouvertes. Il permet de déconnecter une session ou de retirer la confiance à un appareil et à toutes ses sessions.
 - **Profil invisible** : un membre peut ne plus apparaître dans les recherches publiques et générer un code privé sécurisé pour être retrouvé dans **+ Contact** ou **+ Groupe** par les seules personnes auxquelles il le transmet.
-- **Recherche et création de groupes améliorées** : recherche par nom d’utilisateur sur les membres visibles de l’instance, recherche par code privé et, lorsqu’ils existent, affichage des administrateurs et gestionnaires par rôle. Les membres choisis sont clairement listés et peuvent être retirés avant la création du groupe.
+- **Recherche, création et modification de groupes améliorées** : recherche par nom d’utilisateur sur les membres visibles de l’instance, recherche par code privé et, lorsqu’ils existent, affichage des administrateurs et gestionnaires par rôle. Seuls les membres choisis ou déjà présents sont listés, avec une présentation homogène et la possibilité de les retirer avant validation.
 - **Signalements réversibles et confidentiels** : l’utilisateur sélectionne une catégorie d’infraction sans transmettre le contenu chiffré. Le signalement peut ensuite être retiré ; la modération Enterprise peut également annuler sa sélection.
 - **Reprise mobile renforcée** : au retour dans la PWA sur iPhone ou iPad, l’initialisation interrompue et la connexion temps réel sont relancées automatiquement sans imposer de redémarrage manuel.
 - **Traductions complètes** : les nouveaux écrans et messages sont disponibles en français, anglais, espagnol, italien, portugais et allemand.

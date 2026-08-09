@@ -10,11 +10,11 @@ import {
   recordSuccessfulLogin,
   signTrustedDeviceChallenge,
   trustedDeviceCredential,
-} from "./device-vault.js?v=qr-scanner-v296";
+} from "./device-vault.js?v=trusted-device-v300";
 import {
   registerServiceWorker,
   requestNotificationPermissionOnSignIn,
-} from "./notifications.js?v=carnet-v221";
+} from "./notifications.js?v=group-member-spacing-v302";
 import { frenchErrorMessage } from "./ui.js?v=ios-resume-v297";
 import { t, translateMultiline } from "./i18n.js?v=ios-resume-v297";
 
