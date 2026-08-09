@@ -21,8 +21,9 @@ Vibration Community est une application web/PWA auto-hébergeable :
 
 L’export Community remplace `package.json` et `package-lock.json` par les
 fichiers dédiés `editions/community.package.json` et
-`editions/community.package-lock.json`. Le seul paquet npm déclaré est
-`hash-wasm`, utilisé pour reproduire et tester le module Argon2id déjà embarqué
+`editions/community.package-lock.json`. Les paquets npm déclarés sont
+`hash-wasm`, utilisé pour reproduire et tester le module Argon2id, et `jsqr`,
+utilisé pour lire localement les QR codes d’approbation. Les deux sont embarqués
 dans `web/vendor/` ; le navigateur ne contacte aucun CDN.
 
 ## Dépendances d’exécution
@@ -35,6 +36,7 @@ Les modules Go sont déclarés dans `go.mod` et vérifiés par `go.sum`.
 | --- | --- | --- | --- |
 | `github.com/SherClockHolmes/webpush-go` | `v1.4.0` | chiffrement et envoi Web Push | MIT |
 | `github.com/gorilla/websocket` | `v1.5.3` | transport WebSocket côté serveur | BSD-2-Clause |
+| `github.com/skip2/go-qrcode` | `v0.0.0-20200617195104-da1b6568686e` | génération locale autonome des QR codes d’approbation de nouvel appareil | MIT |
 | `golang.org/x/crypto` | `v0.52.0` | primitives cryptographiques utilisées par les dépendances serveur | BSD-3-Clause |
 | `modernc.org/sqlite` | `v1.34.5` | pilote SQLite pur Go | BSD-3-Clause |
 | `github.com/google/uuid` | `v1.6.0` | génération d’UUID | BSD-3-Clause |
@@ -85,12 +87,14 @@ Les bibliothèques navigateur embarquées dans Community sont :
 | pptx-preview | `1.0.7` | `web/vendor/pptx-preview/` | prévisualisation des présentations PowerPoint `.pptx` | ISC |
 | html2canvas | `1.4.1` | `web/vendor/html2canvas/` | capture fidèle des premières pages Office dans Firefox et Safari | MIT |
 | hash-wasm | `4.12.0` | `web/vendor/hash-wasm/` | dérivation Argon2id des enveloppes d’identité v2 | MIT |
+| jsQR | `1.4.0` | `web/vendor/jsqr/` | lecture locale des QR codes d’approbation d’un nouvel appareil | Apache-2.0 |
 
 ## Dépendances de développement
 
-L’export Community fixe `hash-wasm` à la version `4.12.0`. `npm ci` permet de
-contrôler cette provenance et d’exécuter le test cryptographique Node ; le code
-servi au navigateur demeure la copie locale versionnée sous `web/vendor/`.
+L’export Community fixe `hash-wasm` à la version `4.12.0` et `jsqr` à la version
+`1.4.0`. `npm ci` permet de contrôler leur provenance et d’exécuter les tests
+Node ; le code servi au navigateur demeure la copie locale versionnée sous
+`web/vendor/`.
 
 L’arborescence de travail Enterprise peut contenir des outils locaux
 supplémentaires, notamment les paquets Tauri et le wrapper `src-tauri/`. Ces

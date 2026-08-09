@@ -20,6 +20,7 @@ de licence amont lorsque les licences concernées l’exigent.
 | pptx-preview | `1.0.7` | `web/vendor/pptx-preview/` | ISC | Copyright _hit757_ et contributeurs. Le texte complet de la licence est conservé dans `web/vendor/pptx-preview/LICENSE`. |
 | html2canvas | `1.4.1` | `web/vendor/html2canvas/` | MIT | Copyright Niklas von Hertzen et contributeurs. Le texte complet de la licence est conservé dans `web/vendor/html2canvas/LICENSE`. |
 | hash-wasm | `4.12.0` | `web/vendor/hash-wasm/` | MIT | Copyright Dani Biro. Le texte complet de la licence est conservé dans `web/vendor/hash-wasm/LICENSE`. |
+| jsQR | `1.4.0` | `web/vendor/jsqr/` | Apache-2.0 | Copyright Cozmo et contributeurs. Le texte complet de la licence est conservé dans `web/vendor/jsqr/LICENSE`. |
 
 ## Modules Go
 
@@ -32,6 +33,7 @@ de licence amont lorsque les licences concernées l’exigent.
 | `github.com/golang-jwt/jwt/v5` | `v5.2.2` | MIT | Copyright Dave Grijalva et les mainteneurs golang-jwt. |
 | `github.com/google/uuid` | `v1.6.0` | BSD-3-Clause | Copyright Google Inc. |
 | `github.com/gorilla/websocket` | `v1.5.3` | BSD-2-Clause | Copyright The Gorilla WebSocket Authors. |
+| `github.com/skip2/go-qrcode` | `v0.0.0-20200617195104-da1b6568686e` | MIT | Copyright Tom Harwood. Génération locale autonome des QR codes d’approbation de nouvel appareil. |
 | `github.com/jackc/pgpassfile` | `v1.0.0` | MIT | Copyright Jack Christensen. |
 | `github.com/jackc/pgservicefile` | `v0.0.0-20240606120523-5a60cdf6a761` | MIT | Copyright Jack Christensen. |
 | `github.com/jackc/pgx/v5` | `v5.10.0` | MIT | Copyright Jack Christensen. Présent pour la compatibilité d’erreurs du code partagé ; le déploiement PostgreSQL n’est pas une fonction Community. |
@@ -50,10 +52,10 @@ de licence amont lorsque les licences concernées l’exigent.
 
 ## Paquets npm
 
-Le `package-lock.json` exporté pour Community fixe `hash-wasm` `4.12.0`, utilisé
-pour reproduire et tester l’implémentation Argon2id embarquée. L’arborescence de
-travail Enterprise peut contenir d’autres paquets npm liés à Tauri, qui ne sont
-pas inclus dans l’export Community.
+Le `package-lock.json` exporté pour Community fixe `hash-wasm` `4.12.0` et
+`jsqr` `1.4.0`, utilisés pour reproduire et tester les composants embarqués.
+L’arborescence de travail Enterprise peut contenir d’autres paquets npm liés à
+Tauri, qui ne sont pas inclus dans l’export Community.
 
 ## Textes de licence complets
 
@@ -66,6 +68,7 @@ pas inclus dans l’export Community.
 - pptx-preview : `web/vendor/pptx-preview/LICENSE`
 - html2canvas : `web/vendor/html2canvas/LICENSE`
 - hash-wasm : `web/vendor/hash-wasm/LICENSE`
+- jsQR : `web/vendor/jsqr/LICENSE`
 - Modules Go : les fichiers de licence font partie du code source des modules
   téléchargés et vérifiés par `go.sum`.
 

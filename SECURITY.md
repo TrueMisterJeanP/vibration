@@ -51,6 +51,22 @@ Vibration cherche à minimiser la confiance accordée au serveur :
 - Community utilise par défaut un stockage local SQLite ;
 - aucun service d’analytique ou de télémétrie hébergé par Vibration n’est requis.
 
+Les sessions multi-appareils reposent sur un jeton porteur aléatoire stocké dans
+un cookie `HttpOnly`. Chaque appareil de confiance possède en plus une clé de
+signature ECDSA P-256 non exportable conservée dans IndexedDB ; le serveur ne
+conserve que sa clé publique. Après saisie du mot de passe, un appareil déjà
+connu signe un défi aléatoire éphémère pour autoriser automatiquement sa nouvelle
+session. Un appareil inconnu reste inutilisable jusqu’à son approbation depuis
+une session active. Le QR code transporte uniquement un secret d’approbation
+aléatoire dans le fragment de l’URL ; ce fragment est retiré immédiatement de la barre d’adresse.
+Le secret QR et le code court sont à usage unique, expirent après cinq minutes
+et ne sont conservés en base que sous forme d’empreinte SHA-256. La liste des
+sessions utilise une référence dérivée distincte et n’expose jamais le jeton de
+session réel. Le profil sépare les appareils de confiance des sessions actives :
+retirer la confiance révoque la clé publique et toutes les sessions associées.
+La récupération du mot de passe révoque toutes les sessions et tous les appareils
+de confiance afin qu’un appareil perdu ne puisse plus prouver son identité.
+
 Depuis la version Community 1.0.9 :
 
 - les nouvelles enveloppes d’identité sont protégées par Argon2id ; les comptes

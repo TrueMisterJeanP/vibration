@@ -3,6 +3,7 @@ package conversations
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"chat-pwa-go/internal/auth"
 	"chat-pwa-go/internal/carnet"
 	"chat-pwa-go/internal/httpx"
+	"chat-pwa-go/internal/userdiscovery"
 )
 
 type Broadcaster interface {
@@ -202,6 +204,7 @@ func (h *Handler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		EncryptedAvatar      *string           `json:"encrypted_avatar"`
 		MemberIDs            []int64           `json:"member_ids"`
 		EncryptedKeys        map[string]string `json:"encrypted_keys"`
+		DiscoveryCodes       map[string]string `json:"discovery_codes"`
 	}
 	if !httpx.Decode(w, r, &input) {
 		return
@@ -234,6 +237,20 @@ func (h *Handler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		}
 		if remote {
 			remoteMembers++
+		} else if id != ownerID {
+			allowed, discoveryErr := userdiscovery.CanInitiate(h.DB, ownerID, id, input.DiscoveryCodes[strconv.FormatInt(id, 10)])
+			if errors.Is(discoveryErr, sql.ErrNoRows) {
+				httpx.Error(w, http.StatusNotFound, "user not found")
+				return
+			}
+			if discoveryErr != nil {
+				httpx.Error(w, http.StatusInternalServerError, "user lookup failed")
+				return
+			}
+			if !allowed {
+				httpx.Error(w, http.StatusNotFound, "user not found")
+				return
+			}
 		}
 	}
 	if remoteMembers > 1 {
@@ -503,6 +520,7 @@ func (h *Handler) RotateGroupKeys(w http.ResponseWriter, r *http.Request) {
 		RemovedUserIDs       []int64           `json:"removed_user_ids"`
 		AddedUserIDs         []int64           `json:"added_user_ids"`
 		EncryptedKeys        map[string]string `json:"encrypted_keys"`
+		DiscoveryCodes       map[string]string `json:"discovery_codes"`
 		EncryptedTitle       string            `json:"encrypted_title"`
 		EncryptedDescription *string           `json:"encrypted_description"`
 		EncryptedAvatar      *string           `json:"encrypted_avatar"`
@@ -575,6 +593,21 @@ func (h *Handler) RotateGroupKeys(w http.ResponseWriter, r *http.Request) {
 		if tx.QueryRow(`SELECT is_remote FROM users WHERE id=?`, userID).Scan(&isRemote) != nil {
 			httpx.Error(w, http.StatusNotFound, "user not found")
 			return
+		}
+		if !isRemote {
+			allowed, discoveryErr := userdiscovery.CanInitiate(tx, ownerID, userID, input.DiscoveryCodes[strconv.FormatInt(userID, 10)])
+			if errors.Is(discoveryErr, sql.ErrNoRows) {
+				httpx.Error(w, http.StatusNotFound, "user not found")
+				return
+			}
+			if discoveryErr != nil {
+				httpx.Error(w, http.StatusInternalServerError, "user lookup failed")
+				return
+			}
+			if !allowed {
+				httpx.Error(w, http.StatusNotFound, "user not found")
+				return
+			}
 		}
 		if isRemote {
 			var mappedRemoteUserID int64

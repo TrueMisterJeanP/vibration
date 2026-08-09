@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1b5260">
-  <meta name="vibration-build" content="passphrase-strength-v276">
+  <meta name="vibration-build" content="ios-resume-v297">
   <style>
     :root { --avatar-bg: #1b5260; --avatar-fg: #a9fff4; background-color: #1b5260; }
     html[data-theme="light"] { --avatar-bg: #c9e7e4; --avatar-fg: #075e57; background-color: #c9e7e4; }
@@ -21,7 +21,7 @@
   <link rel="manifest" href="/manifest.json?v=desktop-titlebar-v252">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=passphrase-strength-v276">
+  <link rel="stylesheet" href="/css/style.css?v=qr-scanner-v296">
 </head>
 <body>
   <div class="desktop-titlebar-drag-region" data-tauri-drag-region aria-hidden="true"></div>
@@ -310,7 +310,7 @@
 
   <dialog id="contact-dialog"><form method="dialog" id="contact-form">
     <button class="dialog-close" value="cancel">×</button><h3>Ajouter un contact</h3>
-    <label>Nom d’utilisateur<input id="contact-search" minlength="2" autocomplete="off" placeholder="alice ou alice@chat.example.com"></label>
+    <label>Nom d’utilisateur, rôle ou code privé<input id="contact-search" minlength="2" autocomplete="off" placeholder="alice, Administrateur, Gestionnaire ou VIB-…"></label>
     <div id="contact-results" class="picker-list"></div>
   </form></dialog>
 
@@ -326,9 +326,15 @@
     </section>
     <label>Nom du groupe<input id="group-name" required maxlength="80"></label>
     <label>Description<textarea id="group-description" rows="3" maxlength="280" placeholder="Décrivez le groupe"></textarea></label>
-    <label>Ajouter un membre par nom d’utilisateur<input id="group-user-search" minlength="2" autocomplete="off" placeholder="alice"></label>
+    <label>Ajouter un membre par identifiant ou code privé<input id="group-user-search" minlength="2" autocomplete="off" placeholder="alice ou VIB-…"></label>
     <div id="group-user-results" class="picker-list"></div>
-    <fieldset><legend>Membres</legend><div id="group-members" class="picker-list"></div></fieldset>
+    <section class="conversation-info-members" aria-labelledby="group-members-title">
+      <h4 id="group-members-title">
+        Membres
+        <span id="group-members-count" class="conversation-info-members-count">1</span>
+      </h4>
+      <ul id="group-members" class="conversation-info-member-list" aria-live="polite"></ul>
+    </section>
     <button type="submit">Créer le groupe chiffré</button>
   </form></dialog>
 
@@ -346,7 +352,7 @@
       </section>
       <label>Nouveau nom<input id="group-edit-name" required maxlength="80"></label>
       <label>Description<textarea id="group-edit-description" rows="3" maxlength="280"></textarea></label>
-      <label>Ajouter un membre par nom d’utilisateur<input id="group-edit-user-search" minlength="2" autocomplete="off" placeholder="alice"></label>
+      <label>Ajouter un membre par identifiant ou code privé<input id="group-edit-user-search" minlength="2" autocomplete="off" placeholder="alice ou VIB-…"></label>
       <div id="group-edit-user-results" class="picker-list"></div>
       <fieldset><legend>Membres</legend><div id="group-edit-members" class="picker-list"></div></fieldset>
       <p id="group-edit-error" class="error" role="alert"></p>
@@ -373,6 +379,20 @@
       <label>Nom affiché<input id="profile-display-name" maxlength="80" required autocomplete="name"></label>
       <label>Description<textarea id="profile-description" rows="3" maxlength="280" placeholder="Quelques mots à propos de vous"></textarea></label>
       <label>Instance serveur<input id="profile-instance-url" type="url" required autocomplete="url"></label>
+      <section class="profile-discovery" aria-labelledby="profile-discovery-title">
+        <h4 id="profile-discovery-title">Confidentialité du profil</h4>
+        <label class="profile-visibility-toggle">
+          <input id="profile-invisible" type="checkbox">
+          <span><strong>Rester invisible dans l’annuaire</strong><small>Les membres qui ne vous connaissent pas ne pourront plus vous retrouver avec votre nom d’utilisateur.</small></span>
+        </label>
+        <small>Lorsque votre profil est invisible, partagez un code privé uniquement avec des personnes de confiance. Un nouveau code invalide immédiatement le précédent.</small>
+        <button id="profile-discovery-generate" class="outline" type="button">Générer un code privé</button>
+        <div id="profile-discovery-code-row" class="profile-discovery-code" hidden>
+          <label>Code privé<input id="profile-discovery-code" readonly spellcheck="false" autocomplete="off"></label>
+          <button id="profile-discovery-copy" class="outline" type="button">Copier le code</button>
+        </div>
+        <small id="profile-discovery-status" aria-live="polite"></small>
+      </section>
       <fieldset class="profile-password">
         <legend>Modifier le mot de passe</legend>
         <label>Mot de passe actuel<input id="profile-current-password" type="password" autocomplete="current-password"><small>Requis pour modifier le nom d’utilisateur ou le mot de passe.</small></label>
@@ -382,6 +402,21 @@
       <p id="profile-error" class="error" role="alert"></p>
       <button id="profile-save" type="submit">Enregistrer le profil</button>
       <label class="profile-theme-label"><strong>Thème</strong><select id="profile-theme"><option value="auto">Automatique</option><option value="light">Clair</option><option value="dark">Sombre</option></select></label>
+      <section class="profile-notifications profile-sessions" aria-labelledby="profile-sessions-title">
+        <h4 id="profile-sessions-title">Appareils et sessions</h4>
+        <small>Validez ici un nouvel appareil en scannant son QR code ou avec le code affiché lors de sa connexion. Vous pouvez aussi déconnecter une session que vous ne reconnaissez pas.</small>
+        <button id="profile-session-scan-qr" class="outline" type="button" aria-haspopup="dialog" aria-controls="session-qr-scanner-dialog">Scanner un QR code</button>
+        <div class="profile-session-code-row">
+          <label>Code de validation<input id="profile-session-code" maxlength="9" inputmode="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="ABCD-EFGH"></label>
+          <button id="profile-session-approve-code" class="outline" type="button">Vérifier le code</button>
+        </div>
+        <h5>Appareils de confiance</h5>
+        <small id="profile-trusted-device-status" aria-live="polite">Chargement des appareils de confiance…</small>
+        <ul id="profile-trusted-device-list" class="profile-session-list" aria-live="polite"></ul>
+        <h5>Sessions en cours</h5>
+        <small id="profile-session-status" aria-live="polite">Chargement des sessions…</small>
+        <ul id="profile-session-list" class="profile-session-list" aria-live="polite"></ul>
+      </section>
       <section class="profile-notifications" aria-labelledby="profile-calendar-feed-title">
         <h4 id="profile-calendar-feed-title">Flux calendrier partagé</h4>
         <small>Authentifiez-vous avec votre mot de passe pour créer ou actualiser ce flux. Il publiera les événements déchiffrés sur le serveur afin qu’Apple Calendar ou Google Calendar puisse les lire. Utilisez uniquement HTTPS.</small>
@@ -424,6 +459,23 @@
         </div>
       </section>
     </form>
+  </dialog>
+  <dialog id="session-qr-scanner-dialog" class="session-qr-scanner-dialog" aria-labelledby="session-qr-scanner-title">
+    <section class="session-qr-scanner-content">
+      <button id="session-qr-scanner-close" class="dialog-close" type="button" aria-label="Fermer">×</button>
+      <h3 id="session-qr-scanner-title">Scanner un QR code</h3>
+      <p>Cadrez le QR code affiché sur le nouvel appareil. L’image reste sur cet appareil.</p>
+      <div class="session-qr-camera-frame">
+        <video id="session-qr-scanner-video" autoplay muted playsinline webkit-playsinline aria-label="Aperçu de la caméra"></video>
+        <span aria-hidden="true"></span>
+      </div>
+      <canvas id="session-qr-scanner-canvas" hidden></canvas>
+      <small id="session-qr-scanner-status" role="status" aria-live="polite">Ouverture de la caméra…</small>
+      <div class="session-qr-scanner-actions">
+        <label class="avatar-file-button">Choisir une image du QR code<input id="session-qr-scanner-file" type="file" accept="image/*" hidden></label>
+        <button id="session-qr-scanner-cancel" class="outline" type="button">Annuler</button>
+      </div>
+    </section>
   </dialog>
   <dialog id="conversation-info-dialog" class="conversation-info-dialog" aria-labelledby="conversation-info-title">
     <button id="conversation-info-close" class="dialog-close" type="button" aria-label="Fermer">×</button>
@@ -475,6 +527,26 @@
       </section>
     </section>
   </dialog>
+  <dialog id="message-report-dialog" aria-labelledby="message-report-title">
+    <form id="message-report-form">
+      <h3 id="message-report-title">Signaler ce message</h3>
+      <p>Le contenu chiffré ne sera pas transmis. Seuls l’infraction choisie et les renseignements techniques du message seront communiqués à la modération.</p>
+      <fieldset class="message-report-options">
+        <legend>Choisissez l’infraction</legend>
+        <label><input type="radio" name="reason" value="harassment" required><span>Harcèlement ou intimidation</span></label>
+        <label><input type="radio" name="reason" value="threats" required><span>Menaces ou violence</span></label>
+        <label><input type="radio" name="reason" value="hate" required><span>Discours haineux ou discrimination</span></label>
+        <label><input type="radio" name="reason" value="sexual_content" required><span>Contenu sexuel non sollicité</span></label>
+        <label><input type="radio" name="reason" value="spam_scam" required><span>Spam, arnaque ou fraude</span></label>
+        <label><input type="radio" name="reason" value="personal_data" required><span>Partage de données personnelles</span></label>
+        <label><input type="radio" name="reason" value="illegal_content" required><span>Contenu illégal</span></label>
+      </fieldset>
+      <div class="dialog-actions">
+        <button id="message-report-cancel" class="outline" type="button">Annuler</button>
+        <button class="danger-button" type="submit">Envoyer le signalement</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="action-dialog">
     <form id="action-form">
       <h3 id="action-title"></h3>
@@ -489,6 +561,7 @@
   </dialog>
   <div id="toasts" aria-live="polite"></div>
   <script src="/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2"></script>
-  <script type="module" src="/js/app.js?v=identity-v2"></script>
+  <script src="/vendor/jsqr/jsQR.js?v=qr-scanner-v296"></script>
+  <script type="module" src="/js/app.js?v=ios-resume-v297"></script>
 </body>
 </html>

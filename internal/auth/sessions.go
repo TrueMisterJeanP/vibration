@@ -2,9 +2,7 @@ package auth
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/base64"
 	"net/http"
 	"strings"
 	"time"
@@ -17,10 +15,31 @@ type contextKey string
 const userIDKey contextKey = "user_id"
 const adminKey contextKey = "is_admin"
 const managerKey contextKey = "is_manager"
+const sessionIDKey contextKey = "session_id"
 const sessionCookie = "chat_session"
 const websocketSessionProtocolPrefix = "vibration-auth."
 const shortSessionDuration = 12 * time.Hour
 const longSessionDuration = 30 * 24 * time.Hour
+
+type SessionHub interface {
+	SendToUser(userID int64, event any) bool
+	KickUser(userID int64, event any)
+}
+
+type sessionCreation struct {
+	Token             string
+	ApprovalToken     string
+	ApprovalCode      string
+	ApprovalExpiresAt string
+	QRCode            string
+	DeviceChallenge   string
+}
+
+type sessionTrust struct {
+	ApprovalRequired bool
+	TrustedDeviceID  string
+	ProofRequired    bool
+}
 
 func UserID(r *http.Request) int64 {
 	value, _ := r.Context().Value(userIDKey).(int64)
@@ -37,21 +56,67 @@ func IsManager(r *http.Request) bool {
 	return value
 }
 
-func (h *Handler) createSession(w http.ResponseWriter, userID int64, persistent bool) (string, error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
+func SessionID(r *http.Request) string {
+	value, _ := r.Context().Value(sessionIDKey).(string)
+	return value
+}
+
+func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, userID int64, persistent bool, input authRequest, trust sessionTrust) (sessionCreation, error) {
+	id, err := randomSessionToken(32)
+	if err != nil {
+		return sessionCreation{}, err
 	}
-	id := base64.RawURLEncoding.EncodeToString(raw)
 	now := time.Now().UTC()
 	duration := shortSessionDuration
 	if persistent {
 		duration = longSessionDuration
 	}
 	expires := now.Add(duration)
-	if _, err := h.DB.Exec(`INSERT INTO sessions(id,user_id,expires_at,created_at) VALUES(?,?,?,?)`,
-		id, userID, expires.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
-		return "", err
+	createdAt := now.Format(time.RFC3339Nano)
+	deviceName, deviceType := sessionDeviceMetadata(input.DeviceName, input.DeviceType, r.UserAgent())
+	creation := sessionCreation{Token: id}
+	var approvedAt, approvalTokenHash, approvalCodeHash, approvalExpiresAt, trustedDeviceID any
+	var deviceChallengeHash, deviceChallengeExpiresAt any
+	if trust.TrustedDeviceID != "" {
+		trustedDeviceID = trust.TrustedDeviceID
+	}
+	if trust.ApprovalRequired {
+		creation.ApprovalToken, err = randomSessionToken(32)
+		if err != nil {
+			return sessionCreation{}, err
+		}
+		creation.ApprovalCode, err = randomApprovalCode()
+		if err != nil {
+			return sessionCreation{}, err
+		}
+		creation.ApprovalExpiresAt = now.Add(sessionApprovalDuration).Format(time.RFC3339Nano)
+		approvalTokenHash = sessionApprovalHash(creation.ApprovalToken)
+		approvalCodeHash = sessionApprovalHash(normalizeApprovalCode(creation.ApprovalCode))
+		approvalExpiresAt = creation.ApprovalExpiresAt
+		creation.QRCode, err = sessionApprovalQRCode(sessionApprovalURL(h, r, creation.ApprovalToken))
+		if err != nil {
+			return sessionCreation{}, err
+		}
+		if trust.ProofRequired {
+			creation.DeviceChallenge, err = randomSessionToken(32)
+			if err != nil {
+				return sessionCreation{}, err
+			}
+			deviceChallengeHash = sessionApprovalHash(creation.DeviceChallenge)
+			deviceChallengeExpiresAt = creation.ApprovalExpiresAt
+		}
+	} else {
+		approvedAt = createdAt
+	}
+	if _, err := h.DB.Exec(`INSERT INTO sessions(
+		id,user_id,expires_at,created_at,device_name,device_type,user_agent,ip_address,last_seen_at,
+		approved_at,approval_token_hash,approval_code_hash,approval_expires_at,trusted_device_id,
+		requested_device_key_id,requested_device_public_key,device_challenge_hash,device_challenge_expires_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		id, userID, expires.Format(time.RFC3339Nano), createdAt, deviceName, deviceType, truncateSessionText(r.UserAgent(), 512),
+		truncateSessionText(clientAddress(r), 128), createdAt, approvedAt, approvalTokenHash, approvalCodeHash, approvalExpiresAt,
+		trustedDeviceID, nullableSessionText(input.DeviceKeyID), nullableSessionText(input.DevicePublicKey), deviceChallengeHash, deviceChallengeExpiresAt); err != nil {
+		return sessionCreation{}, err
 	}
 	cookie := &http.Cookie{
 		Name: sessionCookie, Value: id, Path: "/", HttpOnly: true,
@@ -61,7 +126,14 @@ func (h *Handler) createSession(w http.ResponseWriter, userID int64, persistent 
 		cookie.Expires = expires
 	}
 	http.SetCookie(w, cookie)
-	return id, nil
+	return creation, nil
+}
+
+func nullableSessionText(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return strings.TrimSpace(value)
 }
 
 func (h *Handler) deleteSession(w http.ResponseWriter, r *http.Request) {
@@ -112,10 +184,11 @@ func (h *Handler) Middleware(next http.Handler) http.Handler {
 		}
 		var userID int64
 		var expires string
+		var approvedAt, approvalExpiresAt sql.NullString
 		var isAdmin, isManager, isBanned bool
-		err := h.DB.QueryRow(`SELECT s.user_id,s.expires_at,u.is_admin,u.is_manager,u.is_banned
+		err := h.DB.QueryRow(`SELECT s.user_id,s.expires_at,s.approved_at,s.approval_expires_at,u.is_admin,u.is_manager,u.is_banned
 			FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=?`, sessionID).
-			Scan(&userID, &expires, &isAdmin, &isManager, &isBanned)
+			Scan(&userID, &expires, &approvedAt, &approvalExpiresAt, &isAdmin, &isManager, &isBanned)
 		if err != nil {
 			if err != sql.ErrNoRows {
 				httpx.Error(w, http.StatusInternalServerError, "session lookup failed")
@@ -130,6 +203,18 @@ func (h *Handler) Middleware(next http.Handler) http.Handler {
 			httpx.Error(w, http.StatusUnauthorized, "session expired")
 			return
 		}
+		if !approvedAt.Valid {
+			if approvalExpiresAt.Valid {
+				deadline, parseErr := time.Parse(time.RFC3339Nano, approvalExpiresAt.String)
+				if parseErr != nil || time.Now().After(deadline) {
+					_, _ = h.DB.Exec(`DELETE FROM sessions WHERE id=?`, sessionID)
+					httpx.Error(w, http.StatusUnauthorized, "session approval expired")
+					return
+				}
+			}
+			httpx.Error(w, http.StatusForbidden, "session approval required")
+			return
+		}
 		if isBanned {
 			_, _ = h.DB.Exec(`DELETE FROM sessions WHERE user_id=?`, userID)
 			httpx.Error(w, http.StatusForbidden, "account banned")
@@ -138,6 +223,8 @@ func (h *Handler) Middleware(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), userIDKey, userID)
 		ctx = context.WithValue(ctx, adminKey, isAdmin)
 		ctx = context.WithValue(ctx, managerKey, isManager)
+		ctx = context.WithValue(ctx, sessionIDKey, sessionID)
+		_, _ = h.DB.Exec(`UPDATE sessions SET last_seen_at=?,ip_address=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), truncateSessionText(clientAddress(r), 128), sessionID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

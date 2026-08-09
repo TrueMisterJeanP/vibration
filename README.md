@@ -158,6 +158,7 @@ Placer ensuite Vibration derrière un reverse proxy HTTPS, par exemple Nginx ou 
 
 - client web configurable : l’URL de l’instance serveur est demandée à l’inscription, réclamée à la connexion seulement si l’instance enregistrée est inaccessible, et peut être modifiée dans **Mon profil** ;
 - inscription, connexion et sessions par cookie `HttpOnly` avec `SameSite` configurable ;
+- appareils de confiance authentifiés par une clé ECDSA locale, approbation des nouveaux appareils par QR code ou code court à usage unique, inventaire et révocation depuis le profil ;
 - réinitialisation du mot de passe via code de récupération personnel ;
 - mots de passe hachés avec bcrypt (coût 12) ;
 - identité ECDH P-256 générée avec WebCrypto dans le navigateur ;
@@ -237,6 +238,8 @@ En PWA, la réception des notifications dépend du support Web Push du navigateu
 
 Cliquer sur le nom du compte dans l’en-tête de la barre latérale pour ouvrir **Mon profil**. Chaque utilisateur peut modifier son nom d’utilisateur, son nom affiché et son mot de passe. Le mot de passe actuel est requis pour changer l’identifiant de connexion ou le mot de passe. La réactivation et le test des notifications sont également disponibles dans ce menu.
 
+La section **Appareils et sessions** distingue les appareils de confiance des sessions actives. Chaque appareil de confiance possède une clé de signature ECDSA P-256 locale non exportable ; seule sa clé publique est enregistrée sur le serveur. Après saisie du mot de passe, un appareil connu prouve automatiquement qu’il possède cette clé, même si sa précédente session a expiré. Un appareil réellement nouveau doit être validé en scannant son QR code avec un appareil déjà connecté, en saisissant son code court dans le profil, ou en approuvant directement la demande en attente. Pour le scanner, ouvrir le profil sur l’appareil déjà connecté, puis choisir **Appareils et sessions · Scanner un QR code** ; une image du QR code peut aussi être sélectionnée si la caméra est indisponible. Le QR code ne contient ni mot de passe, ni phrase secrète, ni clé privée. « Déconnecter » ferme seulement une session ; « Retirer la confiance » révoque l’appareil et toutes ses sessions. La récupération du mot de passe révoque toutes les sessions et tous les appareils de confiance afin d’éviter le verrouillage définitif du compte.
+
 Chaque utilisateur peut aussi choisir ou supprimer un avatar depuis son profil. L’image est recadrée et redimensionnée à 256 × 256 dans le navigateur avant son enregistrement. Elle remplace le logo dans l’en-tête personnel et apparaît dans les conversations privées et les messages.
 
 À l’inscription, la clé de chiffrement est mémorisée automatiquement sur l’appareil. La phrase n’est pas stockée : la clé privée déverrouillée est chiffrée par une clé AES non exportable conservée dans IndexedDB. La connexion demande ensuite uniquement l’identifiant et le mot de passe. La phrase secrète est exigée à la première connexion, puis de manière aléatoire entre 20 et 40 connexions, ou plus tôt si les données locales ont été effacées. La clé mémorisée peut être supprimée depuis le profil.
@@ -283,11 +286,21 @@ Auth :
 - `GET /api/registration`
 - `POST /api/register`
 - `POST /api/login`
+- `GET /api/session/status`
+- `POST /api/session/device-proof`
+- `DELETE /api/session/pending`
 - `POST /api/password/reset`
 - `POST /api/logout`
 - `GET /api/me`
 - `PUT /api/me`
 - `POST /api/me/recovery-code`
+- `GET /api/me/sessions`
+- `POST /api/me/sessions/preview`
+- `POST /api/me/sessions/approve`
+- `DELETE /api/me/sessions/{id}`
+- `GET /api/me/trusted-devices`
+- `POST /api/me/trusted-devices/enroll`
+- `DELETE /api/me/trusted-devices/{id}`
 
 Contacts et utilisateurs :
 
@@ -434,6 +447,9 @@ rm -f data/chat.db data/chat.db-shm data/chat.db-wal data/app_secret data/vapid.
 - vérification de l’en-tête `Origin` et refus de `Sec-Fetch-Site: cross-site` sur les mutations API ;
 - validation des tailles et identifiants côté serveur ;
 - cookie de session opaque et aléatoire : session courte de 12 heures, ou session persistante de 30 jours si **Rester connecté** est coché ;
+- approbation d’un nouvel appareil par secret aléatoire à usage unique ou code court, tous deux hachés en base et expirant après cinq minutes ;
+- preuve des appareils déjà approuvés par signature ECDSA P-256 d’un défi aléatoire à usage unique, sans transmission de leur clé privée ;
+- références publiques de sessions dérivées par SHA-256, sans exposition du jeton porteur utilisé par le cookie ;
 - limitation des tentatives d’inscription et de connexion ;
 - limites de lecture JSON et fichier ;
 - en-têtes CSP, `nosniff`, politique de référent et permissions restrictives ;
@@ -443,14 +459,14 @@ rm -f data/chat.db data/chat.db-shm data/chat.db-wal data/app_secret data/vapid.
 ## Limites connues de la V1
 
 - ce projet fournit un chiffrement E2EE fonctionnel, mais n’a pas fait l’objet d’un audit cryptographique indépendant ;
-- pas de Double Ratchet, de forward secrecy par message, de QR code d’empreinte ou de gestion multi-appareil ;
+- pas de Double Ratchet, de forward secrecy par message ni de QR code de comparaison d’empreinte ;
 - la compromission d’une clé privée permet de dériver les conversations privées historiques ;
 - la rotation des clés de groupe protège les messages futurs après un ajout ou un retrait, mais ne crée pas de forward secrecy par message ;
 - l’API permet au propriétaire d’ajouter/retirer des membres, mais l’interface V1 sélectionne principalement les membres à la création ;
 - les appels audio/vidéo sont WebRTC et chiffrés par le navigateur, mais ne disposent pas encore d’une couche E2EE applicative indépendante avec vérification d’identité ;
 - les appels audio/vidéo ne sont pas encore fédérés entre serveurs ;
 - les métadonnées techniques restent visibles du serveur : comptes, appartenances, heures, tailles et fréquence ;
-- la modération administrative des messages est nécessairement « aveugle » : l’administrateur ne peut pas lire le contenu E2EE et doit agir à partir des métadonnées ou d’un signalement externe ;
+- la modération administrative des messages est nécessairement « aveugle » : l’administrateur ne peut pas lire le contenu E2EE et agit à partir des métadonnées et des catégories d’infraction choisies lors des signalements internes ;
 - cache PWA limité à l’interface ; les messages ne sont pas mis en cache hors ligne ;
 - pas de recherche plein texte.
 

@@ -18,8 +18,9 @@ import (
 func TestWebSocketUsesProtocolAuthenticationWithoutURLToken(t *testing.T) {
 	db := callSignalTestDB(t)
 	expires := time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano)
-	if _, err := db.Exec(`INSERT INTO sessions(id,user_id,expires_at,created_at) VALUES(?,?,?,?)`,
-		"desktop-session-token", 1, expires, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+	createdAt := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := db.Exec(`INSERT INTO sessions(id,user_id,expires_at,created_at,approved_at) VALUES(?,?,?,?,?)`,
+		"desktop-session-token", 1, expires, createdAt, createdAt); err != nil {
 		t.Fatal(err)
 	}
 	handler := &Handler{DB: db, Hub: NewHub()}

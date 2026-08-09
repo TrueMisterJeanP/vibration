@@ -83,6 +83,7 @@ type Message struct {
 	Event                   *Event     `json:"event,omitempty"`
 	Reactions               []Reaction `json:"reactions,omitempty"`
 	Status                  string     `json:"status"`
+	IsReported              bool       `json:"is_reported"`
 }
 
 type Reaction struct {
@@ -109,6 +110,16 @@ type PollOption struct {
 type Event struct {
 	StartsAt string `json:"starts_at"`
 	EndsAt   string `json:"ends_at"`
+}
+
+var validMessageReportReasons = map[string]struct{}{
+	"harassment":      {},
+	"threats":         {},
+	"hate":            {},
+	"sexual_content":  {},
+	"spam_scam":       {},
+	"personal_data":   {},
+	"illegal_content": {},
 }
 
 type File struct {
@@ -155,12 +166,13 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status<>'read') THEN 'read'
 			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status='sent') THEN 'delivered'
 			ELSE 'sent'
-		END
+		END,own_report.message_id IS NOT NULL
 		FROM messages m JOIN users u ON u.id=m.sender_id LEFT JOIN files f ON f.message_id=m.id
 		LEFT JOIN message_pins mp ON mp.message_id=m.id AND mp.user_id=?
+		LEFT JOIN message_reports own_report ON own_report.message_id=m.id AND own_report.reporter_id=?
 		JOIN conversation_members cm ON cm.conversation_id=m.conversation_id AND cm.user_id=? AND cm.role<>'pending'
 		WHERE m.conversation_id=? AND m.id` + comparison + `? AND m.created_at>=cm.created_at AND (m.expires_at IS NULL OR m.expires_at>?) ORDER BY m.id ` + order + ` LIMIT ?`
-	rows, err := h.DB.Query(query, auth.UserID(r), auth.UserID(r), conversationID, boundary, now, limit)
+	rows, err := h.DB.Query(query, auth.UserID(r), auth.UserID(r), auth.UserID(r), conversationID, boundary, now, limit)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "message lookup failed")
 		return
@@ -175,7 +187,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		if rows.Scan(&item.ID, &item.ConversationID, &item.SenderID, &item.SenderUsername, &item.SenderAvatar, &item.EncryptedContent, &item.IV, &item.KeyEpoch,
 			&item.ReplyTo, &expiresAt, &pinnedBy, &pinnedAt, &item.CreatedAt, &item.UpdatedAt, &item.ClientMessageID, &item.SignatureConversationID, &item.SignatureSenderID, &item.SignatureReplyTo, &item.SignatureVersion,
 			&item.SigningKeyID, &item.Signature, &item.MessageKind, &item.Revision, &fileID, &fileName, &fileMIME, &fileIV, &fileSize, &previewSize,
-			&fileDigest, &previewDigest, &item.Status) == nil {
+			&fileDigest, &previewDigest, &item.Status, &item.IsReported) == nil {
 			if expiresAt.Valid {
 				item.ExpiresAt = &expiresAt.String
 			}
@@ -222,13 +234,14 @@ func (h *Handler) ListPinned(w http.ResponseWriter, r *http.Request) {
 			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status<>'read') THEN 'read'
 			WHEN NOT EXISTS(SELECT 1 FROM message_receipts mr WHERE mr.message_id=m.id AND mr.user_id<>m.sender_id AND mr.status='sent') THEN 'delivered'
 			ELSE 'sent'
-		END
+		END,own_report.message_id IS NOT NULL
 		FROM message_pins mp JOIN messages m ON m.id=mp.message_id
 		JOIN users u ON u.id=m.sender_id LEFT JOIN files f ON f.message_id=m.id
+		LEFT JOIN message_reports own_report ON own_report.message_id=m.id AND own_report.reporter_id=?
 		JOIN conversation_members cm ON cm.conversation_id=m.conversation_id AND cm.user_id=mp.user_id AND cm.role<>'pending'
 		WHERE mp.user_id=? AND m.conversation_id=? AND m.created_at>=cm.created_at
 		AND (m.expires_at IS NULL OR m.expires_at>?)
-		ORDER BY mp.created_at DESC`, userID, conversationID, now)
+		ORDER BY mp.created_at DESC`, userID, userID, conversationID, now)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "message lookup failed")
 		return
@@ -243,7 +256,7 @@ func (h *Handler) ListPinned(w http.ResponseWriter, r *http.Request) {
 		if rows.Scan(&item.ID, &item.ConversationID, &item.SenderID, &item.SenderUsername, &item.SenderAvatar, &item.EncryptedContent, &item.IV, &item.KeyEpoch,
 			&item.ReplyTo, &expiresAt, &pinnedBy, &pinnedAt, &item.CreatedAt, &item.UpdatedAt, &item.ClientMessageID, &item.SignatureConversationID, &item.SignatureSenderID, &item.SignatureReplyTo, &item.SignatureVersion,
 			&item.SigningKeyID, &item.Signature, &item.MessageKind, &item.Revision, &fileID, &fileName, &fileMIME, &fileIV, &fileSize, &previewSize,
-			&fileDigest, &previewDigest, &item.Status) == nil {
+			&fileDigest, &previewDigest, &item.Status, &item.IsReported) == nil {
 			if expiresAt.Valid {
 				item.ExpiresAt = &expiresAt.String
 			}
@@ -593,6 +606,76 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isPoll && !isEvent && h.Federation != nil {
 		h.Federation.QueueMessageDelete(conversationID, messageID, auth.UserID(r))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
+	messageID, err := httpx.PathID(r, "id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var input struct {
+		Reason string `json:"reason"`
+	}
+	if !httpx.Decode(w, r, &input) {
+		return
+	}
+	reason := strings.TrimSpace(input.Reason)
+	if _, valid := validMessageReportReasons[reason]; !valid {
+		httpx.Error(w, http.StatusBadRequest, "invalid message report reason")
+		return
+	}
+	reporterID := auth.UserID(r)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	var senderID int64
+	if err := h.DB.QueryRow(`SELECT m.sender_id FROM messages m
+		JOIN conversation_members cm ON cm.conversation_id=m.conversation_id
+			AND cm.user_id=? AND cm.role<>'pending'
+		WHERE m.id=? AND m.created_at>=cm.created_at AND (m.expires_at IS NULL OR m.expires_at>?)`,
+		reporterID, messageID, now).Scan(&senderID); err != nil {
+		httpx.Error(w, http.StatusNotFound, "message not found")
+		return
+	}
+	if senderID == reporterID {
+		httpx.Error(w, http.StatusBadRequest, "cannot report own message")
+		return
+	}
+	result, err := h.DB.Exec(`UPDATE message_reports SET reason=?,created_at=? WHERE message_id=? AND reporter_id=?`,
+		reason, now, messageID, reporterID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "message report failed")
+		return
+	}
+	status := http.StatusOK
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		if _, err := h.DB.Exec(`INSERT INTO message_reports(message_id,reporter_id,reason,created_at) VALUES(?,?,?,?)`,
+			messageID, reporterID, reason, now); err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "message report failed")
+			return
+		}
+		status = http.StatusCreated
+	}
+	httpx.JSON(w, status, map[string]any{"ok": true, "reason": reason})
+}
+
+func (h *Handler) Unreport(w http.ResponseWriter, r *http.Request) {
+	messageID, err := httpx.PathID(r, "id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := h.DB.Exec(`DELETE FROM message_reports WHERE message_id=? AND reporter_id=?`, messageID, auth.UserID(r))
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "message report removal failed")
+		return
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		httpx.Error(w, http.StatusNotFound, "message report not found")
+		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }

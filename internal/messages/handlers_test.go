@@ -921,6 +921,101 @@ func TestRemovedConversationMemberCannotMutateOldMessages(t *testing.T) {
 	}
 }
 
+func TestReportMessageRequiresParticipantAndControlledReason(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	author := registerMessageUserNamed(t, authHandler, "report_author", "Report Author")
+	reporter := registerMessageUserNamed(t, authHandler, "report_member", "Report Member")
+	outsider := registerMessageUserNamed(t, authHandler, "report_outsider", "Report Outsider")
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	conversation, err := db.Exec(`INSERT INTO conversations(type,created_by,created_at) VALUES('private',1,?)`, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationID, _ := conversation.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
+		VALUES(?,1,'owner-key','owner',?),(?,2,'member-key','member',?)`, conversationID, now, conversationID, now); err != nil {
+		t.Fatal(err)
+	}
+	messageResult, err := db.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,created_at)
+		VALUES(?,1,'encrypted-content','message-iv',?)`, conversationID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messageID, _ := messageResult.LastInsertId()
+	handler := &Handler{DB: db}
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/conversations/{id}/messages", authHandler.Middleware(http.HandlerFunc(handler.List)))
+	mux.Handle("POST /api/messages/{id}/report", authHandler.Middleware(http.HandlerFunc(handler.Report)))
+	mux.Handle("DELETE /api/messages/{id}/report", authHandler.Middleware(http.HandlerFunc(handler.Unreport)))
+	report := func(cookie *http.Cookie, reason string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/api/messages/"+formatMessageID(messageID)+"/report",
+			bytes.NewBufferString(`{"reason":"`+reason+`"}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.AddCookie(cookie)
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		return response
+	}
+	if response := report(reporter, "free-form accusation"); response.Code != http.StatusBadRequest {
+		t.Fatalf("free-form reason status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := report(author, "harassment"); response.Code != http.StatusBadRequest {
+		t.Fatalf("own message report status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := report(outsider, "harassment"); response.Code != http.StatusNotFound {
+		t.Fatalf("outsider report status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := report(reporter, "harassment"); response.Code != http.StatusCreated {
+		t.Fatalf("first report status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := report(reporter, "hate"); response.Code != http.StatusOK {
+		t.Fatalf("updated report status=%d body=%s", response.Code, response.Body.String())
+	}
+	var count int
+	var reason string
+	if err := db.QueryRow(`SELECT COUNT(*),MAX(reason) FROM message_reports WHERE message_id=? AND reporter_id=2`, messageID).Scan(&count, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || reason != "hate" {
+		t.Fatalf("stored report count=%d reason=%q", count, reason)
+	}
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/conversations/"+formatMessageID(conversationID)+"/messages", nil)
+	listRequest.AddCookie(reporter)
+	listResponse := httptest.NewRecorder()
+	mux.ServeHTTP(listResponse, listRequest)
+	if listResponse.Code != http.StatusOK {
+		t.Fatalf("reported message list status=%d body=%s", listResponse.Code, listResponse.Body.String())
+	}
+	var listed []Message
+	if err := json.Unmarshal(listResponse.Body.Bytes(), &listed); err != nil || len(listed) != 1 || !listed[0].IsReported {
+		t.Fatalf("personal report state missing: messages=%+v err=%v", listed, err)
+	}
+	unreport := func(cookie *http.Cookie) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodDelete, "/api/messages/"+formatMessageID(messageID)+"/report", nil)
+		request.AddCookie(cookie)
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		return response
+	}
+	if response := unreport(outsider); response.Code != http.StatusNotFound {
+		t.Fatalf("outsider unreport status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := unreport(reporter); response.Code != http.StatusOK {
+		t.Fatalf("reporter unreport status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := unreport(reporter); response.Code != http.StatusNotFound {
+		t.Fatalf("duplicate unreport status=%d body=%s", response.Code, response.Body.String())
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM message_reports WHERE message_id=?`, messageID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("report was not removed: count=%d err=%v", count, err)
+	}
+}
+
 func registerMessageUserNamed(t *testing.T, handler *auth.Handler, username, displayName string) *http.Cookie {
 	t.Helper()
 	payload := map[string]string{

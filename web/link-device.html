@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="referrer" content="no-referrer">
+  <script src="/js/theme.js?v=macos-titlebar-v251"></script>
+  <title>Vibration · Validation d’un appareil</title>
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/css/style.css?v=qr-scanner-v296">
+</head>
+<body class="auth-page">
+  <main class="auth-card link-device-card">
+    <div class="brand large"><span>◈</span><div><strong>Vibration</strong><small>Validation sécurisée d’un appareil</small></div></div>
+    <h1>Autoriser ce nouvel appareil ?</h1>
+    <p id="link-device-introduction">Vérification de la demande en cours…</p>
+    <section id="link-device-summary" class="link-device-summary" hidden>
+      <strong id="link-device-name"></strong>
+      <small id="link-device-type"></small>
+      <small id="link-device-address"></small>
+      <small id="link-device-expiry"></small>
+    </section>
+    <p id="link-device-status" role="status"></p>
+    <div class="link-device-actions">
+      <button id="link-device-approve" type="button" hidden>Autoriser cet appareil</button>
+      <a id="link-device-return" class="button-link outline-link" href="/">Retourner à Vibration</a>
+    </div>
+  </main>
+  <script type="module" src="/js/link-device.js?v=ios-resume-v297"></script>
+</body>
+</html>

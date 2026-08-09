@@ -16,8 +16,8 @@ func TestOpenCreatesRequiredTables(t *testing.T) {
 	defer database.Close()
 
 	required := []string{
-		"users", "sessions", "contacts", "conversations", "conversation_members", "conversation_key_envelopes",
-		"messages", "message_events", "message_reactions", "message_pins", "poll_options", "poll_votes", "message_receipts", "files", "push_subscriptions", "admin_actions", "app_settings", "user_terms_acceptances", "calendar_feeds", "invitation_contacts", "carnet_entries",
+		"users", "trusted_devices", "sessions", "contacts", "conversations", "conversation_members", "conversation_key_envelopes",
+		"messages", "message_events", "message_reports", "message_reactions", "message_pins", "poll_options", "poll_votes", "message_receipts", "files", "push_subscriptions", "admin_actions", "app_settings", "user_terms_acceptances", "calendar_feeds", "invitation_contacts", "carnet_entries",
 		"federated_instances", "federation_replays", "federated_conversations", "federated_message_map", "federation_outbox",
 	}
 	for _, table := range required {
@@ -137,7 +137,7 @@ func TestMigratePromotesFirstExistingUser(t *testing.T) {
 	if federationKeyColumn != 1 {
 		t.Fatal("conversations.federation_key_id was not added")
 	}
-	for _, column := range []string{"is_remote", "remote_instance_id", "remote_username"} {
+	for _, column := range []string{"is_remote", "remote_instance_id", "remote_username", "is_discoverable", "discovery_code_hash", "discovery_code_created_at"} {
 		var count int
 		if err := database.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name=?`, column).Scan(&count); err != nil {
 			t.Fatal(err)
@@ -145,6 +145,71 @@ func TestMigratePromotesFirstExistingUser(t *testing.T) {
 		if count != 1 {
 			t.Fatalf("users.%s was not added", column)
 		}
+	}
+	var firstDiscoverable bool
+	if err := database.QueryRow(`SELECT is_discoverable FROM users WHERE username='first'`).Scan(&firstDiscoverable); err != nil {
+		t.Fatal(err)
+	}
+	if !firstDiscoverable {
+		t.Fatal("legacy user should remain discoverable")
+	}
+}
+
+func TestMigrateApprovesLegacySessionsAndAddsDeviceMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-sessions.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = legacy.Exec(`CREATE TABLE users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		username TEXT UNIQUE NOT NULL,
+		display_name TEXT NOT NULL,
+		password_hash TEXT NOT NULL,
+		public_key TEXT NOT NULL,
+		encrypted_private_key TEXT NOT NULL,
+		crypto_salt TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	);
+	CREATE TABLE sessions (
+		id TEXT PRIMARY KEY,
+		user_id INTEGER NOT NULL,
+		expires_at TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	);
+	INSERT INTO users(id,username,display_name,password_hash,public_key,encrypted_private_key,crypto_salt,created_at)
+	VALUES(1,'legacy_session','Legacy Session','hash','public','private','salt','2026-01-01T00:00:00Z');
+	INSERT INTO sessions(id,user_id,expires_at,created_at)
+	VALUES('legacy-session-secret',1,'2030-01-01T00:00:00Z','2026-01-02T00:00:00Z');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy.Close()
+
+	database, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	for _, column := range []string{"device_name", "device_type", "user_agent", "ip_address", "last_seen_at", "approved_at", "approval_token_hash", "approval_code_hash", "approval_expires_at", "trusted_device_id", "requested_device_key_id", "requested_device_public_key", "device_challenge_hash", "device_challenge_expires_at"} {
+		var count int
+		if err := database.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name=?`, column).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("sessions.%s was not added", column)
+		}
+	}
+	var trustedDeviceTable int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='trusted_devices'`).Scan(&trustedDeviceTable); err != nil || trustedDeviceTable != 1 {
+		t.Fatalf("trusted_devices table count=%d err=%v", trustedDeviceTable, err)
+	}
+	var deviceName, lastSeenAt, approvedAt string
+	if err := database.QueryRow(`SELECT device_name,last_seen_at,approved_at FROM sessions WHERE id='legacy-session-secret'`).Scan(&deviceName, &lastSeenAt, &approvedAt); err != nil {
+		t.Fatal(err)
+	}
+	if deviceName != "Appareil existant" || lastSeenAt != "2026-01-02T00:00:00Z" || approvedAt != "2026-01-02T00:00:00Z" {
+		t.Fatalf("unexpected legacy session metadata name=%q last_seen=%q approved=%q", deviceName, lastSeenAt, approvedAt)
 	}
 }
 

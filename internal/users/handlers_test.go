@@ -32,6 +32,7 @@ func TestUpdateProfileAndPassword(t *testing.T) {
 		"description":"Disponible pour discuter de nouveaux projets.",
 		"current_password":"Password123!",
 		"new_password":"NewPassword456!",
+		"is_discoverable":false,
 		"avatar":"data:image/png;base64,aGVsbG8="
 	}`)
 	update := httptest.NewRequest(http.MethodPut, "/api/me", updateBody)
@@ -42,9 +43,19 @@ func TestUpdateProfileAndPassword(t *testing.T) {
 	if updateResponse.Code != http.StatusOK {
 		t.Fatalf("update status=%d body=%s", updateResponse.Code, updateResponse.Body.String())
 	}
+	var updatedProfile struct {
+		IsDiscoverable bool `json:"is_discoverable"`
+	}
+	if err := json.Unmarshal(updateResponse.Body.Bytes(), &updatedProfile); err != nil {
+		t.Fatal(err)
+	}
+	if updatedProfile.IsDiscoverable {
+		t.Fatal("profile response should report invisible state")
+	}
 
 	var displayName, description, avatar string
-	if err := db.QueryRow(`SELECT display_name,description,avatar FROM users WHERE username='renamed_user'`).Scan(&displayName, &description, &avatar); err != nil {
+	var discoverable bool
+	if err := db.QueryRow(`SELECT display_name,description,avatar,is_discoverable FROM users WHERE username='renamed_user'`).Scan(&displayName, &description, &avatar, &discoverable); err != nil {
 		t.Fatal(err)
 	}
 	if displayName != "Nouveau nom" {
@@ -56,14 +67,26 @@ func TestUpdateProfileAndPassword(t *testing.T) {
 	if description != "Disponible pour discuter de nouveaux projets." {
 		t.Fatalf("description=%q", description)
 	}
+	if discoverable {
+		t.Fatal("profile should be invisible")
+	}
 
 	loginBody := bytes.NewBufferString(`{"username":"renamed_user","password":"NewPassword456!"}`)
 	login := httptest.NewRequest(http.MethodPost, "/api/login", loginBody)
 	login.Header.Set("Content-Type", "application/json")
 	loginResponse := httptest.NewRecorder()
 	authHandler.Login(loginResponse, login)
-	if loginResponse.Code != http.StatusOK {
+	if loginResponse.Code != http.StatusAccepted {
 		t.Fatalf("new password login status=%d body=%s", loginResponse.Code, loginResponse.Body.String())
+	}
+	var loginResult struct {
+		ApprovalRequired bool `json:"approval_required"`
+	}
+	if err := json.Unmarshal(loginResponse.Body.Bytes(), &loginResult); err != nil {
+		t.Fatal(err)
+	}
+	if !loginResult.ApprovalRequired {
+		t.Fatal("a second device login with the new password should await session approval")
 	}
 }
 

@@ -1,17 +1,22 @@
-import { api, getInstanceURL, hasStoredInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js";
+import { api, clearSessionToken, getInstanceURL, hasStoredInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js";
 import {
   assessNewPassphrase,
   createIdentity,
   generateStrongPassphrase,
   NEW_PASSPHRASE_POLICY_MESSAGE,
 } from "./crypto.js";
-import { recordSuccessfulLogin } from "./device-vault.js";
+import {
+  forgetTrustedDeviceCredential,
+  recordSuccessfulLogin,
+  signTrustedDeviceChallenge,
+  trustedDeviceCredential,
+} from "./device-vault.js?v=qr-scanner-v296";
 import {
   registerServiceWorker,
   requestNotificationPermissionOnSignIn,
 } from "./notifications.js?v=carnet-v221";
-import { frenchErrorMessage } from "./ui.js";
-import { t, translateMultiline } from "./i18n.js";
+import { frenchErrorMessage } from "./ui.js?v=ios-resume-v297";
+import { t, translateMultiline } from "./i18n.js?v=ios-resume-v297";
 
 const loginForm = document.querySelector("#login-form");
 const instanceForm = ensureInstanceForm();
@@ -32,6 +37,120 @@ let registrationSettingsRequest = 0;
 let termsAcceptancePromise = null;
 const SHARE_RETURN_STORAGE_KEY = "vibration.file_share_return";
 const invitationLinkCode = new URLSearchParams(location.search).get("invitation")?.trim().toLowerCase() || "";
+const PENDING_SESSION_KEY = "vibration.pending_session_approval";
+let sessionApprovalPoll = 0;
+
+function currentDeviceMetadata() {
+  const userAgent = navigator.userAgent || "";
+  const platform = navigator.userAgentData?.platform || navigator.platform || "Appareil";
+  const browser = /Edg\//.test(userAgent) ? "Edge"
+    : /Firefox\//.test(userAgent) ? "Firefox"
+      : /CriOS\//.test(userAgent) ? "Chrome"
+        : /Chrome\//.test(userAgent) ? "Chrome"
+          : /Safari\//.test(userAgent) ? "Safari"
+            : "Vibration";
+  const mobile = /Android|iPhone|iPod|Mobile/i.test(userAgent);
+  const tablet = /iPad|Tablet/i.test(userAgent);
+  return {
+    device_name: `${browser} · ${platform}`.slice(0, 120),
+    device_type: isDesktopClient() ? "desktop" : tablet ? "tablet" : mobile ? "mobile" : "browser",
+  };
+}
+
+async function finishSuccessfulLogin(notificationPermission = Promise.resolve("default")) {
+  if (!await ensureTermsAccepted()) {
+    errorRegion.textContent = t("Vous devez accepter les conditions d’utilisation pour accéder au service.");
+    return false;
+  }
+  const user = await api("/api/me");
+  let verificationRequired = true;
+  try {
+    verificationRequired = await recordSuccessfulLogin(user.id);
+  } catch (error) {
+    // A browser may temporarily deny its local vault (private browsing,
+    // storage pressure, WebKit restart). That must never invalidate a server
+    // session; requiring the phrase again is the safe fallback.
+    console.warn("Compteur local de vérification indisponible", error);
+  }
+  await notificationPermission;
+  sessionStorage.removeItem("crypto_phrase");
+  sessionStorage.removeItem("remember_encryption_key");
+  if (verificationRequired) sessionStorage.setItem("force_identity_verification", "true");
+  else sessionStorage.removeItem("force_identity_verification");
+  location.href = postAuthenticationDestination();
+  return true;
+}
+
+async function optionalTrustedDeviceCredential() {
+  try {
+    return await trustedDeviceCredential(getInstanceURL());
+  } catch (error) {
+    // Without a usable local signing key the server treats this browser as a
+    // new device and keeps the QR/manual approval requirement.
+    console.warn("Clé locale d’appareil indisponible", error);
+    return {};
+  }
+}
+
+function stopSessionApprovalPoll() {
+  if (sessionApprovalPoll) window.clearTimeout(sessionApprovalPoll);
+  sessionApprovalPoll = 0;
+}
+
+async function showSessionApproval(payload, notificationPermission = Promise.resolve("default")) {
+  const dialog = document.querySelector("#session-approval-dialog");
+  const status = document.querySelector("#session-approval-status");
+  const qr = document.querySelector("#session-approval-qr");
+  document.querySelector("#session-approval-code").textContent = payload.approval_code || "—";
+  document.querySelector("#session-approval-device").textContent = currentDeviceMetadata().device_name;
+  qr.hidden = !payload.qr_code;
+  if (payload.qr_code) qr.src = payload.qr_code;
+  status.textContent = t("En attente de l’approbation…");
+  dialog.oncancel = (event) => event.preventDefault();
+  if (!dialog.open) dialog.showModal();
+  sessionStorage.setItem(PENDING_SESSION_KEY, JSON.stringify(payload));
+  stopSessionApprovalPoll();
+  const poll = async () => {
+    try {
+      const result = await api("/api/session/status");
+      if (result.state === "approved") {
+        stopSessionApprovalPoll();
+        sessionStorage.removeItem(PENDING_SESSION_KEY);
+        dialog.close();
+        await finishSuccessfulLogin(notificationPermission);
+        return;
+      }
+      if (result.state === "expired") {
+        stopSessionApprovalPoll();
+        sessionStorage.removeItem(PENDING_SESSION_KEY);
+        clearSessionToken();
+        status.textContent = t("La demande a expiré. Recommencez la connexion.");
+        loginForm.querySelector('button[type="submit"]').disabled = false;
+        return;
+      }
+    } catch (error) {
+      if (error.status === 401) {
+        stopSessionApprovalPoll();
+        sessionStorage.removeItem(PENDING_SESSION_KEY);
+        clearSessionToken();
+        status.textContent = t("La demande n’est plus disponible. Recommencez la connexion.");
+        loginForm.querySelector('button[type="submit"]').disabled = false;
+        return;
+      }
+    }
+    sessionApprovalPoll = window.setTimeout(poll, 1800);
+  };
+  sessionApprovalPoll = window.setTimeout(poll, 800);
+}
+
+document.querySelector("#session-approval-cancel").addEventListener("click", async () => {
+  stopSessionApprovalPoll();
+  try { await api("/api/session/pending", { method: "DELETE" }); } catch {}
+  clearSessionToken();
+  sessionStorage.removeItem(PENDING_SESSION_KEY);
+  document.querySelector("#session-approval-dialog").close();
+  loginForm.querySelector('button[type="submit"]').disabled = false;
+});
 
 function updatePassphraseStrength() {
   const assessment = assessNewPassphrase(registerPhraseInput.value);
@@ -283,31 +402,34 @@ loginForm.addEventListener("submit", async (event) => {
     } else if (isDesktopClient() && !hasStoredInstanceURL()) {
       throw new Error("URL d’instance requise");
     }
-    await api("/api/login", {
+    const deviceCredential = await optionalTrustedDeviceCredential();
+    const result = await api("/api/login", {
       method: "POST",
       body: {
         username: data.username,
         password: data.password,
         remember_me: loginForm.elements.remember_me.checked,
         desktop_client: isDesktopClient(),
+        ...currentDeviceMetadata(),
+        ...deviceCredential,
       },
     });
-    if (!await ensureTermsAccepted()) {
-      button.disabled = false;
-      errorRegion.textContent = t("Vous devez accepter les conditions d’utilisation pour accéder au service.");
+    if (result.device_proof_required && result.device_challenge) {
+      try {
+        const proof = await signTrustedDeviceChallenge(getInstanceURL(), result.device_challenge);
+        await api("/api/session/device-proof", { method: "POST", body: proof });
+        if (!await finishSuccessfulLogin(notificationPermission)) button.disabled = false;
+        return;
+      } catch {
+        // The QR/manual approval remains available if the local key disappeared
+        // between the password request and the proof.
+      }
+    }
+    if (result.approval_required) {
+      await showSessionApproval(result, notificationPermission);
       return;
     }
-    const user = await api("/api/me");
-    const verificationRequired = await recordSuccessfulLogin(user.id);
-    await notificationPermission;
-    sessionStorage.removeItem("crypto_phrase");
-    sessionStorage.removeItem("remember_encryption_key");
-    if (verificationRequired) {
-      sessionStorage.setItem("force_identity_verification", "true");
-    } else {
-      sessionStorage.removeItem("force_identity_verification");
-    }
-    location.href = postAuthenticationDestination();
+    if (!await finishSuccessfulLogin(notificationPermission)) button.disabled = false;
   } catch (error) {
     button.disabled = false;
     if (isInstanceConnectionError(error)) {
@@ -358,6 +480,7 @@ recoveryForm.addEventListener("submit", async (event) => {
         new_password: data.new_password,
       },
     });
+    await forgetTrustedDeviceCredential(getInstanceURL()).catch(() => {});
     await showRecoveryCode(result.recovery_code);
     loginForm.elements.username.value = data.username.toLowerCase();
     loginForm.elements.password.value = "";
@@ -402,6 +525,7 @@ registerForm.addEventListener("submit", async (event) => {
   try {
     setInstanceURL(data.instance_url);
     const identity = await createIdentity(data.phrase);
+    const deviceCredential = await trustedDeviceCredential(getInstanceURL());
     const result = await api("/api/register", {
       method: "POST",
       body: {
@@ -411,6 +535,8 @@ registerForm.addEventListener("submit", async (event) => {
         invitation_link: Boolean(invitationLinkCode),
         password: data.password,
         desktop_client: isDesktopClient(),
+        ...currentDeviceMetadata(),
+        ...deviceCredential,
         ...identity,
       },
     });
@@ -437,6 +563,11 @@ registerForm.addEventListener("submit", async (event) => {
 registerServiceWorker().catch(() => {});
 syncLoginInstanceField();
 if (new URLSearchParams(location.search).get("mode") === "register") showTab(true);
-api("/api/me").then(async () => {
-  if (await ensureTermsAccepted()) location.href = postAuthenticationDestination();
-}).catch(() => {});
+const storedPendingSession = sessionStorage.getItem(PENDING_SESSION_KEY);
+if (storedPendingSession) {
+  try { showSessionApproval(JSON.parse(storedPendingSession)).catch(() => {}); } catch { sessionStorage.removeItem(PENDING_SESSION_KEY); }
+} else {
+  api("/api/me").then(async () => {
+    if (await ensureTermsAccepted()) location.href = postAuthenticationDestination();
+  }).catch(() => {});
+}

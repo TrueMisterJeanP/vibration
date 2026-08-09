@@ -124,6 +124,21 @@ func Verify(publicKey string, input Input, payload Payload) error {
 	return nil
 }
 
+// VerifyRaw verifies a WebCrypto ECDSA P-256 signature encoded as r||s.
+func VerifyRaw(publicKey string, payload, signature []byte) error {
+	_, _, key, err := CanonicalPublicKey(publicKey)
+	if err != nil || len(signature) != 64 {
+		return errors.New("invalid signature")
+	}
+	digest := sha256.Sum256(payload)
+	r := new(big.Int).SetBytes(signature[:32])
+	s := new(big.Int).SetBytes(signature[32:])
+	if !ecdsa.Verify(key, digest[:], r, s) {
+		return errors.New("invalid signature")
+	}
+	return nil
+}
+
 func SHA256(data []byte) string {
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:])

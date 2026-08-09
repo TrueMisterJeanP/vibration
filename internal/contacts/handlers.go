@@ -2,12 +2,14 @@ package contacts
 
 import (
 	"database/sql"
+	"errors"
 	"net/http"
 	"time"
 
 	"chat-pwa-go/internal/auth"
 	"chat-pwa-go/internal/carnet"
 	"chat-pwa-go/internal/httpx"
+	"chat-pwa-go/internal/userdiscovery"
 )
 
 type Broadcaster interface {
@@ -220,6 +222,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		UserID         int64   `json:"user_id"`
 		EncryptedLabel *string `json:"encrypted_label"`
+		DiscoveryCode  string  `json:"discovery_code"`
 	}
 	if !httpx.Decode(w, r, &input) {
 		return
@@ -229,13 +232,21 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid contact")
 		return
 	}
-	var exists int
-	if h.DB.QueryRow(`SELECT COUNT(*) FROM users WHERE id=? AND is_remote=0`, input.UserID).Scan(&exists) != nil || exists != 1 {
+	allowed, err := userdiscovery.CanInitiate(h.DB, ownerID, input.UserID, input.DiscoveryCode)
+	if errors.Is(err, sql.ErrNoRows) {
+		httpx.Error(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "user lookup failed")
+		return
+	}
+	if !allowed {
 		httpx.Error(w, http.StatusNotFound, "user not found")
 		return
 	}
 	var incomingID int64
-	err := h.DB.QueryRow(`SELECT id FROM contacts WHERE owner_id=? AND contact_user_id=? AND status='pending'`, input.UserID, ownerID).Scan(&incomingID)
+	err = h.DB.QueryRow(`SELECT id FROM contacts WHERE owner_id=? AND contact_user_id=? AND status='pending'`, input.UserID, ownerID).Scan(&incomingID)
 	if err == nil {
 		conversationID, ok := h.accept(incomingID, ownerID)
 		if !ok {

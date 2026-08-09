@@ -67,6 +67,7 @@ func (h *Handler) TermsMiddleware(next http.Handler) http.Handler {
 	allowed := map[string]bool{
 		"/api/edition": true, "/api/registration": true, "/api/register": true,
 		"/api/login": true, "/api/password/reset": true, "/api/terms": true,
+		"/api/session/status": true, "/api/session/pending": true, "/api/session/device-proof": true,
 		"/api/terms/status": true, "/api/terms/accept": true, "/api/me": true,
 		"/api/logout": true,
 	}

@@ -21,6 +21,9 @@ var migrations = []string{
 		signing_public_key TEXT NOT NULL DEFAULT '',
 		signing_key_id TEXT NOT NULL DEFAULT '',
 		avatar TEXT,
+		is_discoverable INTEGER NOT NULL DEFAULT 1,
+		discovery_code_hash TEXT,
+		discovery_code_created_at TEXT,
 		is_remote INTEGER NOT NULL DEFAULT 0,
 		remote_instance_id INTEGER REFERENCES federated_instances(id),
 		remote_username TEXT,
@@ -39,11 +42,36 @@ var migrations = []string{
 		revoked_at TEXT,
 		PRIMARY KEY(user_id, key_id)
 	)`,
+	`CREATE TABLE IF NOT EXISTS trusted_devices (
+		id TEXT PRIMARY KEY,
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		key_id TEXT NOT NULL,
+		public_key TEXT NOT NULL,
+		device_name TEXT NOT NULL,
+		device_type TEXT NOT NULL DEFAULT 'browser',
+		created_at TEXT NOT NULL,
+		last_used_at TEXT NOT NULL,
+		UNIQUE(user_id, key_id)
+	)`,
 	`CREATE TABLE IF NOT EXISTS sessions (
 		id TEXT PRIMARY KEY,
 		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		expires_at TEXT NOT NULL,
-		created_at TEXT NOT NULL
+		created_at TEXT NOT NULL,
+		device_name TEXT NOT NULL DEFAULT 'Appareil existant',
+		device_type TEXT NOT NULL DEFAULT 'browser',
+		user_agent TEXT NOT NULL DEFAULT '',
+		ip_address TEXT NOT NULL DEFAULT '',
+		last_seen_at TEXT NOT NULL DEFAULT '',
+		approved_at TEXT,
+		approval_token_hash TEXT,
+		approval_code_hash TEXT,
+		approval_expires_at TEXT,
+		trusted_device_id TEXT REFERENCES trusted_devices(id) ON DELETE SET NULL,
+		requested_device_key_id TEXT,
+		requested_device_public_key TEXT,
+		device_challenge_hash TEXT,
+		device_challenge_expires_at TEXT
 	)`,
 	`CREATE TABLE IF NOT EXISTS user_terms_acceptances (
 		user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -139,6 +167,14 @@ var migrations = []string{
 		message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
 		starts_at TEXT NOT NULL,
 		ends_at TEXT NOT NULL
+	)`,
+	`CREATE TABLE IF NOT EXISTS message_reports (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+		reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		reason TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		UNIQUE(message_id, reporter_id)
 	)`,
 	`CREATE TABLE IF NOT EXISTS calendar_feeds (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -340,6 +376,9 @@ func Migrate(database *sql.DB) error {
 		{"remote_username", "TEXT"},
 		{"signing_public_key", "TEXT NOT NULL DEFAULT ''"},
 		{"signing_key_id", "TEXT NOT NULL DEFAULT ''"},
+		{"is_discoverable", "INTEGER NOT NULL DEFAULT 1"},
+		{"discovery_code_hash", "TEXT"},
+		{"discovery_code_created_at", "TEXT"},
 	} {
 		exists, err := columnExists(tx, "users", column.name)
 		if err != nil {
@@ -350,6 +389,41 @@ func Migrate(database *sql.DB) error {
 				return fmt.Errorf("add users.%s: %w", column.name, err)
 			}
 		}
+	}
+	for _, column := range []struct {
+		name       string
+		definition string
+	}{
+		{"device_name", "TEXT NOT NULL DEFAULT 'Appareil existant'"},
+		{"device_type", "TEXT NOT NULL DEFAULT 'browser'"},
+		{"user_agent", "TEXT NOT NULL DEFAULT ''"},
+		{"ip_address", "TEXT NOT NULL DEFAULT ''"},
+		{"last_seen_at", "TEXT NOT NULL DEFAULT ''"},
+		{"approved_at", "TEXT"},
+		{"approval_token_hash", "TEXT"},
+		{"approval_code_hash", "TEXT"},
+		{"approval_expires_at", "TEXT"},
+		{"trusted_device_id", "TEXT REFERENCES trusted_devices(id) ON DELETE SET NULL"},
+		{"requested_device_key_id", "TEXT"},
+		{"requested_device_public_key", "TEXT"},
+		{"device_challenge_hash", "TEXT"},
+		{"device_challenge_expires_at", "TEXT"},
+	} {
+		exists, err := columnExists(tx, "sessions", column.name)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if _, err := tx.Exec(`ALTER TABLE sessions ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
+				return fmt.Errorf("add sessions.%s: %w", column.name, err)
+			}
+		}
+	}
+	if _, err := tx.Exec(`UPDATE sessions SET last_seen_at=created_at WHERE last_seen_at='' OR last_seen_at IS NULL`); err != nil {
+		return fmt.Errorf("backfill session activity: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE sessions SET approved_at=created_at WHERE approved_at IS NULL AND approval_token_hash IS NULL`); err != nil {
+		return fmt.Errorf("approve legacy sessions: %w", err)
 	}
 	for _, column := range []struct {
 		name       string
@@ -522,6 +596,14 @@ func Migrate(database *sql.DB) error {
 			starts_at TEXT NOT NULL,
 			ends_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS message_reports (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+			reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			reason TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			UNIQUE(message_id, reporter_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS poll_options (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -546,10 +628,18 @@ func Migrate(database *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_message_reactions_message ON message_reactions(message_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_message_pins_user ON message_pins(user_id, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_message_events_dates ON message_events(starts_at, ends_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_message_reports_created ON message_reports(created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_message_reports_reporter ON message_reports(reporter_id, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_poll_options_message ON poll_options(message_id, position)`,
 		`CREATE INDEX IF NOT EXISTS idx_poll_votes_message ON poll_votes(message_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_members_favorites ON conversation_members(user_id, favorite_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_key_envelopes_user ON conversation_key_envelopes(user_id, conversation_id, key_epoch)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_discovery_code ON users(discovery_code_hash)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_user_activity ON sessions(user_id, last_seen_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_approval_token ON sessions(approval_token_hash)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_approval_code ON sessions(user_id, approval_code_hash)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_trusted_device ON sessions(trusted_device_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_trusted_devices_user ON trusted_devices(user_id, last_used_at DESC)`,
 	} {
 		if _, err := tx.Exec(statement); err != nil {
 			return fmt.Errorf("create federation index: %w", err)

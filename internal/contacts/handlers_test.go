@@ -11,7 +11,57 @@ import (
 
 	"chat-pwa-go/internal/auth"
 	database "chat-pwa-go/internal/db"
+	"chat-pwa-go/internal/userdiscovery"
 )
+
+func TestInvisibleContactRejectsGuessedIDAndAcceptsPrivateCode(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	handler := &Handler{DB: db}
+	requester := registerContactUser(t, authHandler, "private_code_requester")
+	receiver := registerContactUser(t, authHandler, "private_code_receiver")
+	code, codeHash, err := userdiscovery.GenerateCode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE users SET is_discoverable=0,discovery_code_hash=? WHERE id=2`, codeHash); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/contacts", authHandler.Middleware(http.HandlerFunc(handler.Create)))
+	mux.Handle("POST /api/contacts/{id}/accept", authHandler.Middleware(http.HandlerFunc(handler.Accept)))
+	mux.Handle("GET /api/carnet", authHandler.Middleware(http.HandlerFunc(handler.CarnetList)))
+
+	guessed := contactRequest(t, mux, http.MethodPost, "/api/contacts", map[string]any{"user_id": 2}, requester)
+	if guessed.Code != http.StatusNotFound {
+		t.Fatalf("guessed hidden id status=%d body=%s", guessed.Code, guessed.Body.String())
+	}
+	wrong := contactRequest(t, mux, http.MethodPost, "/api/contacts", map[string]any{"user_id": 2, "discovery_code": code + "A"}, requester)
+	if wrong.Code != http.StatusNotFound {
+		t.Fatalf("wrong discovery code status=%d body=%s", wrong.Code, wrong.Body.String())
+	}
+	created := contactRequest(t, mux, http.MethodPost, "/api/contacts", map[string]any{"user_id": 2, "discovery_code": code}, requester)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("valid discovery code status=%d body=%s", created.Code, created.Body.String())
+	}
+	accepted := contactRequest(t, mux, http.MethodPost, "/api/contacts/1/accept", nil, receiver)
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("accept status=%d body=%s", accepted.Code, accepted.Body.String())
+	}
+	carnetResponse := contactRequest(t, mux, http.MethodGet, "/api/carnet", nil, requester)
+	var entries []CarnetEntry
+	if err := json.Unmarshal(carnetResponse.Body.Bytes(), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Username != "private_code_receiver" || !entries[0].HasPrivateConversation {
+		t.Fatalf("hidden contact not exposed after acceptance: %+v", entries)
+	}
+}
 
 func TestContactRequestMustBeAccepted(t *testing.T) {
 	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))

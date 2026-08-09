@@ -78,6 +78,71 @@ function loginCounterID(userID) {
   return `login-counter:${userID}`;
 }
 
+function trustedDeviceID(instanceURL) {
+  const url = new URL(instanceURL, location.origin);
+  url.hash = "";
+  url.search = "";
+  return `trusted-device:${url.toString().replace(/\/$/, "")}`;
+}
+
+function canonicalDevicePublicKey(jwk) {
+  return JSON.stringify({ kty: "EC", crv: "P-256", x: jwk.x, y: jw.y });
+}
+
+async function sha256Hex(value) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export async function trustedDeviceCredential(instanceURL) {
+  const id = trustedDeviceID(instanceURL);
+  let saved = await readRecord(id);
+  if (!saved?.privateKey || !saved?.publicKey || !saved?.keyID) {
+    const generated = await crypto.subtle.generateKey(
+      { name: "ECDSA", namedCurve: "P-256" },
+      true,
+      ["sign", "verify"],
+    );
+    const privateJWK = await crypto.subtle.exportKey("jwk", generated.privateKey);
+    const publicJWK = await crypto.subtle.exportKey("jwk", generated.publicKey);
+    const publicKey = canonicalDevicePublicKey(publicJWK);
+    const keyID = await sha256Hex(publicKey);
+    const privateKey = await crypto.subtle.importKey(
+      "jwk",
+      privateJWK,
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["sign"],
+    );
+    saved = { id, privateKey, publicKey, keyID, createdAt: new Date().toISOString() };
+    await writeRecord(saved);
+  }
+  return {
+    device_key_id: saved.keyID,
+    device_public_key: saved.publicKey,
+  };
+}
+
+export async function signTrustedDeviceChallenge(instanceURL, challenge) {
+  const id = trustedDeviceID(instanceURL);
+  const saved = await readRecord(id);
+  if (!saved?.privateKey || !saved?.keyID) throw new Error("Clé de l’appareil indisponible");
+  const signature = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    saved.privateKey,
+    new TextEncoder().encode(challenge),
+  );
+  return {
+    device_key_id: saved.keyID,
+    challenge,
+    signature: bytesToBase64(signature),
+  };
+}
+
+export async function forgetTrustedDeviceCredential(instanceURL) {
+  await deleteRecord(trustedDeviceID(instanceURL));
+}
+
 function nextVerificationThreshold() {
   const range = MAX_VERIFICATION_INTERVAL - MIN_VERIFICATION_INTERVAL + 1;
   const random = new Uint32Array(1);

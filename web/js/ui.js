@@ -1,4 +1,4 @@
-import { locale, localizeDocument, t } from "./i18n.js";
+import { locale, localizeDocument, t } from "./i18n.js?v=ios-resume-v297";
 
 localizeDocument();
 
@@ -104,7 +104,7 @@ export function materialFileIcon(kind = "file") {
 export function renderMessage(
   container, message, clear, mine, onFilePreview, onFileDownload, onMessageEdit, onMessageDelete,
   onMessageReply = () => {}, onMessageReact = () => {}, onMessagePin = () => {}, onReplyFilePreview = () => {},
-  onPollVote = () => {}, onFileShare = () => {},
+  onPollVote = () => {}, onFileShare = () => {}, onMessageReport = () => {},
 ) {
   if (!message.file && isCallHistoryText(clear)) {
     renderCallHistoryMessage(container, message, clear);
@@ -173,6 +173,18 @@ export function renderMessage(
   pinButton.setAttribute("aria-label", pinButton.title);
   pinButton.onclick = () => onMessagePin(message);
   quickActions.append(replyButton, reactButton, pinButton);
+  if (!mine) {
+    const reportButton = document.createElement("button");
+    reportButton.type = "button";
+    reportButton.className = "message-report-button";
+    reportButton.classList.toggle("is-reported", message.is_reported === true);
+    reportButton.textContent = message.is_reported ? "⚑" : "⚐";
+    reportButton.title = t(message.is_reported ? "Retirer le signalement" : "Signaler le message");
+    reportButton.setAttribute("aria-label", reportButton.title);
+    reportButton.setAttribute("aria-pressed", String(message.is_reported === true));
+    reportButton.onclick = () => onMessageReport(message, reportButton);
+    quickActions.append(reportButton);
+  }
   authorRow.append(quickActions);
   if (message.file) {
     const download = document.createElement("button");

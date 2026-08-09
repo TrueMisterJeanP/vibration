@@ -29,10 +29,18 @@ func TestTermsMustBeAcceptedAndAreVersioned(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/terms/status", handler.Middleware(http.HandlerFunc(handler.TermsStatus)))
 	mux.Handle("POST /api/terms/accept", handler.Middleware(http.HandlerFunc(handler.AcceptTerms)))
+	mux.HandleFunc("POST /api/session/device-proof", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.Handle("GET /api/protected", handler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})))
 	server := handler.TermsMiddleware(mux)
+	proof := httptest.NewRequest(http.MethodPost, "/api/session/device-proof", nil)
+	proof.AddCookie(cookie)
+	proofResponse := httptest.NewRecorder()
+	server.ServeHTTP(proofResponse, proof)
+	if proofResponse.Code != http.StatusNoContent {
+		t.Fatalf("device proof should remain reachable before terms acceptance: status=%d body=%s", proofResponse.Code, proofResponse.Body.String())
+	}
 
 	protected := httptest.NewRequest(http.MethodGet, "/api/protected", nil)
 	protected.AddCookie(cookie)

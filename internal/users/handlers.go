@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"chat-pwa-go/internal/auth"
 	"chat-pwa-go/internal/httpx"
+	"chat-pwa-go/internal/userdiscovery"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -42,6 +44,7 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		CurrentPassword string  `json:"current_password"`
 		NewPassword     string  `json:"new_password"`
 		Avatar          *string `json:"avatar"`
+		IsDiscoverable  *bool   `json:"is_discoverable"`
 	}
 	if !httpx.Decode(w, r, &input) {
 		return
@@ -72,8 +75,9 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 
 	userID := auth.UserID(r)
 	var currentUsername, currentHash, currentDisplayName string
-	if err := h.DB.QueryRow(`SELECT username,password_hash,display_name FROM users WHERE id=?`, userID).
-		Scan(&currentUsername, &currentHash, &currentDisplayName); err != nil {
+	var currentDiscoverable bool
+	if err := h.DB.QueryRow(`SELECT username,password_hash,display_name,is_discoverable FROM users WHERE id=?`, userID).
+		Scan(&currentUsername, &currentHash, &currentDisplayName, &currentDiscoverable); err != nil {
 		httpx.Error(w, http.StatusNotFound, "user not found")
 		return
 	}
@@ -102,20 +106,36 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		currentHash = string(newHash)
 	}
-	if _, err := h.DB.Exec(`UPDATE users SET username=?,display_name=?,description=?,password_hash=?,avatar=? WHERE id=?`,
-		input.Username, input.DisplayName, input.Description, currentHash, input.Avatar, userID); err != nil {
+	nextDiscoverable := currentDiscoverable
+	if input.IsDiscoverable != nil {
+		nextDiscoverable = *input.IsDiscoverable
+	}
+	if _, err := h.DB.Exec(`UPDATE users SET username=?,display_name=?,description=?,password_hash=?,avatar=?,is_discoverable=? WHERE id=?`,
+		input.Username, input.DisplayName, input.Description, currentHash, input.Avatar, nextDiscoverable, userID); err != nil {
 		httpx.Error(w, http.StatusConflict, "username already exists")
 		return
 	}
 
 	var user User
-	if err := h.DB.QueryRow(`SELECT id,username,display_name,description,public_key,signing_public_key,signing_key_id,avatar FROM users WHERE id=?`, userID).
-		Scan(&user.ID, &user.Username, &user.DisplayName, &user.Description, &user.PublicKey, &user.SigningPublicKey, &user.SigningKeyID, &user.Avatar); err != nil {
+	var isDiscoverable bool
+	var discoveryCodeHash sql.NullString
+	if err := h.DB.QueryRow(`SELECT id,username,display_name,description,public_key,signing_public_key,signing_key_id,avatar,
+		is_discoverable,discovery_code_hash FROM users WHERE id=?`, userID).
+		Scan(&user.ID, &user.Username, &user.DisplayName, &user.Description, &user.PublicKey, &user.SigningPublicKey, &user.SigningKeyID,
+			&user.Avatar, &isDiscoverable, &discoveryCodeHash); err != nil {
 		httpx.Error(w, http.StatusNotFound, "user not found")
 		return
 	}
 	h.notifyProfileUpdate(userID)
-	httpx.JSON(w, http.StatusOK, user)
+	httpx.JSON(w, http.StatusOK, struct {
+		User
+		IsDiscoverable   bool `json:"is_discoverable"`
+		HasDiscoveryCode bool `json:"has_discovery_code"`
+	}{
+		User:             user,
+		IsDiscoverable:   isDiscoverable,
+		HasDiscoveryCode: discoveryCodeHash.Valid && discoveryCodeHash.String != "",
+	})
 }
 
 func (h *Handler) notifyProfileUpdate(userID int64) {
@@ -141,17 +161,87 @@ func (h *Handler) notifyProfileUpdate(userID int64) {
 }
 
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
-	query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	role := ""
+	if r.Method == http.MethodPost {
+		var input struct {
+			Query string `json:"query"`
+			Role  string `json:"role"`
+		}
+		if !httpx.Decode(w, r, &input) {
+			return
+		}
+		query = strings.TrimSpace(input.Query)
+		role = strings.ToLower(strings.TrimSpace(input.Role))
+	}
+	if role == "" {
+		switch strings.ToLower(strings.TrimSpace(query)) {
+		case "administrateur", "administrateurs":
+			role = "administrator"
+		case "gestionnaire", "gestionnaires":
+			role = "manager"
+		}
+	}
+	requesterID := auth.UserID(r)
+	if role != "" {
+		roleColumn := ""
+		switch role {
+		case "administrator":
+			roleColumn = "u.is_admin=1"
+		case "manager":
+			roleColumn = "u.is_manager=1"
+		default:
+			httpx.Error(w, http.StatusBadRequest, "invalid directory role")
+			return
+		}
+		rows, err := h.DB.Query(`SELECT u.id,u.username,u.display_name,u.description,u.public_key,u.signing_public_key,u.signing_key_id,u.avatar FROM users u
+			WHERE u.is_remote=0 AND u.is_banned=0 AND `+roleColumn+`
+			AND (u.id=? OR u.is_discoverable=1
+				OR EXISTS(SELECT 1 FROM contacts c WHERE (c.owner_id=? AND c.contact_user_id=u.id) OR (c.owner_id=u.id AND c.contact_user_id=?))
+				OR EXISTS(SELECT 1 FROM conversation_members mine JOIN conversation_members peer ON peer.conversation_id=mine.conversation_id
+					WHERE mine.user_id=? AND mine.role<>'pending' AND peer.user_id=u.id AND peer.role<>'pending'))
+			ORDER BY u.username`, requesterID, requesterID, requesterID, requesterID)
+		if err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "search failed")
+			return
+		}
+		h.writeSearchResults(w, rows)
+		return
+	}
+	if codeHash := userdiscovery.HashCode(query); codeHash != "" {
+		if r.Method != http.MethodPost {
+			httpx.JSON(w, http.StatusOK, []User{})
+			return
+		}
+		rows, err := h.DB.Query(`SELECT id,username,display_name,description,public_key,signing_public_key,signing_key_id,avatar FROM users
+			WHERE id<>? AND is_remote=0 AND is_banned=0 AND discovery_code_hash=? LIMIT 1`, requesterID, codeHash)
+		if err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "search failed")
+			return
+		}
+		h.writeSearchResults(w, rows)
+		return
+	}
+	query = strings.ToLower(query)
 	if len(query) < 2 || len(query) > 32 {
 		httpx.JSON(w, http.StatusOK, []User{})
 		return
 	}
-	rows, err := h.DB.Query(`SELECT id,username,display_name,description,public_key,signing_public_key,signing_key_id,avatar FROM users
-		WHERE id<>? AND is_remote=0 AND username LIKE ? ORDER BY username LIMIT 20`, auth.UserID(r), query+"%")
+	rows, err := h.DB.Query(`SELECT u.id,u.username,u.display_name,u.description,u.public_key,u.signing_public_key,u.signing_key_id,u.avatar FROM users u
+		WHERE u.id<>? AND u.is_remote=0 AND u.is_banned=0 AND u.username LIKE ?
+		AND (u.is_discoverable=1
+			OR EXISTS(SELECT 1 FROM contacts c WHERE (c.owner_id=? AND c.contact_user_id=u.id) OR (c.owner_id=u.id AND c.contact_user_id=?))
+			OR EXISTS(SELECT 1 FROM conversation_members mine JOIN conversation_members peer ON peer.conversation_id=mine.conversation_id
+				WHERE mine.user_id=? AND mine.role<>'pending' AND peer.user_id=u.id AND peer.role<>'pending'))
+		ORDER BY u.username LIMIT 20`, requesterID, query+"%", requesterID, requesterID, requesterID)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "search failed")
 		return
 	}
+	h.writeSearchResults(w, rows)
+}
+
+func (h *Handler) writeSearchResults(w http.ResponseWriter, rows *sql.Rows) {
 	defer rows.Close()
 	result := make([]User, 0)
 	for rows.Next() {
@@ -161,6 +251,45 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	httpx.JSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) GenerateDiscoveryCode(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Password string `json:"password"`
+	}
+	if !httpx.Decode(w, r, &input) {
+		return
+	}
+	userID := auth.UserID(r)
+	var passwordHash string
+	var discoverable bool
+	if err := h.DB.QueryRow(`SELECT password_hash,is_discoverable FROM users WHERE id=? AND is_remote=0 AND is_banned=0`, userID).
+		Scan(&passwordHash, &discoverable); err != nil {
+		httpx.Error(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if discoverable {
+		httpx.Error(w, http.StatusConflict, "profile must be invisible")
+		return
+	}
+	if bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(input.Password)) != nil {
+		httpx.Error(w, http.StatusUnauthorized, "current password is incorrect")
+		return
+	}
+	code, codeHash, err := userdiscovery.GenerateCode()
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "discovery code generation failed")
+		return
+	}
+	createdAt := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := h.DB.Exec(`UPDATE users SET discovery_code_hash=?,discovery_code_created_at=? WHERE id=?`, codeHash, createdAt, userID); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "discovery code generation failed")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"discovery_code": code,
+		"created_at":     createdAt,
+	})
 }
 
 func validAvatar(value string) bool {

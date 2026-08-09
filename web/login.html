@@ -8,7 +8,7 @@
   <title>Vibration · Connexion chat sécurisé</title>
   <link rel="manifest" href="/manifest.json?v=desktop-titlebar-v252">
   <link rel="icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=passphrase-strength-v276">
+  <link rel="stylesheet" href="/css/style.css?v=qr-scanner-v296">
 </head>
 <body class="auth-page">
   <div class="desktop-titlebar-drag-region" data-tauri-drag-region aria-hidden="true"></div>
@@ -91,7 +91,18 @@
       </div>
     </form>
   </dialog>
+  <dialog id="session-approval-dialog" class="session-approval-dialog" aria-labelledby="session-approval-title">
+    <section>
+      <h3 id="session-approval-title">Valider ce nouvel appareil</h3>
+      <p>Une session Vibration est déjà active. Scannez ce QR code avec un appareil connecté, ou saisissez le code dans « Mon profil · Appareils et sessions ».</p>
+      <img id="session-approval-qr" alt="QR code d’approbation de ce nouvel appareil">
+      <output id="session-approval-code" class="recovery-code-output"></output>
+      <small id="session-approval-device"></small>
+      <p id="session-approval-status" role="status">En attente de l’approbation…</p>
+      <button id="session-approval-cancel" class="outline danger-text" type="button">Annuler cette connexion</button>
+    </section>
+  </dialog>
   <script src="/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2"></script>
-  <script type="module" src="/js/login.js?v=identity-v2"></script>
+  <script type="module" src="/js/login.js?v=ios-resume-v297"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, normalizeInstanceURL, setInstanceURL } from "./api.js?v=ios17-pdf-v199";
+import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=ios17-pdf-v199";
 import {
   base64ToBytes,
   decryptBytes,
@@ -21,11 +21,13 @@ import {
 } from "./crypto.js";
 import {
   forgetRememberedIdentity,
+	forgetTrustedDeviceCredential,
   hasRememberedIdentity,
   loadRememberedIdentity,
   rememberIdentityBundle,
   resetLoginVerificationCounter,
-} from "./device-vault.js";
+	trustedDeviceCredential,
+} from "./device-vault.js?v=qr-scanner-v296";
 import {
   enableNotifications,
   notificationStatus,
@@ -37,10 +39,10 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=passphrase-strength-v276";
-import { ChatSocket } from "./websocket.js?v=ios17-pdf-v199";
-import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios17-pdf-v211";
-import { locale, t } from "./i18n.js";
+} from "./notifications.js?v=ios-resume-v297";
+import { ChatSocket } from "./websocket.js?v=ios-resume-v297";
+import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios-resume-v297";
+import { locale, t } from "./i18n.js?v=ios-resume-v297";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
 import { nonWhiteImageBounds } from "./file-preview-image.js?v=ios17-pdf-v199";
 import {
@@ -55,6 +57,7 @@ import {
   renderModernOfficePreview,
 } from "./office-preview.js?v=office-faithful-preview-v265";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
+import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
   acceptPendingIdentity,
   canonicalPublicKey,
@@ -77,7 +80,7 @@ const BACKGROUND_THUMBNAIL_PRELOAD_BUDGET_BYTES = 4 * 1024 * 1024;
 const BACKGROUND_PRELOAD_TTL_MS = 2 * 60 * 1000;
 const BACKGROUND_PRELOAD_NETWORK_FRESH_MS = 15 * 1000;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "translated-call-status-v282";
+const APP_BUILD = "ios-resume-v297";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 
 window.VIBRATION_BUILD = APP_BUILD;
@@ -140,18 +143,33 @@ const state = {
 
 let profileAvatar = null;
 let groupAvatar = null;
+let contactSearchVersion = 0;
 const groupInvitedUsers = new Map();
 let pdfJSModule;
 let ios17PDFJSModule;
 let conversationRenderVersion = 0;
 let conversationListRenderKey = "";
 let appReady = false;
+let appShellPrepared = false;
+let appUIBound = false;
+let appIdentityTrusted = false;
+let appNotificationsStarted = false;
+let bootAttempt = null;
+let bootRetryTimer = 0;
+let bootRetryDelay = 1000;
+let bootFailureNotified = false;
+let appHiddenAt = 0;
 const pdfScriptLoads = new Map();
 const backgroundThumbnailQueue = [];
 let activeBackgroundThumbnailPreloads = 0;
 const CALENDAR_FEED_TOKEN_KEY = "vibration.calendar_feed_token";
 let callPageExitHandled = false;
 let callVideoResumeTimer = null;
+let sessionQRScannerStream = null;
+let sessionQRScannerFrame = 0;
+let sessionQRScannerBusy = false;
+let sessionQRScannerLastFrame = 0;
+let sessionQRScannerGeneration = 0;
 
 const elements = {
   shell: document.querySelector("#app-shell"),
@@ -436,6 +454,35 @@ function appendGroupUserSearchResult(results, user, onInvite) {
   results.append(row);
 }
 
+function normalizedPrivateDiscoveryCode(value) {
+  const normalized = String(value || "").trim().toUpperCase().replace(/[\s-]+/g, "");
+  return /^VIB[A-Z2-7]{32}$/.test(normalized) ? normalized : "";
+}
+
+function isPrivateDiscoveryCode(value) {
+  return Boolean(normalizedPrivateDiscoveryCode(value));
+}
+
+async function searchInstanceUsers(query, role = "") {
+  return api("/api/users/search", {
+    method: "POST",
+    body: role ? { query, role } : { query },
+  });
+}
+
+function contactDirectoryRole(query) {
+  const normalized = String(query || "").trim().toLocaleLowerCase(locale);
+  const roles = [
+    { role: "administrator", labels: ["administrateur", t("Administrateur")] },
+    { role: "manager", labels: ["gestionnaire", t("Gestionnaire")] },
+  ];
+  return roles.find(({ labels }) => labels.some((label) => normalized === label.toLocaleLowerCase(locale)))?.role || "";
+}
+
+function userWithDiscoveryCode(user, query) {
+  return isPrivateDiscoveryCode(query) ? { ...user, discovery_code: query } : user;
+}
+
 function groupEditDialog({ name, description, avatar, contacts, members }) {
   const dialog = document.querySelector("#group-edit-dialog");
   const form = document.querySelector("#group-edit-form");
@@ -472,11 +519,11 @@ function groupEditDialog({ name, description, avatar, contacts, members }) {
     userResults.replaceChildren();
     if (query.length < 2) return;
     try {
-      const users = await api(`/api/users/search?q=${encodeURIComponent(query)}`);
+      const users = await searchInstanceUsers(query);
       const currentIDs = new Set([...members.map((member) => member.user_id), ...selectedIDs, ...extraUsers.keys()]);
       for (const user of users.filter((item) => item.id !== state.me.id && !currentIDs.has(item.id))) {
         appendGroupUserSearchResult(userResults, user, () => {
-          extraUsers.set(user.id, user);
+          extraUsers.set(user.id, userWithDiscoveryCode(user, query));
           selectedIDs.add(user.id);
           userSearch.value = "";
           userResults.replaceChildren();
@@ -669,7 +716,7 @@ async function refreshFileQuotas() {
 
 async function boot() {
   sessionStorage.removeItem(ADMIN_RETURN_HISTORY_KEY);
-  try {
+  if (!state.me) {
     const [me, edition, terms] = await Promise.all([api("/api/me"), api("/api/edition"), api("/api/terms/status")]);
     if (!terms.accepted) {
       location.replace("/login.html?terms=required");
@@ -677,26 +724,88 @@ async function boot() {
     }
     state.me = me;
     state.edition = edition;
+    await ensureTrustedDeviceEnrollment().catch((error) => {
+      if (error?.status !== 409) console.warn("Enregistrement de l’appareil de confiance impossible", error);
+    });
     state.cache = await openConversationCache(getInstanceURL(), state.me);
     await refreshFileQuotas();
-  } catch (error) {
-    location.replace("/login.html");
-    return;
   }
-  elements.shell.hidden = false;
-  updateIdentityLabel();
-  const adminLink = document.querySelector("#admin-link");
-  const canOpenAdmin = state.edition.admin_panel && (state.me.is_admin || state.me.is_manager);
-  adminLink.hidden = !canOpenAdmin;
-  adminLink.textContent = t(state.me.is_manager && !state.me.is_admin ? "Gestion" : "Administration");
-  adminLink.addEventListener("click", prepareAdminNavigation);
-  await unlock();
-  bindUI();
-  await trustedPublicKey(state.me, { interactive: true });
-  connectSocket();
+  if (!appShellPrepared) {
+    elements.shell.hidden = false;
+    updateIdentityLabel();
+    const adminLink = document.querySelector("#admin-link");
+    const canOpenAdmin = state.edition.admin_panel && (state.me.is_admin || state.me.is_manager);
+    adminLink.hidden = !canOpenAdmin;
+    adminLink.textContent = t(state.me.is_manager && !state.me.is_admin ? "Gestion" : "Administration");
+    adminLink.addEventListener("click", prepareAdminNavigation);
+    appShellPrepared = true;
+  }
+  if (!state.privateKey || !state.signingPrivateKey) await unlock();
+  if (!appUIBound) {
+    bindUI();
+    appUIBound = true;
+  }
+  if (!appIdentityTrusted) {
+    await trustedPublicKey(state.me, { interactive: true });
+    appIdentityTrusted = true;
+  }
+  if (!state.socket || state.socket.closed) connectSocket();
   await refreshAll();
   appReady = true;
-  initializeNotificationsAfterBoot();
+  if (!appNotificationsStarted) {
+    appNotificationsStarted = true;
+    initializeNotificationsAfterBoot();
+  }
+}
+
+function startupAuthenticationFailed(error) {
+  return error?.status === 401 || error?.status === 403;
+}
+
+function scheduleBootRetry() {
+  if (appReady || bootRetryTimer) return;
+  const delay = bootRetryDelay;
+  bootRetryDelay = Math.min(bootRetryDelay * 2, 15000);
+  bootRetryTimer = window.setTimeout(() => {
+    bootRetryTimer = 0;
+    startBoot();
+  }, delay);
+}
+
+function startBoot() {
+  if (appReady) return Promise.resolve();
+  if (bootAttempt) return bootAttempt;
+  bootAttempt = boot().then(() => {
+    if (!appReady) return;
+    window.clearTimeout(bootRetryTimer);
+    bootRetryTimer = 0;
+    bootRetryDelay = 1000;
+    bootFailureNotified = false;
+  }).catch((error) => {
+    dismissStartupSplash();
+    if (startupAuthenticationFailed(error)) {
+      location.replace("/login.html");
+      return;
+    }
+    console.warn("Démarrage temporairement interrompu, nouvelle tentative programmée", error);
+    document.querySelector("#ws-dot").classList.remove("online");
+    document.querySelector("#ws-label").textContent = t("Reconnexion…");
+    if (!bootFailureNotified) {
+      bootFailureNotified = true;
+      toast(t("Connexion temporairement indisponible. Nouvelle tentative automatique…"), "error");
+    }
+    scheduleBootRetry();
+  }).finally(() => {
+    bootAttempt = null;
+  });
+  return bootAttempt;
+}
+
+function retryIncompleteBoot() {
+  if (appReady || document.hidden) return;
+  window.clearTimeout(bootRetryTimer);
+  bootRetryTimer = 0;
+  startBoot();
 }
 
 async function initializeNotificationsAfterBoot() {
@@ -831,6 +940,10 @@ function bindUI() {
     document.querySelector("#profile-display-name").value = state.me.display_name;
     document.querySelector("#profile-description").value = state.me.description || "";
     document.querySelector("#profile-instance-url").value = getInstanceURL();
+    document.querySelector("#profile-invisible").checked = state.me.is_discoverable === false;
+    document.querySelector("#profile-discovery-code").value = "";
+    document.querySelector("#profile-discovery-code-row").hidden = true;
+    updateProfileDiscoveryControls();
     document.querySelector("#profile-calendar-password").value = "";
     document.querySelector("#profile-calendar-url").value = "";
     document.querySelector("#profile-calendar-status").textContent = t("Vérification du flux calendrier…");
@@ -839,6 +952,9 @@ function bindUI() {
     document.querySelector("#profile-new-password").value = "";
     document.querySelector("#profile-confirm-password").value = "";
     document.querySelector("#profile-error").textContent = "";
+    document.querySelector("#profile-session-code").value = "";
+    document.querySelector("#profile-session-status").textContent = t("Chargement des sessions…");
+    document.querySelector("#profile-trusted-device-status").textContent = t("Chargement des appareils de confiance…");
     updateProfileStorage();
     profileDialog.showModal();
     const profileTitle = document.querySelector("#profile-dialog h3");
@@ -850,15 +966,48 @@ function bindUI() {
       refreshNotificationStatus(),
       loadSharedCalendarFeedState(),
       refreshOwnIdentityFingerprint(),
+      loadDeviceSecurity(),
     ]);
   };
   document.querySelector("#profile-button").onclick = openProfileDialog;
   document.querySelector("#close-sidebar-logo").onclick = openProfileDialog;
   document.querySelector("#profile-close").onclick = () => profileDialog.close();
+  profileDialog.addEventListener("close", () => {
+    closeSessionQRScanner();
+    document.querySelector("#profile-discovery-code").value = "";
+    document.querySelector("#profile-discovery-code-row").hidden = true;
+  });
   document.querySelector("#profile-calendar-copy").onclick = copyCalendarFeedURL;
   document.querySelector("#profile-calendar-create").onclick = createSharedCalendarFeed;
   document.querySelector("#profile-calendar-revoke").onclick = revokeSharedCalendarFeed;
   document.querySelector("#profile-calendar-export").onclick = exportCalendarICalendar;
+  document.querySelector("#profile-invisible").onchange = () => updateProfileDiscoveryControls();
+  document.querySelector("#profile-discovery-generate").onclick = generateProfileDiscoveryCode;
+  document.querySelector("#profile-discovery-copy").onclick = copyProfileDiscoveryCode;
+  document.querySelector("#profile-session-approve-code").onclick = approveDeviceSessionCode;
+  const sessionQRScannerDialog = document.querySelector("#session-qr-scanner-dialog");
+  const sessionQRScannerButton = document.querySelector("#profile-session-scan-qr");
+  const sessionQRScannerClose = document.querySelector("#session-qr-scanner-close");
+  const sessionQRScannerCancel = document.querySelector("#session-qr-scanner-cancel");
+  const sessionQRScannerFile = document.querySelector("#session-qr-scanner-file");
+  if (sessionQRScannerDialog && sessionQRScannerButton && sessionQRScannerClose && sessionQRScannerCancel && sessionQRScannerFile) {
+    sessionQRScannerButton.onclick = openSessionQRScanner;
+    sessionQRScannerClose.onclick = closeSessionQRScanner;
+    sessionQRScannerCancel.onclick = closeSessionQRScanner;
+    sessionQRScannerDialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closeSessionQRScanner();
+    });
+    sessionQRScannerDialog.addEventListener("close", stopSessionQRScanner);
+    sessionQRScannerFile.addEventListener("change", scanSessionQRCodeFile);
+  }
+  const profileSessionCode = document.querySelector("#profile-session-code");
+  profileSessionCode.addEventListener("input", formatDeviceSessionCode);
+  profileSessionCode.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    document.querySelector("#profile-session-approve-code").click();
+  });
   document.querySelector("#conversation-info-close").onclick = () => elements.conversationInfoDialog.close();
   elements.conversationInfoVerify.onclick = verifyCurrentConversationIdentity;
   elements.chatAvatar.onclick = () => {
@@ -908,9 +1057,14 @@ function bindUI() {
     sessionStorage.removeItem("crypto_phrase");
     location.href = "/login.html";
   };
-  document.querySelector("#contact-button").onclick = () => document.querySelector("#contact-dialog").showModal();
+  document.querySelector("#contact-button").onclick = () => {
+    contactSearchVersion += 1;
+    document.querySelector("#contact-search").value = "";
+    document.querySelector("#contact-results").replaceChildren();
+    document.querySelector("#contact-dialog").showModal();
+  };
   document.querySelector("#group-button").onclick = () => {
-    openGroupDialog().catch((error) => toast(frenchErrorMessage(error, "Impossible de charger les contacts."), "error"));
+    openGroupDialog().catch((error) => toast(frenchErrorMessage(error, "Impossible d’ouvrir la création de groupe."), "error"));
   };
   elements.personalConversationButton.onclick = () => {
     const conversation = state.conversations.find((item) => item.is_personal);
@@ -1029,10 +1183,8 @@ function bindUI() {
   elements.callHangupButton.addEventListener("click", () => hangupCall("hangup"));
   window.addEventListener("pagehide", handleCallPageExit);
   window.addEventListener("beforeunload", handleCallPageExit);
-  window.addEventListener("focus", refreshConversationListOnForeground);
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) refreshConversationListOnForeground();
-  });
+  window.addEventListener("focus", handleAppFocus);
+  document.addEventListener("visibilitychange", handleAppVisibilityChange);
   document.addEventListener("fullscreenchange", handleCallFullscreenChange);
   document.addEventListener("webkitfullscreenchange", handleCallFullscreenChange);
   elements.voiceDraftClear.addEventListener("click", clearVoiceDraft);
@@ -1712,6 +1864,531 @@ async function resizeAvatar(file) {
   }
 }
 
+function updateProfileDiscoveryControls({ keepStatus = false } = {}) {
+  const invisible = document.querySelector("#profile-invisible").checked;
+  const generate = document.querySelector("#profile-discovery-generate");
+  const codeRow = document.querySelector("#profile-discovery-code-row");
+  const status = document.querySelector("#profile-discovery-status");
+  const savedInvisible = state.me?.is_discoverable === false;
+  generate.disabled = !invisible || !savedInvisible;
+  if (!invisible) codeRow.hidden = true;
+  if (keepStatus) return;
+  if (!invisible) {
+    status.textContent = t("Votre profil reste visible dans l’annuaire de l’instance.");
+  } else if (!savedInvisible) {
+    status.textContent = t("Enregistrez le profil avant de générer votre code privé.");
+  } else if (state.me?.has_discovery_code) {
+    status.textContent = t("Un code privé est actif. Générez-en un nouveau pour invalider l’ancien.");
+  } else {
+    status.textContent = t("Aucun code privé actif.");
+  }
+}
+
+async function generateProfileDiscoveryCode(event) {
+  const button = event.currentTarget;
+  const status = document.querySelector("#profile-discovery-status");
+  const password = prompt(t("Mot de passe actuel :"));
+  if (password === null) return;
+  if (!password) {
+    status.textContent = t("Le mot de passe actuel est requis.");
+    return;
+  }
+  setBusy(button, true, t("Génération…"));
+  try {
+    const result = await api("/api/me/discovery-code", {
+      method: "POST",
+      body: { password },
+    });
+    state.me.has_discovery_code = true;
+    const input = document.querySelector("#profile-discovery-code");
+    input.value = result.discovery_code;
+    document.querySelector("#profile-discovery-code-row").hidden = false;
+    status.textContent = t("Copiez ce code maintenant : il ne sera plus affiché après la fermeture du profil.");
+    input.focus();
+    input.select();
+  } catch (error) {
+    status.textContent = error.status === 401
+      ? t("Le mot de passe actuel est incorrect.")
+      : frenchErrorMessage(error);
+  } finally {
+    setBusy(button, false);
+    updateProfileDiscoveryControls({ keepStatus: true });
+  }
+}
+
+async function copyProfileDiscoveryCode() {
+  const input = document.querySelector("#profile-discovery-code");
+  if (!input.value) return;
+  try {
+    await navigator.clipboard.writeText(input.value);
+  } catch {
+    input.focus();
+    input.select();
+    if (!document.execCommand("copy")) {
+      toast(t("Sélectionnez puis copiez le code manuellement."), "error");
+      return;
+    }
+  }
+  toast(t("Code privé copié."), "success");
+}
+
+function deviceSessionTypeLabel(kind) {
+  return t(({
+    desktop: "Application de bureau",
+    mobile: "Téléphone",
+    tablet: "Tablette",
+    browser: "Navigateur web",
+  })[kind] || "Appareil");
+}
+
+function currentTrustedDeviceMetadata() {
+  const userAgent = navigator.userAgent || "";
+  const platform = navigator.userAgentData?.platform || navigator.platform || t("Appareil");
+  const browser = /Edg\//.test(userAgent) ? "Edge"
+    : /Firefox\//.test(userAgent) ? "Firefox"
+      : /CriOS\//.test(userAgent) ? "Chrome"
+        : /Chrome\//.test(userAgent) ? "Chrome"
+          : /Safari\//.test(userAgent) ? "Safari"
+            : "Vibration";
+  const mobile = /Android|iPhone|iPod|Mobile/i.test(userAgent);
+  const tablet = /iPad|Tablet/i.test(userAgent);
+  return {
+    device_name: `${browser} · ${platform}`.slice(0, 120),
+    device_type: isDesktopClient() ? "desktop" : tablet ? "tablet" : mobile ? "mobile" : "browser",
+  };
+}
+
+async function ensureTrustedDeviceEnrollment() {
+  const credential = await trustedDeviceCredential(getInstanceURL());
+  return api("/api/me/trusted-devices/enroll", {
+    method: "POST",
+    body: { ...credential, ...currentTrustedDeviceMetadata() },
+  });
+}
+
+function formatDeviceSessionDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return t("date inconnue");
+  return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+function formatDeviceSessionCode(event) {
+  const input = event.currentTarget;
+  const normalized = input.value.toUpperCase().replace(/[^A-Z2-7]/g, "").slice(0, 8);
+  input.value = normalized.length > 4 ? `${normalized.slice(0, 4)}-${normalized.slice(4)}` : normalized;
+}
+
+function stopSessionQRScanner() {
+  if (sessionQRScannerFrame) cancelAnimationFrame(sessionQRScannerFrame);
+  sessionQRScannerFrame = 0;
+  sessionQRScannerBusy = false;
+  sessionQRScannerLastFrame = 0;
+  for (const track of sessionQRScannerStream?.getTracks?.() || []) track.stop();
+  sessionQRScannerStream = null;
+  const video = document.querySelector("#session-qr-scanner-video");
+  video?.pause();
+  if (video) video.srcObject = null;
+}
+
+function closeSessionQRScanner() {
+  sessionQRScannerGeneration += 1;
+  const dialog = document.querySelector("#session-qr-scanner-dialog");
+  if (dialog?.open) dialog.close();
+  else stopSessionQRScanner();
+}
+
+function sessionQRImageData(source, sourceWidth, sourceHeight, maximumDimension) {
+  const canvas = document.querySelector("#session-qr-scanner-canvas");
+  const scale = Math.min(1, maximumDimension / Math.max(sourceWidth, sourceHeight));
+  canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+  canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return context.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+async function sessionQRImageDataFromFile(file) {
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+      try {
+        return sessionQRImageData(bitmap, bitmap.width, bitmap.height, 1600);
+      } finally {
+        bitmap.close();
+      }
+    } catch {
+      // Safari versions without this option are handled by the Image fallback.
+    }
+  }
+  const dataURL = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("image read failed"));
+    reader.readAsDataURL(file);
+  });
+  const image = await new Promise((resolve, reject) => {
+    const candidate = new Image();
+    candidate.onload = () => resolve(candidate);
+    candidate.onerror = () => reject(new Error("image decode failed"));
+    candidate.src = dataURL;
+  });
+  return sessionQRImageData(image, image.naturalWidth, image.naturalHeight, 1600);
+}
+
+async function authorizeScannedDeviceSession(value) {
+  const dialog = document.querySelector("#session-qr-scanner-dialog");
+  const status = document.querySelector("#session-qr-scanner-status");
+  const token = sessionApprovalTokenFromQR(value, getInstanceURL());
+  if (!token) {
+    status.textContent = t("Ce QR code n’est pas une demande Vibration valide pour cette instance.");
+    return false;
+  }
+  status.textContent = t("Vérification de la demande en cours…");
+  try {
+    const pending = await api("/api/me/sessions/preview", { method: "POST", body: { token } });
+    if (!dialog.open) return false;
+    if (!confirm(t("Autoriser « {device} » à accéder à votre compte Vibration ?", {
+      device: pending.device_name || t("Appareil non identifié"),
+    }))) {
+      status.textContent = t("Présentez le QR code à la caméra.");
+      return false;
+    }
+    status.textContent = t("Autorisation…");
+    await api("/api/me/sessions/approve", { method: "POST", body: { token } });
+    closeSessionQRScanner();
+    toast(t("Nouvel appareil autorisé."), "success");
+    await loadDeviceSecurity().catch((error) => {
+      toast(frenchErrorMessage(error, t("Impossible de charger les sessions.")), "error");
+    });
+    return true;
+  } catch (error) {
+    status.textContent = frenchErrorMessage(error, t("Le QR code a peut-être expiré ou déjà été utilisé."));
+    return false;
+  }
+}
+
+async function scanSessionQRCodeFrame(timestamp) {
+  sessionQRScannerFrame = 0;
+  const dialog = document.querySelector("#session-qr-scanner-dialog");
+  const video = document.querySelector("#session-qr-scanner-video");
+  if (!dialog.open || !sessionQRScannerStream) return;
+  sessionQRScannerFrame = requestAnimationFrame(scanSessionQRCodeFrame);
+  if (sessionQRScannerBusy || timestamp - sessionQRScannerLastFrame < 120 || video.readyState < 2) return;
+  sessionQRScannerLastFrame = timestamp;
+  let value = "";
+  try {
+    value = decodeQRImageData(sessionQRImageData(video, video.videoWidth, video.videoHeight, 720));
+  } catch {
+    return;
+  }
+  if (!value) return;
+  sessionQRScannerBusy = true;
+  await authorizeScannedDeviceSession(value);
+  if (dialog.open) {
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    sessionQRScannerBusy = false;
+  }
+}
+
+async function openSessionQRScanner() {
+  const dialog = document.querySelector("#session-qr-scanner-dialog");
+  const status = document.querySelector("#session-qr-scanner-status");
+  const video = document.querySelector("#session-qr-scanner-video");
+  if (dialog.open) return;
+  const generation = ++sessionQRScannerGeneration;
+  document.querySelector("#session-qr-scanner-file").value = "";
+  status.textContent = t("Ouverture de la caméra…");
+  dialog.showModal();
+  if (typeof globalThis.jsQR !== "function") {
+    status.textContent = t("Le lecteur de QR code est indisponible.");
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    status.textContent = t("La caméra n’est pas disponible. Choisissez une image du QR code.");
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: "environment" } },
+    });
+    if (generation !== sessionQRScannerGeneration || !dialog.open) {
+      for (const track of stream.getTracks()) track.stop();
+      return;
+    }
+    sessionQRScannerStream = stream;
+    video.srcObject = stream;
+    await video.play();
+    status.textContent = t("Présentez le QR code à la caméra.");
+    sessionQRScannerFrame = requestAnimationFrame(scanSessionQRCodeFrame);
+  } catch (error) {
+    if (generation !== sessionQRScannerGeneration || !dialog.open) return;
+    stopSessionQRScanner();
+    status.textContent = t(["NotAllowedError", "SecurityError"].includes(error?.name)
+      ? "L’accès à la caméra a été refusé. Autorisez-la ou choisissez une image du QR code."
+      : "La caméra n’est pas disponible. Choisissez une image du QR code.");
+  }
+}
+
+async function scanSessionQRCodeFile(event) {
+  const input = event.currentTarget;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file || sessionQRScannerBusy) return;
+  const dialog = document.querySelector("#session-qr-scanner-dialog");
+  const status = document.querySelector("#session-qr-scanner-status");
+  sessionQRScannerBusy = true;
+  status.textContent = t("Recherche du QR code dans l’image…");
+  try {
+    const value = decodeQRImageData(await sessionQRImageDataFromFile(file));
+    if (!value) {
+      status.textContent = t("Impossible de lire un QR code dans cette image.");
+      return;
+    }
+    await authorizeScannedDeviceSession(value);
+  } catch {
+    status.textContent = t("Impossible de lire un QR code dans cette image.");
+  } finally {
+    if (dialog.open) sessionQRScannerBusy = false;
+  }
+}
+
+function createDeviceSessionBadge(label, pending = false) {
+  const badge = document.createElement("span");
+  badge.className = `profile-session-badge${pending ? " pending" : ""}`;
+  badge.textContent = label;
+  return badge;
+}
+
+function createDeviceSessionButton(label, className, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = label;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function renderDeviceSessions(sessions) {
+  const list = document.querySelector("#profile-session-list");
+  list.replaceChildren();
+  if (!sessions.length) {
+    const empty = document.createElement("li");
+    empty.className = "muted";
+    empty.textContent = t("Aucune session active.");
+    list.append(empty);
+    return;
+  }
+  for (const session of sessions) {
+    const item = document.createElement("li");
+    item.className = `profile-session-item${session.pending ? " pending" : ""}`;
+    const main = document.createElement("div");
+    main.className = "profile-session-main";
+    const title = document.createElement("strong");
+    title.textContent = session.device_name || t("Appareil non identifié");
+    const badges = document.createElement("div");
+    badges.className = "profile-session-badges";
+    badges.append(createDeviceSessionBadge(deviceSessionTypeLabel(session.device_type)));
+    if (session.current) badges.append(createDeviceSessionBadge(t("Cet appareil")));
+    if (session.pending) badges.append(createDeviceSessionBadge(t("En attente d’approbation"), true));
+    const activity = document.createElement("small");
+    activity.className = "profile-session-meta";
+    activity.textContent = session.pending
+      ? t("Demande créée le {date}", { date: formatDeviceSessionDate(session.created_at) })
+      : t("Dernière activité : {date}", { date: formatDeviceSessionDate(session.last_seen_at) });
+    const address = document.createElement("small");
+    address.className = "profile-session-meta";
+    address.textContent = session.ip_address
+      ? t("Adresse IP : {address}", { address: session.ip_address })
+      : t("Adresse IP non disponible");
+    const deadline = document.createElement("small");
+    deadline.className = "profile-session-meta";
+    deadline.textContent = session.pending
+      ? t("Validation possible jusqu’au {date}", { date: formatDeviceSessionDate(session.approval_expires_at) })
+      : t("Session valable jusqu’au {date}", { date: formatDeviceSessionDate(session.expires_at) });
+    main.append(title, badges, activity, address, deadline);
+
+    const actions = document.createElement("div");
+    actions.className = "profile-session-actions";
+    if (session.pending) {
+      actions.append(
+        createDeviceSessionButton(t("Approuver"), "", (event) => approveDeviceSession(session, event.currentTarget)),
+        createDeviceSessionButton(t("Refuser"), "outline danger-text", (event) => revokeDeviceSession(session, event.currentTarget)),
+      );
+    } else {
+      actions.append(createDeviceSessionButton(
+        session.current ? t("Déconnecter cet appareil") : t("Déconnecter"),
+        "outline danger-text",
+        (event) => revokeDeviceSession(session, event.currentTarget),
+      ));
+    }
+    item.append(main, actions);
+    list.append(item);
+  }
+}
+
+function renderTrustedDevices(devices) {
+  const list = document.querySelector("#profile-trusted-device-list");
+  list.replaceChildren();
+  if (!devices.length) {
+    const empty = document.createElement("li");
+    empty.className = "muted";
+    empty.textContent = t("Aucun appareil de confiance.");
+    list.append(empty);
+    return;
+  }
+  for (const device of devices) {
+    const item = document.createElement("li");
+    item.className = "profile-session-item";
+    const main = document.createElement("div");
+    main.className = "profile-session-main";
+    const title = document.createElement("strong");
+    title.textContent = device.device_name || t("Appareil non identifié");
+    const badges = document.createElement("div");
+    badges.className = "profile-session-badges";
+    badges.append(createDeviceSessionBadge(deviceSessionTypeLabel(device.device_type)));
+    badges.append(createDeviceSessionBadge(t("De confiance")));
+    if (device.current) badges.append(createDeviceSessionBadge(t("Cet appareil")));
+    const activity = document.createElement("small");
+    activity.className = "profile-session-meta";
+    activity.textContent = t("Dernière validation : {date}", { date: formatDeviceSessionDate(device.last_used_at) });
+    const created = document.createElement("small");
+    created.className = "profile-session-meta";
+    created.textContent = t("Ajouté le {date}", { date: formatDeviceSessionDate(device.created_at) });
+    main.append(title, badges, activity, created);
+    const actions = document.createElement("div");
+    actions.className = "profile-session-actions";
+    actions.append(createDeviceSessionButton(
+      t("Retirer la confiance"),
+      "outline danger-text",
+      (event) => revokeTrustedDevice(device, event.currentTarget),
+    ));
+    item.append(main, actions);
+    list.append(item);
+  }
+}
+
+async function loadTrustedDevices() {
+  const status = document.querySelector("#profile-trusted-device-status");
+  try {
+    const devices = await api("/api/me/trusted-devices");
+    renderTrustedDevices(devices);
+    status.textContent = t(devices.length === 1
+      ? "1 appareil de confiance."
+      : "{count} appareils de confiance.", { count: devices.length });
+    return devices;
+  } catch (error) {
+    status.textContent = frenchErrorMessage(error, t("Impossible de charger les appareils de confiance."));
+    throw error;
+  }
+}
+
+async function loadDeviceSecurity() {
+  return Promise.all([loadTrustedDevices(), loadDeviceSessions()]);
+}
+
+async function revokeTrustedDevice(device, button) {
+  if (!confirm(t("Retirer la confiance accordée à « {device} » ? Toutes ses sessions seront déconnectées.", {
+    device: device.device_name || t("cet appareil"),
+  }))) return;
+  setBusy(button, true, t("Révocation…"));
+  try {
+    const result = await api(`/api/me/trusted-devices/${encodeURIComponent(device.id)}`, { method: "DELETE" });
+    if (device.current || result.current) {
+      await forgetTrustedDeviceCredential(getInstanceURL()).catch(() => {});
+      clearSessionToken();
+      sessionStorage.removeItem("crypto_phrase");
+      location.href = "/login.html";
+      return;
+    }
+    toast(t("La confiance accordée à l’appareil a été retirée."), "success");
+    await loadDeviceSecurity();
+  } catch (error) {
+    toast(frenchErrorMessage(error, t("Impossible de retirer cet appareil de confiance.")), "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function loadDeviceSessions() {
+  const status = document.querySelector("#profile-session-status");
+  try {
+    const sessions = await api("/api/me/sessions");
+    renderDeviceSessions(sessions);
+    const pending = sessions.filter((session) => session.pending).length;
+    status.textContent = pending
+      ? t(pending === 1
+        ? "1 demande de nouvel appareil attend votre décision."
+        : "{count} demandes de nouvel appareil attendent votre décision.", { count: pending })
+      : t(sessions.length === 1 ? "1 session active." : "{count} sessions actives.", { count: sessions.length });
+    return sessions;
+  } catch (error) {
+    status.textContent = frenchErrorMessage(error, t("Impossible de charger les sessions."));
+    throw error;
+  }
+}
+
+async function approveDeviceSession(session, button) {
+  setBusy(button, true, t("Autorisation…"));
+  try {
+    await api("/api/me/sessions/approve", {
+      method: "POST",
+      body: { session_id: session.id },
+    });
+    toast(t("Nouvel appareil autorisé."), "success");
+    await loadDeviceSecurity();
+  } catch (error) {
+    toast(frenchErrorMessage(error, t("Impossible d’autoriser cet appareil.")), "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function approveDeviceSessionCode(event) {
+  const button = event.currentTarget;
+  const input = document.querySelector("#profile-session-code");
+  const status = document.querySelector("#profile-session-status");
+  const code = input.value.trim();
+  if (code.replace("-", "").length !== 8) {
+    status.textContent = t("Saisissez les huit caractères du code de validation.");
+    input.focus();
+    return;
+  }
+  setBusy(button, true, t("Vérification…"));
+  try {
+    const pending = await api("/api/me/sessions/preview", { method: "POST", body: { code } });
+    if (!confirm(t("Autoriser « {device} » à accéder à votre compte Vibration ?", { device: pending.device_name || t("Appareil non identifié") }))) return;
+    await api("/api/me/sessions/approve", { method: "POST", body: { code } });
+    input.value = "";
+    toast(t("Nouvel appareil autorisé."), "success");
+    await loadDeviceSecurity();
+  } catch (error) {
+    status.textContent = frenchErrorMessage(error, t("Code invalide, expiré ou déjà utilisé."));
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function revokeDeviceSession(session, button) {
+  if (!session.pending && !confirm(t("Déconnecter « {device} » de votre compte Vibration ?", { device: session.device_name || t("cet appareil") }))) return;
+  setBusy(button, true, session.pending ? t("Refus…") : t("Déconnexion…"));
+  try {
+    const result = await api(`/api/me/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
+    if (result.current) {
+      clearSessionToken();
+      sessionStorage.removeItem("crypto_phrase");
+      location.href = "/login.html";
+      return;
+    }
+    toast(t(session.pending ? "Demande de connexion refusée." : "Session déconnectée."), "success");
+    await loadDeviceSessions();
+  } catch (error) {
+    toast(frenchErrorMessage(error, t("Impossible de déconnecter cette session.")), "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
 async function rotateRecoveryCode(event) {
   const button = event.currentTarget;
   const status = document.querySelector("#recovery-code-status");
@@ -1744,6 +2421,7 @@ async function updateProfile(event) {
   const username = document.querySelector("#profile-username").value.trim().toLowerCase();
   const displayName = document.querySelector("#profile-display-name").value.trim();
   const description = document.querySelector("#profile-description").value.trim();
+  const isDiscoverable = !document.querySelector("#profile-invisible").checked;
   const currentInstanceURL = getInstanceURL();
   let nextInstanceURL;
   const currentPassword = document.querySelector("#profile-current-password").value;
@@ -1769,6 +2447,7 @@ async function updateProfile(event) {
     || displayName !== state.me.display_name
     || description !== (state.me.description || "")
     || profileAvatar !== (state.me.avatar || null)
+    || isDiscoverable !== (state.me.is_discoverable !== false)
     || Boolean(newPassword);
   if (!profileChanged && nextInstanceURL !== currentInstanceURL) {
     switchInstance(nextInstanceURL);
@@ -1786,6 +2465,7 @@ async function updateProfile(event) {
         current_password: currentPassword,
         new_password: newPassword,
         avatar: profileAvatar,
+        is_discoverable: isDiscoverable,
       },
     });
     state.me = { ...state.me, ...updated };
@@ -1794,6 +2474,7 @@ async function updateProfile(event) {
     document.querySelector("#profile-current-password").value = "";
     document.querySelector("#profile-new-password").value = "";
     document.querySelector("#profile-confirm-password").value = "";
+    updateProfileDiscoveryControls();
     if (nextInstanceURL !== currentInstanceURL) {
       switchInstance(nextInstanceURL);
       return;
@@ -2397,8 +3078,35 @@ async function toggleConversationFavorite(conversation, button) {
   }
 }
 
-function refreshConversationListOnForeground() {
-  if (!state.me || !appReady) return;
+function handleAppFocus() {
+  if (!appReady) {
+    retryIncompleteBoot();
+    return;
+  }
+  refreshConversationListOnForeground();
+}
+
+function handleAppVisibilityChange() {
+  if (document.hidden) {
+    appHiddenAt = Date.now();
+    closeSessionQRScanner();
+    return;
+  }
+  const suspended = appHiddenAt > 0 && Date.now() - appHiddenAt >= 3000;
+  appHiddenAt = 0;
+  if (!appReady) {
+    retryIncompleteBoot();
+    return;
+  }
+  refreshConversationListOnForeground({ reconnectSocket: suspended });
+}
+
+function refreshConversationListOnForeground({ reconnectSocket = false } = {}) {
+  if (!state.me || !appReady) {
+    retryIncompleteBoot();
+    return;
+  }
+  if (reconnectSocket) state.socket?.reconnect();
   refreshConversationList().catch((error) => {
     console.warn("Actualisation des conversations au retour impossible", error);
   });
@@ -2886,6 +3594,9 @@ async function editConversation(conversation, row) {
     const encryptedDescription = result.description ? await encryptEnvelope(metadataKey, result.description) : null;
     const encryptedAvatar = result.avatar ? await encryptEnvelope(metadataKey, result.avatar) : null;
     if (needsRotation) {
+      const discoveryCodes = Object.fromEntries((result.invitedUsers || [])
+        .filter((member) => member.discovery_code && addedMemberIDs.some((userID) => sameID(userID, member.id)))
+        .map((member) => [String(member.id), member.discovery_code]));
       await api(`/api/conversations/${conversation.id}/rotate-keys`, {
         method: "POST",
         body: {
@@ -2893,6 +3604,7 @@ async function editConversation(conversation, row) {
           removed_user_ids: removedMemberIDs,
           added_user_ids: addedMemberIDs,
           encrypted_keys: encryptedKeys,
+          discovery_codes: discoveryCodes,
           encrypted_title: encryptedTitle,
           encrypted_description: encryptedDescription,
           encrypted_avatar: encryptedAvatar,
@@ -5277,6 +5989,7 @@ async function renderMessages(messages, conversation, preparedDecrypted = null) 
       (replyPreview, container) => scheduleReplyFilePreview(replyPreview, container, conversation),
       votePoll,
       openFileShareDialog,
+      reportMessage,
     );
     if (message.sender_id !== state.me.id) {
       api(`/api/messages/${message.id}/read`, { method: "POST", body: {} }).catch(() => {});
@@ -5643,6 +6356,7 @@ async function appendMessage(message, scroll = true) {
       (replyPreview, container) => scheduleReplyFilePreview(replyPreview, container, conversation),
       votePoll,
       openFileShareDialog,
+      reportMessage,
     );
     elements.messages.prepend(fragment);
     if (filePreview) scheduleFilePreview(filePreview[0], filePreview[1], key);
@@ -7190,6 +7904,90 @@ async function deleteMessage(message, row) {
   }
 }
 
+function chooseMessageReportReason() {
+  const dialog = document.querySelector("#message-report-dialog");
+  const form = document.querySelector("#message-report-form");
+  const cancelButton = document.querySelector("#message-report-cancel");
+  form.reset();
+  dialog.showModal();
+  return new Promise((resolve) => {
+    const finish = (reason) => {
+      form.removeEventListener("submit", submit);
+      cancelButton.removeEventListener("click", cancel);
+      dialog.removeEventListener("cancel", cancel);
+      if (dialog.open) dialog.close();
+      resolve(reason);
+    };
+    const submit = (event) => {
+      event.preventDefault();
+      finish(String(new FormData(form).get("reason") || ""));
+    };
+    const cancel = (event) => {
+      event?.preventDefault();
+      finish("");
+    };
+    form.addEventListener("submit", submit);
+    cancelButton.addEventListener("click", cancel);
+    dialog.addEventListener("cancel", cancel);
+  });
+}
+
+function updateMessageReportButton(message, button) {
+  if (!button) return;
+  button.classList.toggle("is-reported", message.is_reported === true);
+  button.textContent = message.is_reported ? "⚑" : "⚐";
+  button.title = t(message.is_reported ? "Retirer le signalement" : "Signaler le message");
+  button.setAttribute("aria-label", button.title);
+  button.setAttribute("aria-pressed", String(message.is_reported === true));
+}
+
+function storeMessageReportState(message, reported, button) {
+  message.is_reported = reported;
+  updateMessageReportButton(message, button);
+  invalidateConversationPreload(message.conversation_id);
+  const cachedMessage = { ...message };
+  delete cachedMessage.reply_preview;
+  delete cachedMessage.signature_valid;
+  state.cache?.putMessages([cachedMessage]);
+}
+
+async function reportMessage(message, button) {
+  if (message.is_reported) {
+    if (!confirm(t("Retirer votre signalement pour ce message ?"))) return;
+    if (button) button.disabled = true;
+    try {
+      await api(`/api/messages/${message.id}/report`, { method: "DELETE" });
+      storeMessageReportState(message, false, button);
+      toast("Signalement retiré.", "success");
+    } catch (error) {
+      if (error.status === 404) {
+        storeMessageReportState(message, false, button);
+        toast("Signalement retiré.", "success");
+        return;
+      }
+      toast(frenchErrorMessage(error, "Impossible de retirer le signalement."), "error");
+    } finally {
+      if (button) button.disabled = false;
+    }
+    return;
+  }
+  const reason = await chooseMessageReportReason();
+  if (!reason) return;
+  if (button) button.disabled = true;
+  try {
+    await api(`/api/messages/${message.id}/report`, {
+      method: "POST",
+      body: { reason },
+    });
+    storeMessageReportState(message, true, button);
+    toast("Signalement envoyé à la modération.", "success");
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible d’envoyer le signalement."), "error");
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 async function loadDecryptedFile(message, key) {
   if (message.signature_valid === false) throw new Error("La signature du fichier est invalide.");
   const cached = state.files.get(message.file.id);
@@ -8014,16 +8812,23 @@ function sanitizeSVGStyles(value) {
 }
 
 async function searchContacts(event) {
-  const query = event.target.value.trim();
+  const input = event.target;
+  const query = input.value.trim();
+  const searchVersion = ++contactSearchVersion;
+  const directoryRole = contactDirectoryRole(query);
   const results = document.querySelector("#contact-results");
   results.replaceChildren();
   if (query.length < 2) return;
   try {
-    const endpoint = state.edition.federation && query.includes("@") ? "/api/federation/search" : "/api/users/search";
-    const users = await api(`${endpoint}?q=${encodeURIComponent(query)}`);
-    const availableUsers = users.filter((user) => !state.contacts.some((contact) => (
+    const federated = !directoryRole && state.edition.federation && query.includes("@") && !isPrivateDiscoveryCode(query);
+    const users = federated
+      ? await api(`/api/federation/search?q=${encodeURIComponent(query)}`)
+      : await searchInstanceUsers(query, directoryRole);
+    if (searchVersion !== contactSearchVersion || input.value.trim() !== query) return;
+    const acceptedContact = (user) => state.contacts.some((contact) => (
       contact.status === "accepted" && sameID(contact.contact_user_id, user.id)
-    )));
+    ));
+    const availableUsers = directoryRole ? users : users.filter((user) => !acceptedContact(user));
     if (!availableUsers.length) {
       const empty = document.createElement("p");
       empty.className = "picker-empty";
@@ -8035,13 +8840,21 @@ async function searchContacts(event) {
       const row = document.createElement("button");
       row.type = "button";
       row.className = "picker-row";
+      const isSelf = sameID(user.id, state.me.id);
+      const isExistingContact = acceptedContact(user);
+      row.classList.toggle("is-self", isSelf);
+      row.disabled = isSelf;
       const description = user.description
         ? `<small class="contact-description">${escapeText(user.description)}</small>`
         : "";
       const identity = user.federated
         ? `@${escapeText(user.username)} · ${escapeText(new URL(user.instance_url).host)}`
         : `@${escapeText(user.username)}`;
-      row.innerHTML = `<span><strong>${escapeText(user.display_name)}</strong>${description}<small>${identity}</small></span><span>Ajouter</span>`;
+      const roleBadge = directoryRole
+        ? `<small class="contact-role-badge">${escapeText(t(directoryRole === "administrator" ? "Administrateur" : "Gestionnaire"))}</small>`
+        : "";
+      const actionLabel = isSelf ? t("Vous") : isExistingContact ? t("Ouvrir") : t("Ajouter");
+      row.innerHTML = `<span><strong>${escapeText(user.display_name)}</strong>${description}<small>${identity}</small>${roleBadge}</span><span>${escapeText(actionLabel)}</span>`;
       row.onclick = async () => {
         try {
           let conversation;
@@ -8053,7 +8866,13 @@ async function searchContacts(event) {
           } else {
             let contact = state.contacts.find((item) => item.contact_user_id === user.id);
             if (!contact) {
-              await api("/api/contacts", { method: "POST", body: { user_id: user.id } });
+              await api("/api/contacts", {
+                method: "POST",
+                body: {
+                  user_id: user.id,
+                  discovery_code: isPrivateDiscoveryCode(query) ? query : "",
+                },
+              });
               await refreshAll();
               contact = state.contacts.find((item) => item.contact_user_id === user.id);
             }
@@ -8081,6 +8900,7 @@ async function searchContacts(event) {
       results.append(row);
     }
   } catch (error) {
+    if (searchVersion !== contactSearchVersion) return;
     toast(frenchErrorMessage(error), "error");
   }
 }
@@ -8171,11 +8991,64 @@ function selectedNewGroupMemberIDs() {
   );
 }
 
-function renderNewGroupMembers(selectedIDs = selectedNewGroupMemberIDs()) {
-  renderGroupMemberPicker(document.querySelector("#group-members"), state.contacts, {
-    selectedIDs,
-    extraUsers: [...groupInvitedUsers.values()],
-  });
+function renderNewGroupMembers() {
+  const list = document.querySelector("#group-members");
+  const invitedUsers = [...groupInvitedUsers.values()]
+    .sort((left, right) => {
+      const leftName = left.display_name || left.username || "";
+      const rightName = right.display_name || right.username || "";
+      return leftName.localeCompare(rightName, locale, { sensitivity: "base" });
+    });
+  const members = [state.me, ...invitedUsers];
+  const count = document.querySelector("#group-members-count");
+  if (count) count.textContent = String(members.length);
+  list.replaceChildren();
+
+  for (const [index, member] of members.entries()) {
+    const isCurrentUser = index === 0;
+    const item = document.createElement("li");
+    item.className = "conversation-info-member";
+
+    const displayName = member.display_name || member.username || t("Non renseigné");
+    const avatar = document.createElement("span");
+    avatar.className = "conversation-info-member-avatar";
+    avatar.setAttribute("aria-hidden", "true");
+    replaceAvatarContent(avatar, member.avatar, displayName.slice(0, 1).toUpperCase());
+
+    const identity = document.createElement("span");
+    identity.className = "conversation-info-member-identity";
+    const name = document.createElement("strong");
+    name.textContent = displayName;
+    const username = document.createElement("small");
+    username.textContent = member.username ? `@${String(member.username).replace(/^@+/, "")}` : t("Non renseigné");
+    identity.append(name, username);
+
+    const statusOrAction = document.createElement(isCurrentUser ? "span" : "label");
+    statusOrAction.className = isCurrentUser
+      ? "conversation-info-member-statuses"
+      : "conversation-info-member-statuses group-member-check";
+    if (isCurrentUser) {
+      const status = document.createElement("small");
+      status.className = "conversation-info-member-status";
+      status.textContent = t("Vous");
+      statusOrAction.append(status);
+    } else {
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.value = String(member.id);
+      checkbox.checked = true;
+      checkbox.setAttribute("aria-label", t("Retirer {name} du groupe", { name: displayName }));
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) return;
+        groupInvitedUsers.delete(member.id);
+        renderNewGroupMembers();
+      });
+      statusOrAction.append(checkbox);
+    }
+
+    item.append(avatar, identity, statusOrAction);
+    list.append(item);
+  }
 }
 
 async function searchNewGroupMembers(event) {
@@ -8185,23 +9058,16 @@ async function searchNewGroupMembers(event) {
   results.replaceChildren();
   if (query.length < 2) return;
   try {
-    const users = await api(`/api/users/search?q=${encodeURIComponent(query)}`);
+    const users = await searchInstanceUsers(query);
     if (input.value.trim() !== query) return;
-    const listedIDs = new Set([
-      ...state.contacts
-        .filter((contact) => contact.status === "accepted")
-        .map((contact) => contact.contact_user_id),
-      ...groupInvitedUsers.keys(),
-    ]);
+    const listedIDs = new Set(groupInvitedUsers.keys());
     const availableUsers = users.filter((user) => !sameID(user.id, state.me.id) && !listedIDs.has(user.id));
     for (const user of availableUsers) {
       appendGroupUserSearchResult(results, user, () => {
-        const selectedIDs = selectedNewGroupMemberIDs();
-        selectedIDs.add(user.id);
-        groupInvitedUsers.set(user.id, user);
+        groupInvitedUsers.set(user.id, userWithDiscoveryCode(user, query));
         input.value = "";
         results.replaceChildren();
-        renderNewGroupMembers(selectedIDs);
+        renderNewGroupMembers();
       });
     }
     if (!availableUsers.length) {
@@ -8221,13 +9087,7 @@ async function openGroupDialog() {
   document.querySelector("#group-user-search").value = "";
   document.querySelector("#group-user-results").replaceChildren();
   updateGroupAvatarPreview();
-  const [contacts, conversations] = await Promise.all([
-    api("/api/contacts"),
-    api("/api/conversations"),
-  ]);
-  state.contacts = contacts;
-  state.conversations = conversations;
-  renderNewGroupMembers(new Set());
+  renderNewGroupMembers();
   document.querySelector("#group-dialog").showModal();
 }
 
@@ -8244,14 +9104,7 @@ async function createGroup(event) {
   setBusy(button, true);
   try {
     const groupKey = await generateGroupKey();
-    const selectedMembers = selectedIDs.map((userID) => {
-      const contact = state.contacts.find((item) => (
-        item.status === "accepted" && sameID(item.contact_user_id, userID)
-      ));
-      return contact
-        ? { ...contact, id: contact.contact_user_id }
-        : groupInvitedUsers.get(userID);
-    });
+    const selectedMembers = selectedIDs.map((userID) => groupInvitedUsers.get(userID));
     if (selectedMembers.some((member) => !member)) throw new Error("Utilisateur introuvable.");
     const members = [
       state.me,
@@ -8278,6 +9131,9 @@ async function createGroup(event) {
     const encryptedTitle = await encryptEnvelope(groupKey, name);
     const encryptedDescription = description ? await encryptEnvelope(groupKey, description) : null;
     const encryptedAvatar = groupAvatar ? await encryptEnvelope(groupKey, groupAvatar) : null;
+    const discoveryCodes = Object.fromEntries(selectedMembers
+      .filter((member) => member.discovery_code)
+      .map((member) => [String(member.id), member.discovery_code]));
     const result = await api("/api/conversations/group", {
       method: "POST",
       body: {
@@ -8286,6 +9142,7 @@ async function createGroup(event) {
         encrypted_avatar: encryptedAvatar,
         member_ids: selectedIDs,
         encrypted_keys: encryptedKeys,
+        discovery_codes: discoveryCodes,
       },
     });
     document.querySelector("#group-dialog").close();
@@ -8315,6 +9172,19 @@ async function handleSocketEvent(event) {
   } else if (event.type === "account_banned" || event.type === "sessions_revoked" || event.type === "role_changed") {
     sessionStorage.removeItem("crypto_phrase");
     location.href = "/login.html";
+  } else if (event.type === "session_approval_requested") {
+    toast(t("Un nouvel appareil demande l’accès à votre compte."));
+    if (document.querySelector("#profile-dialog")?.open) loadDeviceSecurity().catch(() => {});
+  } else if (event.type === "sessions_changed") {
+    try {
+      await loadDeviceSecurity();
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) {
+        clearSessionToken();
+        sessionStorage.removeItem("crypto_phrase");
+        location.href = "/login.html";
+      }
+    }
   } else if (event.type === "new_message") {
     invalidateConversationPreload(event.message.conversation_id);
     state.cache?.putMessages([event.message]);
@@ -8334,6 +9204,11 @@ async function handleSocketEvent(event) {
   } else if (event.type === "message_deleted") {
     await expireRenderedMessage(event.conversation_id, event.message_id);
     syncSharedCalendarFeed().catch(() => {});
+  } else if (event.type === "message_report_removed") {
+    invalidateConversationPreload(event.conversation_id);
+    if (sameID(state.current?.id, event.conversation_id)) {
+      await loadMessages(null, false);
+    }
   } else if (event.type === "contact_updated") {
     await refreshAll();
     await refreshCurrentConversationHeader();
@@ -8450,11 +9325,11 @@ function escapeText(value) {
   return node.innerHTML;
 }
 
-boot().catch((error) => {
-  dismissStartupSplash();
-  console.error(error);
-  toast(frenchErrorMessage(error, "Erreur de démarrage."), "error");
-});
+startBoot();
 
 window.addEventListener("pageshow", restoreChatFromHistory);
 window.addEventListener("pagehide", finishAdminNavigation);
+window.addEventListener("online", retryIncompleteBoot);
+window.addEventListener("pageshow", retryIncompleteBoot);
+window.addEventListener("focus", retryIncompleteBoot);
+document.addEventListener("visibilitychange", retryIncompleteBoot);

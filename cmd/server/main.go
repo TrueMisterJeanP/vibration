@@ -43,7 +43,7 @@ func main() {
 
 	hub := ws.NewHub()
 	authHandler := &auth.Handler{
-		DB: db, SecureCookies: cfg.SecureCookies, CookieSameSite: sameSiteMode(cfg.SessionSameSite), DisableRegistration: editionDisableRegistration(cfg.DisableRegistration),
+		DB: db, Hub: hub, SecureCookies: cfg.SecureCookies, CookieSameSite: sameSiteMode(cfg.SessionSameSite), DisableRegistration: editionDisableRegistration(cfg.DisableRegistration),
 		DisableInvitationCode: editionDisableInvitationCode(),
 		AuthLimiter:           auth.NewRateLimiter(cfg.AuthRateLimitPerMinute, time.Minute),
 	}
@@ -74,6 +74,9 @@ func main() {
 	mux.HandleFunc("GET /api/registration", authHandler.RegistrationSettings)
 	mux.HandleFunc("POST /api/register", authHandler.Register)
 	mux.HandleFunc("POST /api/login", authHandler.Login)
+	mux.HandleFunc("GET /api/session/status", authHandler.PendingSessionStatus)
+	mux.HandleFunc("POST /api/session/device-proof", authHandler.ProveTrustedDevice)
+	mux.HandleFunc("DELETE /api/session/pending", authHandler.CancelPendingSession)
 	mux.HandleFunc("POST /api/password/reset", authHandler.ResetPassword)
 	mux.HandleFunc("GET /api/terms", authHandler.Terms)
 	mux.Handle("GET /api/terms/status", authHandler.Middleware(http.HandlerFunc(authHandler.TermsStatus)))
@@ -83,7 +86,16 @@ func main() {
 	mux.Handle("PUT /api/me/identity", authHandler.Middleware(http.HandlerFunc(authHandler.UpdateIdentity)))
 	mux.Handle("PUT /api/me", authHandler.Middleware(http.HandlerFunc(userHandler.UpdateProfile)))
 	mux.Handle("POST /api/me/recovery-code", authHandler.Middleware(http.HandlerFunc(authHandler.RecoveryCode)))
+	mux.Handle("GET /api/me/sessions", authHandler.Middleware(http.HandlerFunc(authHandler.Sessions)))
+	mux.Handle("POST /api/me/sessions/preview", authHandler.Middleware(http.HandlerFunc(authHandler.ApprovalPreview)))
+	mux.Handle("POST /api/me/sessions/approve", authHandler.Middleware(http.HandlerFunc(authHandler.ApproveSession)))
+	mux.Handle("DELETE /api/me/sessions/{id}", authHandler.Middleware(http.HandlerFunc(authHandler.RevokeSession)))
+	mux.Handle("GET /api/me/trusted-devices", authHandler.Middleware(http.HandlerFunc(authHandler.TrustedDevices)))
+	mux.Handle("POST /api/me/trusted-devices/enroll", authHandler.Middleware(http.HandlerFunc(authHandler.EnrollTrustedDevice)))
+	mux.Handle("DELETE /api/me/trusted-devices/{id}", authHandler.Middleware(http.HandlerFunc(authHandler.RevokeTrustedDevice)))
+	mux.Handle("POST /api/me/discovery-code", authHandler.Middleware(http.HandlerFunc(userHandler.GenerateDiscoveryCode)))
 	mux.Handle("GET /api/users/search", authHandler.Middleware(http.HandlerFunc(userHandler.Search)))
+	mux.Handle("POST /api/users/search", authHandler.Middleware(http.HandlerFunc(userHandler.Search)))
 	mux.Handle("GET /api/contacts", authHandler.Middleware(http.HandlerFunc(contactHandler.List)))
 	mux.Handle("POST /api/contacts", authHandler.Middleware(http.HandlerFunc(contactHandler.Create)))
 	mux.Handle("POST /api/contacts/{id}/accept", authHandler.Middleware(http.HandlerFunc(contactHandler.Accept)))
@@ -118,6 +130,8 @@ func main() {
 	mux.Handle("DELETE /api/calendar/feeds/{id}", authHandler.Middleware(http.HandlerFunc(calendarHandler.RevokeSharedFeed)))
 	mux.Handle("GET /api/calendar-feed/{token}/calendar.ics", http.HandlerFunc(calendarHandler.SharedFeed))
 	mux.Handle("POST /api/messages/{id}/read", authHandler.Middleware(http.HandlerFunc(messageHandler.Read)))
+	mux.Handle("POST /api/messages/{id}/report", authHandler.Middleware(http.HandlerFunc(messageHandler.Report)))
+	mux.Handle("DELETE /api/messages/{id}/report", authHandler.Middleware(http.HandlerFunc(messageHandler.Unreport)))
 	mux.Handle("POST /api/messages/{id}/reactions", authHandler.Middleware(http.HandlerFunc(messageHandler.React)))
 	mux.Handle("POST /api/messages/{id}/pin", authHandler.Middleware(http.HandlerFunc(messageHandler.Pin)))
 	mux.Handle("POST /api/messages/{id}/poll/vote", authHandler.Middleware(http.HandlerFunc(messageHandler.VotePoll)))

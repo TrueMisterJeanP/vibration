@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"chat-pwa-go/internal/auth"
+	"chat-pwa-go/internal/carnet"
 	database "chat-pwa-go/internal/db"
+	"chat-pwa-go/internal/userdiscovery"
 )
 
 type testHub struct{}
@@ -457,6 +459,118 @@ func TestCreateGroupCanInviteUserWithoutPrivateContact(t *testing.T) {
 	var contacts int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM contacts`).Scan(&contacts); err != nil || contacts != 0 {
 		t.Fatalf("group invitation must not create a private contact, contacts=%d err=%v", contacts, err)
+	}
+}
+
+func TestCreateGroupRequiresPrivateCodeForInvisibleMember(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	handler := &Handler{DB: db, Hub: testHub{}}
+	owner := registerUser(t, authHandler, "private_group_owner")
+	member := registerUser(t, authHandler, "private_group_member")
+	code, codeHash, err := userdiscovery.GenerateCode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE users SET is_discoverable=0,discovery_code_hash=? WHERE id=2`, codeHash); err != nil {
+		t.Fatal(err)
+	}
+	mux := conversationMux(authHandler, handler)
+	body := map[string]any{
+		"encrypted_title": "encrypted-private-group-title",
+		"member_ids":      []int64{2},
+		"encrypted_keys": map[string]string{
+			"1": "encrypted-owner-key",
+			"2": "encrypted-member-key",
+		},
+	}
+	guessed := request(t, mux, http.MethodPost, "/api/conversations/group", body, owner)
+	if guessed.Code != http.StatusNotFound {
+		t.Fatalf("guessed hidden group member status=%d body=%s", guessed.Code, guessed.Body.String())
+	}
+	body["discovery_codes"] = map[string]string{"2": code}
+	created := request(t, mux, http.MethodPost, "/api/conversations/group", body, owner)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("private group code status=%d body=%s", created.Code, created.Body.String())
+	}
+	var result map[string]int64
+	if err := json.Unmarshal(created.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	accepted := request(t, mux, http.MethodPost, "/api/conversations/"+formatID(result["id"])+"/accept", nil, member)
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("group acceptance status=%d body=%s", accepted.Code, accepted.Body.String())
+	}
+	if err := carnet.Sync(db, 1); err != nil {
+		t.Fatal(err)
+	}
+	var username string
+	if err := db.QueryRow(`SELECT u.username FROM carnet_entries c JOIN users u ON u.id=c.contact_user_id
+		WHERE c.owner_id=1 AND c.contact_user_id=2`).Scan(&username); err != nil || username != "private_group_member" {
+		t.Fatalf("accepted hidden group member missing from carnet: username=%q err=%v", username, err)
+	}
+}
+
+func TestRotateGroupKeysRequiresPrivateCodeForAddedInvisibleMember(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	handler := &Handler{DB: db, Hub: testHub{}}
+	owner := registerUser(t, authHandler, "private_rotation_owner")
+	registerUser(t, authHandler, "private_rotation_member")
+	code, codeHash, err := userdiscovery.GenerateCode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE users SET is_discoverable=0,discovery_code_hash=? WHERE id=2`, codeHash); err != nil {
+		t.Fatal(err)
+	}
+	now := "2026-01-01T00:00:00Z"
+	result, err := db.Exec(`INSERT INTO conversations(type,encrypted_title,created_by,created_at) VALUES('group','encrypted-title',1,?)`, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationID, _ := result.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
+		VALUES(?,1,'owner-key','owner',?)`, conversationID, now); err != nil {
+		t.Fatal(err)
+	}
+	mux := conversationMux(authHandler, handler)
+	body := map[string]any{
+		"key_epoch":      2,
+		"added_user_ids": []int64{2},
+		"encrypted_keys": map[string]string{
+			"1": "encrypted-owner-key-epoch-2",
+			"2": "encrypted-member-key-epoch-2",
+		},
+		"encrypted_title": "encrypted-title-epoch-2",
+	}
+	guessed := request(t, mux, http.MethodPost, "/api/conversations/"+formatID(conversationID)+"/rotate-keys", body, owner)
+	if guessed.Code != http.StatusNotFound {
+		t.Fatalf("guessed hidden rotated member status=%d body=%s", guessed.Code, guessed.Body.String())
+	}
+	var memberCount, epoch int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM conversation_members WHERE conversation_id=? AND user_id=2`, conversationID).Scan(&memberCount); err != nil || memberCount != 0 {
+		t.Fatalf("failed rotation added hidden member, count=%d err=%v", memberCount, err)
+	}
+	if err := db.QueryRow(`SELECT current_key_epoch FROM conversations WHERE id=?`, conversationID).Scan(&epoch); err != nil || epoch != 1 {
+		t.Fatalf("failed rotation changed epoch=%d err=%v", epoch, err)
+	}
+	body["discovery_codes"] = map[string]string{"2": code}
+	rotated := request(t, mux, http.MethodPost, "/api/conversations/"+formatID(conversationID)+"/rotate-keys", body, owner)
+	if rotated.Code != http.StatusOK {
+		t.Fatalf("private rotation code status=%d body=%s", rotated.Code, rotated.Body.String())
+	}
+	var role string
+	if err := db.QueryRow(`SELECT role FROM conversation_members WHERE conversation_id=? AND user_id=2`, conversationID).Scan(&role); err != nil || role != "pending" {
+		t.Fatalf("private rotated member role=%q err=%v", role, err)
 	}
 }
 

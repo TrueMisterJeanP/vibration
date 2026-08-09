@@ -34,6 +34,7 @@ const (
 
 type Handler struct {
 	DB                    *sql.DB
+	Hub                   SessionHub
 	SecureCookies         bool
 	CookieSameSite        http.SameSite
 	DisableRegistration   bool
@@ -56,6 +57,10 @@ type authRequest struct {
 	NewPassword         string `json:"new_password"`
 	RememberMe          bool   `json:"remember_me"`
 	DesktopClient       bool   `json:"desktop_client"`
+	DeviceName          string `json:"device_name"`
+	DeviceType          string `json:"device_type"`
+	DeviceKeyID         string `json:"device_key_id"`
+	DevicePublicKey     string `json:"device_public_key"`
 }
 
 type User struct {
@@ -69,6 +74,8 @@ type User struct {
 	SigningPublicKey    string  `json:"signing_public_key,omitempty"`
 	SigningKeyID        string  `json:"signing_key_id,omitempty"`
 	Avatar              *string `json:"avatar"`
+	IsDiscoverable      bool    `json:"is_discoverable"`
+	HasDiscoveryCode    bool    `json:"has_discovery_code"`
 	IsAdmin             bool    `json:"is_admin"`
 	IsManager           bool    `json:"is_manager"`
 	IsBanned            bool    `json:"is_banned"`
@@ -122,6 +129,12 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.SigningPublicKey = canonicalSigningKey
+	deviceKeyID, devicePublicKey, err := canonicalTrustedDeviceCredential(input.DeviceKeyID, input.DevicePublicKey)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid trusted device credential")
+		return
+	}
+	input.DeviceKeyID, input.DevicePublicKey = deviceKeyID, devicePublicKey
 	if !h.allowAuthAttempt(w, r, "register", input.Username) {
 		return
 	}
@@ -244,18 +257,23 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, "registration failed")
 		return
 	}
-	sessionToken, err := h.createSession(w, id, true)
+	session, err := h.createSession(w, r, id, true, input, sessionTrust{})
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "session creation failed")
 		return
 	}
+	if err := h.enrollSessionCredential(id, session.Token, input); err != nil {
+		_, _ = h.DB.Exec(`DELETE FROM sessions WHERE id=?`, session.Token)
+		httpx.Error(w, http.StatusInternalServerError, "trusted device enrollment failed")
+		return
+	}
 	response := registerResponse{
 		User: User{ID: id, Username: input.Username, DisplayName: input.DisplayName, PublicKey: input.PublicKey,
-			SigningPublicKey: input.SigningPublicKey, SigningKeyID: input.SigningKeyID, IsAdmin: isAdmin, CreatedAt: now},
+			SigningPublicKey: input.SigningPublicKey, SigningKeyID: input.SigningKeyID, IsDiscoverable: true, IsAdmin: isAdmin, CreatedAt: now},
 		RecoveryCode: recoveryCode,
 	}
 	if input.DesktopClient {
-		response.SessionToken = sessionToken
+		response.SessionToken = session.Token
 	}
 	httpx.JSON(w, http.StatusCreated, response)
 }
@@ -331,16 +349,63 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusForbidden, "account banned")
 		return
 	}
-	sessionToken, err := h.createSession(w, id, input.RememberMe)
+	deviceKeyID, devicePublicKey, err := canonicalTrustedDeviceCredential(input.DeviceKeyID, input.DevicePublicKey)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid trusted device credential")
+		return
+	}
+	input.DeviceKeyID, input.DevicePublicKey = deviceKeyID, devicePublicKey
+	trustedDeviceID, knownTrustedDevice, err := h.trustedDeviceForKey(id, deviceKeyID)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "trusted device lookup failed")
+		return
+	}
+	hasTrustedDevice, err := h.hasTrustedDevices(id)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "session lookup failed")
+		return
+	}
+	requiresApproval := hasTrustedDevice
+	if !hasTrustedDevice {
+		requiresApproval, err = h.requiresSessionApproval(id)
+		if err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "session lookup failed")
+			return
+		}
+	}
+	trust := sessionTrust{ApprovalRequired: requiresApproval, TrustedDeviceID: trustedDeviceID, ProofRequired: knownTrustedDevice}
+	session, err := h.createSession(w, r, id, input.RememberMe, input, trust)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "session creation failed")
 		return
 	}
-	response := map[string]any{"ok": true}
-	if input.DesktopClient {
-		response["session_token"] = sessionToken
+	if !requiresApproval {
+		if err := h.enrollSessionCredential(id, session.Token, input); err != nil {
+			_, _ = h.DB.Exec(`DELETE FROM sessions WHERE id=?`, session.Token)
+			httpx.Error(w, http.StatusInternalServerError, "trusted device enrollment failed")
+			return
+		}
 	}
-	httpx.JSON(w, http.StatusOK, response)
+	response := map[string]any{"ok": !requiresApproval, "approval_required": requiresApproval}
+	if input.DesktopClient {
+		response["session_token"] = session.Token
+	}
+	status := http.StatusOK
+	if requiresApproval {
+		status = http.StatusAccepted
+		response["approval_code"] = session.ApprovalCode
+		response["approval_token"] = session.ApprovalToken
+		response["approval_expires_at"] = session.ApprovalExpiresAt
+		response["qr_code"] = session.QRCode
+		if session.DeviceChallenge != "" {
+			response["device_proof_required"] = true
+			response["device_challenge"] = session.DeviceChallenge
+		}
+		if h.Hub != nil && session.DeviceChallenge == "" {
+			h.Hub.SendToUser(id, map[string]any{"type": "session_approval_requested"})
+		}
+	}
+	httpx.JSON(w, status, response)
 }
 
 func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
@@ -385,6 +450,10 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := h.DB.Exec(`DELETE FROM sessions WHERE user_id=?`, id); err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "session revocation failed")
+		return
+	}
+	if _, err := h.DB.Exec(`DELETE FROM trusted_devices WHERE user_id=?`, id); err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "trusted device revocation failed")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "recovery_code": replacementCode})
@@ -464,13 +533,17 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	var user User
-	err := h.DB.QueryRow(`SELECT id,username,display_name,description,public_key,encrypted_private_key,crypto_salt,signing_public_key,signing_key_id,avatar,is_admin,is_manager,is_banned,created_at FROM users WHERE id=?`, UserID(r)).
+	var discoveryCodeHash sql.NullString
+	err := h.DB.QueryRow(`SELECT id,username,display_name,description,public_key,encrypted_private_key,crypto_salt,signing_public_key,signing_key_id,avatar,
+		is_discoverable,discovery_code_hash,is_admin,is_manager,is_banned,created_at FROM users WHERE id=?`, UserID(r)).
 		Scan(&user.ID, &user.Username, &user.DisplayName, &user.Description, &user.PublicKey, &user.EncryptedPrivateKey, &user.CryptoSalt,
-			&user.SigningPublicKey, &user.SigningKeyID, &user.Avatar, &user.IsAdmin, &user.IsManager, &user.IsBanned, &user.CreatedAt)
+			&user.SigningPublicKey, &user.SigningKeyID, &user.Avatar, &user.IsDiscoverable, &discoveryCodeHash,
+			&user.IsAdmin, &user.IsManager, &user.IsBanned, &user.CreatedAt)
 	if err != nil {
 		httpx.Error(w, http.StatusNotFound, "user not found")
 		return
 	}
+	user.HasDiscoveryCode = discoveryCodeHash.Valid && discoveryCodeHash.String != ""
 	httpx.JSON(w, http.StatusOK, user)
 }
 
