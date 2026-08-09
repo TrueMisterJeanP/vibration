@@ -2,45 +2,55 @@
 
 Application de messagerie web installable, responsive et chiffrée côté navigateur. Le serveur Go assure l’authentification, le routage REST/WebSocket, la persistance SQLite et les notifications Web Push, sans jamais déchiffrer les messages, noms de groupes ou fichiers.
 
+<p align="center">
+  <img src="docs/interface-community.png" alt="Interface de Vibration Community avec conversations, sondage, évènement, fichier partagé et messages épinglés" width="900">
+</p>
+
+<p align="center"><strong>Vibration Community 1.0.11</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
+
 ## Philosophie
 
 Vibration est né d'une idée simple : permettre à chacun de reprendre la maîtrise de ses données et de ses communications.
 
 La version publiée sur GitHub est l’édition **Community**. Elle permet d’installer une messagerie privée sur son propre serveur, avec un serveur Go léger, une interface web/PWA et une base SQLite locale. Le contenu des conversations reste chiffré côté navigateur : le serveur stocke et route les données, mais ne lit pas les messages ni les fichiers.
 
-## Edition Community
+## Édition Community
 
-La version Community est volontairement simple à installer et à comprendre.
+La version Community est volontairement simple à installer, à inspecter et à auto-héberger. Elle réunit dans une seule interface les échanges, les fichiers et les outils de coordination d’une équipe.
 
 Elle inclut :
 
-- inscription libre des utilisateurs ;
-- conversations privées ;
-- groupes ;
-- contacts ;
-- messages chiffrés ;
-- fichiers chiffrés ;
-- sondages chiffrés à réponses multiples avec durée de validité ;
-- évènements chiffrés et calendrier global des discussions ;
-- dossier global des fichiers et aperçus intégrés ;
-- liens temporaires de partage de fichiers, révocables par leur créateur ;
-- appels audio/vidéo WebRTC ;
-- tableau blanc partagé pendant les appels ;
-- notifications Web Push ;
-- interface web installable comme PWA ;
-- stockage SQLite local.
+- **messagerie** : conversations privées et groupes, réponses, réactions, accusés envoyé/reçu/lu, présence, saisie en temps réel, favoris, messages épinglés et messages éphémères ;
+- **organisation** : sondages chiffrés, évènements, calendrier global, export iCal local et retour direct à la discussion d’origine ;
+- **fichiers** : pièces jointes et messages vocaux chiffrés, dossier global, aperçus PDF/Office/médias et liens de partage temporaires révocables ;
+- **contacts et vie privée** : carnet d’adresses, recherche des membres visibles de l’instance par nom d’utilisateur, profil invisible et code privé renouvelable pour les contacts de confiance ;
+- **sécurité** : clés ECDH/ECDSA, enveloppes Argon2id, signatures vérifiées, empreintes d’identité, code de récupération et signalements sans transmission du message chiffré ;
+- **multi-appareil** : appareils de confiance, approbation par QR code ou code court, inventaire des sessions et révocation depuis le profil ;
+- **collaboration en direct** : appels audio/vidéo WebRTC, partage d’écran et tableau blanc partagé ;
+- **expérience web et mobile** : interface responsive en six langues, PWA, cache de l’interface, notifications Web Push et reconnexion automatique ;
+- **auto-hébergement** : serveur Go compact, base SQLite locale et aucun service d’analytique ou de télémétrie Vibration requis.
 
-Elle n’inclut pas :
+## Nouveautés de Community 1.0.11
 
-- pas de console d’administration complète ;
-- pas de panneau gestionnaire ;
-- pas de code d’activation : tout le monde peut s’inscrire si l’instance est publique ;
-- pas de fédération entre serveurs ;
-- pas de migration MariaDB/MySQL/PostgreSQL ;
-- pas de configuration Coturn ;
-- pas de configuration WebRTC avancée ;
-- pas d’application desktop/mobile Tauri ;
-- appels WebRTC avec uniquement `stun:stun.l.google.com:19302`.
+- **Appareils de confiance** : un appareil connu prouve son identité avec une clé ECDSA locale non exportable. Un nouvel appareil reste en attente jusqu’à sa validation depuis une session déjà active.
+- **Scanner un QR code** : le QR code d’un nouvel appareil peut être lu avec la caméra ou depuis une image. Un code court à usage unique reste disponible en complément ; les deux expirent après cinq minutes.
+- **Gestion complète des sessions** : le profil distingue les appareils approuvés des sessions ouvertes. Il permet de déconnecter une session ou de retirer la confiance à un appareil et à toutes ses sessions.
+- **Profil invisible** : un membre peut ne plus apparaître dans les recherches publiques et générer un code privé sécurisé pour être retrouvé dans **+ Contact** ou **+ Groupe** par les seules personnes auxquelles il le transmet.
+- **Recherche et création de groupes améliorées** : recherche par nom d’utilisateur sur les membres visibles de l’instance, recherche par code privé et, lorsqu’ils existent, affichage des administrateurs et gestionnaires par rôle. Les membres choisis sont clairement listés et peuvent être retirés avant la création du groupe.
+- **Signalements réversibles et confidentiels** : l’utilisateur sélectionne une catégorie d’infraction sans transmettre le contenu chiffré. Le signalement peut ensuite être retiré ; la modération Enterprise peut également annuler sa sélection.
+- **Reprise mobile renforcée** : au retour dans la PWA sur iPhone ou iPad, l’initialisation interrompue et la connexion temps réel sont relancées automatiquement sans imposer de redémarrage manuel.
+- **Traductions complètes** : les nouveaux écrans et messages sont disponibles en français, anglais, espagnol, italien, portugais et allemand.
+
+Les fonctions suivantes restent réservées à l’édition Enterprise :
+
+- console d’administration complète et panneau gestionnaire ;
+- code d’activation et contrôle des inscriptions ;
+- fédération entre serveurs approuvés ;
+- migration MariaDB/MySQL/PostgreSQL ;
+- configuration Coturn et WebRTC avancée ;
+- application desktop/mobile Tauri et accompagnement au déploiement.
+
+En Community, les appels WebRTC utilisent `stun:stun.l.google.com:19302` et l’inscription reste ouverte lorsque l’instance est accessible publiquement.
 
 ## Audit et sécurité
 
@@ -165,11 +175,15 @@ Placer ensuite Vibration derrière un reverse proxy HTTPS, par exemple Nginx ou 
 - clés privées ECDH et ECDSA chiffrées par AES-GCM avec une clé Argon2id dérivée de la phrase secrète ;
 - migration transparente des anciennes enveloppes PBKDF2 après déverrouillage, sans changement de la phrase ni de la clé ECDH ;
 - empreintes d’identité persistantes et blocage explicite lorsqu’une clé ECDH ou ECDSA change ;
-- contacts et recherche par nom d’utilisateur ;
+- contacts, carnet d’adresses et recherche des membres visibles de l’instance par nom d’utilisateur ;
+- profil invisible, génération d’un code privé renouvelable et recherche de ce code dans **+ Contact** et **+ Groupe** ;
+- recherche par rôle des administrateurs et gestionnaires lorsqu’ils existent sur l’instance ;
 - conversations privées avec clé AES dérivée par ECDH + HKDF ;
 - groupes avec clé AES aléatoire enveloppée par ECDH pour chaque membre ;
+- création de groupe avec recherche sur l’instance, liste des membres réellement sélectionnés et retrait avant validation ;
 - messages texte AES-GCM, IV unique, historique paginé à 50 messages ;
 - signature individuelle ECDSA des nouveaux textes, fichiers, sondages et évènements, vérifiée avant déchiffrement ;
+- signalement réversible d’un message par catégorie d’infraction, sans transmission de son contenu chiffré ;
 - réponses, réactions, messages épinglés personnels avec fenêtre latérale dédiée, et messages éphémères configurables par appui long sur **Envoyer** ;
 - messages vocaux enregistrés dans le navigateur puis envoyés comme fichiers audio chiffrés ;
 - fichiers, nom de fichier et type MIME chiffrés avant envoi, limite 25 Mo ;
@@ -179,9 +193,10 @@ Placer ensuite Vibration derrière un reverse proxy HTTPS, par exemple Nginx ou 
 - liens publics temporaires et révocables pour télécharger un fichier : la clé reste dans le fragment de l’URL et le serveur conserve uniquement une copie chiffrée ;
 - acceptation obligatoire des conditions d’utilisation après l’inscription ;
 - événements WebSocket : nouveaux messages, reçu, lu, saisie, présence et mise à jour ;
-- PWA, cache applicatif hors ligne, icônes 192/512 et Service Worker ;
+- PWA, cache applicatif hors ligne, icônes 192/512, Service Worker et reprise automatique après suspension sur iPhone/iPad ;
 - abonnements Web Push persistés dans SQLite et clés VAPID générées automatiquement ;
-- interface mobile et bureau en HTML, CSS et JavaScript natif.
+- interface mobile et bureau en HTML, CSS et JavaScript natif ;
+- interface et nouveaux parcours disponibles en français, anglais, espagnol, italien, portugais et allemand.
 
 ## Fonctionnalités Enterprise
 
