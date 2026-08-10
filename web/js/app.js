@@ -85,6 +85,9 @@ const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
 const APP_BUILD = "calendar-toolbar-grid-v311";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
+const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
+const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;
+const ADMIN_PAGE_SIZE = 10;
 
 window.VIBRATION_BUILD = APP_BUILD;
 console.info(`Vibration build ${APP_BUILD}`);
@@ -748,6 +751,7 @@ async function refreshFileQuotas() {
 
 async function boot() {
   sessionStorage.removeItem(ADMIN_RETURN_HISTORY_KEY);
+  sessionStorage.removeItem(ADMIN_BOOTSTRAP_CACHE_KEY);
   if (!state.me) {
     const [me, edition, terms] = await Promise.all([api("/api/me"), api("/api/edition"), api("/api/terms/status")]);
     if (!terms.accepted) {
@@ -770,6 +774,7 @@ async function boot() {
     adminLink.hidden = !canOpenAdmin;
     adminLink.textContent = t(state.me.is_manager && !state.me.is_admin ? "Gestion" : "Administration");
     adminLink.addEventListener("click", prepareAdminNavigation);
+    if (canOpenAdmin) bindAdminPanelPreload(adminLink);
     appShellPrepared = true;
   }
   if (!state.privateKey || !state.signingPrivateKey) await unlock();
@@ -784,6 +789,7 @@ async function boot() {
   if (!state.socket || state.socket.closed) connectSocket();
   await refreshAll();
   appReady = true;
+  scheduleAdminPanelPreload();
   scheduleGlobalFilesPreload();
   if (!appNotificationsStarted) {
     appNotificationsStarted = true;
@@ -2840,10 +2846,79 @@ function connectSocket() {
 }
 
 let adminNavigationPending = false;
+let adminPanelPreload = null;
+let adminPanelPreloadScheduled = false;
+let adminShellPreloaded = false;
+
+function bindAdminPanelPreload(link) {
+  warmAdminShell();
+  link.addEventListener("pointerenter", preloadAdminPanel, { passive: true });
+  link.addEventListener("focus", preloadAdminPanel);
+  link.addEventListener("touchstart", preloadAdminPanel, { passive: true });
+}
+
+function warmAdminShell() {
+  if (adminShellPreloaded) return;
+  adminShellPreloaded = true;
+  for (const [rel, href] of [
+    ["prefetch", "/admin.html?from=chat"],
+    ["modulepreload", "/js/admin.js?v=admin-instant-v312"],
+  ]) {
+    const link = document.createElement("link");
+    link.rel = rel;
+    link.href = href;
+    document.head.append(link);
+  }
+}
+
+function cachedAdminBootstrapIsFresh() {
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(ADMIN_BOOTSTRAP_CACHE_KEY) || "null");
+    return cached?.value?.me?.id === state.me?.id && Number.isFinite(cached.cached_at) &&
+      Date.now() - cached.cached_at <= ADMIN_BOOTSTRAP_MAX_AGE_MS;
+  } catch {
+    return false;
+  }
+}
+
+function preloadAdminPanel() {
+  if (!state.edition?.admin_panel || (!state.me?.is_admin && !state.me?.is_manager)) return Promise.resolve();
+  warmAdminShell();
+  if (cachedAdminBootstrapIsFresh()) return Promise.resolve();
+  if (adminPanelPreload) return adminPanelPreload;
+  adminPanelPreload = api(`/api/admin/bootstrap?page=1&limit=${ADMIN_PAGE_SIZE}`)
+    .then((value) => {
+      if (!value?.access || value.me?.id !== state.me?.id) return;
+      try {
+        sessionStorage.setItem(ADMIN_BOOTSTRAP_CACHE_KEY, JSON.stringify({ cached_at: Date.now(), value }));
+      } catch (error) {
+        console.warn("Préchargement de l’administration non mémorisé", error);
+      }
+    })
+    .catch((error) => console.warn("Préchargement de l’administration impossible", error))
+    .finally(() => { adminPanelPreload = null; });
+  return adminPanelPreload;
+}
+
+function scheduleAdminPanelPreload() {
+  if (adminPanelPreloadScheduled || cachedAdminBootstrapIsFresh() ||
+      !state.edition?.admin_panel || (!state.me?.is_admin && !state.me?.is_manager)) return;
+  adminPanelPreloadScheduled = true;
+  const run = () => {
+    adminPanelPreloadScheduled = false;
+    preloadAdminPanel();
+  };
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(run, { timeout: 1500 });
+  } else {
+    window.setTimeout(run, 250);
+  }
+}
 
 function prepareAdminNavigation(event) {
   const nonPrimaryClick = typeof event.button === "number" && event.button !== 0;
   if (event.defaultPrevented || nonPrimaryClick || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  preloadAdminPanel();
   adminNavigationPending = true;
   try {
     sessionStorage.setItem(ADMIN_RETURN_HISTORY_KEY, location.href);
@@ -2875,6 +2950,9 @@ function clearConversationSelectionForAdmin() {
 function restoreChatFromHistory(event) {
   if (!event.persisted || !sessionStorage.getItem(ADMIN_RETURN_HISTORY_KEY)) return;
   sessionStorage.removeItem(ADMIN_RETURN_HISTORY_KEY);
+  sessionStorage.removeItem(ADMIN_BOOTSTRAP_CACHE_KEY);
+  adminPanelPreload = null;
+  scheduleAdminPanelPreload();
   callPageExitHandled = false;
   window.addEventListener("beforeunload", handleCallPageExit);
   if (!state.socket || state.socket.closed) connectSocket();
@@ -5884,7 +5962,30 @@ function removeCallPeer(userID) {
   refreshConversationCallIndicators();
 }
 
+async function handleCallSignalFailure(event) {
+  const call = state.call;
+  if (!call || call.id !== event.call_id || !sameID(call.conversationID, event.conversation_id)) return;
+  if (["call_hangup", "call_reject"].includes(event.signal_type)) return;
+  const targetName = await memberDisplayName(event.conversation_id, event.target_user_id, "un participant");
+  if (state.call !== call) return;
+  if (isGroupCall(call)) {
+    removeCallPeer(event.target_user_id);
+    toast(`${targetName} est indisponible pour cet appel.`, "error");
+    return;
+  }
+  const history = call.status === "ringing"
+    ? `${callHistoryLabel(call.media)} impossible : correspondant indisponible.`
+    : `${callHistoryLabel(call.media)} interrompu : signalisation indisponible.`;
+  logCallHistory(call, history);
+  await clearCallState(call.conversationID);
+  toast("Appel interrompu : le correspondant ne reçoit plus la signalisation.", "error");
+}
+
 async function handleCallSignal(event) {
+  if (event.type === "call_signal_failed") {
+    await handleCallSignalFailure(event);
+    return;
+  }
   if (event.user_id === state.me.id) return;
   if (event.target_user_id && event.target_user_id !== state.me.id) return;
   const conversation = state.conversations.find((item) => sameID(item.id, event.conversation_id));

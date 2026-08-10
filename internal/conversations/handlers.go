@@ -89,26 +89,58 @@ type KeyEnvelope struct {
 	SenderPublicKey          string `json:"sender_public_key"`
 }
 
+// listConversationsQuery replaces the seven correlated subqueries that were
+// evaluated once per conversation row with three aggregates computed once for
+// the caller's memberships. `memberships` is the driving set and is restricted
+// to a single user, so the aggregate scans stay proportional to that user's
+// conversations rather than to the whole message table.
+const listConversationsQuery = `WITH memberships AS (
+		SELECT cm.conversation_id,cm.encrypted_conversation_key,cm.role,cm.favorite_at,cm.created_at
+		FROM conversation_members cm WHERE cm.user_id=?
+	), visible AS (
+		SELECT m.conversation_id,MAX(m.created_at) AS last_at,MAX(m.id) AS last_id
+		FROM messages m JOIN memberships mm ON mm.conversation_id=m.conversation_id
+		WHERE m.created_at>=mm.created_at AND (m.expires_at IS NULL OR m.expires_at>?)
+		GROUP BY m.conversation_id
+	), unread AS (
+		SELECT m.conversation_id,COUNT(*) AS unread_count
+		FROM messages m
+		JOIN memberships mm ON mm.conversation_id=m.conversation_id
+		JOIN message_receipts mr ON mr.message_id=m.id AND mr.user_id=?
+		WHERE m.created_at>=mm.created_at AND mr.status<>'read' AND (m.expires_at IS NULL OR m.expires_at>?)
+		GROUP BY m.conversation_id
+	), member_counts AS (
+		SELECT acm.conversation_id,COUNT(*) AS member_count
+		FROM conversation_members acm
+		JOIN memberships mm ON mm.conversation_id=acm.conversation_id
+		GROUP BY acm.conversation_id
+	)
+	SELECT c.id,c.type,c.encrypted_title,c.encrypted_description,c.encrypted_avatar,c.federation_key_id,fi.base_url,ru.remote_username,c.current_key_epoch,c.rotation_required,
+	c.created_by,c.created_at,mm.encrypted_conversation_key,mm.role,mm.favorite_at,
+	v.last_at,
+	lm.encrypted_content,
+	lm.iv,
+	COALESCE(lm.key_epoch,1),
+	CASE WHEN lf.id IS NULL THEN 0 ELSE 1 END,
+	COALESCE(un.unread_count,0),
+	COALESCE(mc.member_count,0)
+	FROM memberships mm
+	JOIN conversations c ON c.id=mm.conversation_id
+	LEFT JOIN visible v ON v.conversation_id=c.id
+	LEFT JOIN messages lm ON lm.id=v.last_id
+	LEFT JOIN files lf ON lf.message_id=lm.id
+	LEFT JOIN unread un ON un.conversation_id=c.id
+	LEFT JOIN member_counts mc ON mc.conversation_id=c.id
+	LEFT JOIN federated_conversations fc ON fc.local_conversation_id=c.id
+	LEFT JOIN federated_instances fi ON fi.id=fc.instance_id
+	LEFT JOIN users ru ON ru.id=fc.remote_user_id
+	ORDER BY CASE WHEN mm.favorite_at IS NULL THEN 1 ELSE 0 END,mm.favorite_at DESC,
+		COALESCE(v.last_at,mm.created_at,c.created_at) DESC,c.id DESC`
+
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	rows, err := h.DB.Query(`SELECT c.id,c.type,c.encrypted_title,c.encrypted_description,c.encrypted_avatar,c.federation_key_id,fi.base_url,ru.remote_username,c.current_key_epoch,c.rotation_required,
-		c.created_by,c.created_at,cm.encrypted_conversation_key,cm.role,cm.favorite_at,
-		(SELECT MAX(created_at) FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?)),
-		(SELECT encrypted_content FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
-		(SELECT iv FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
-		COALESCE((SELECT key_epoch FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),1),
-		COALESCE((SELECT f.id IS NOT NULL FROM messages lm LEFT JOIN files f ON f.message_id=lm.id WHERE lm.conversation_id=c.id AND lm.created_at>=cm.created_at AND (lm.expires_at IS NULL OR lm.expires_at>?) ORDER BY lm.id DESC LIMIT 1),0),
-		(SELECT COUNT(*) FROM messages m JOIN message_receipts mr ON mr.message_id=m.id
-		WHERE m.conversation_id=c.id AND m.created_at>=cm.created_at AND mr.user_id=? AND mr.status<>'read' AND (m.expires_at IS NULL OR m.expires_at>?)),
-		(SELECT COUNT(*) FROM conversation_members personal_cm WHERE personal_cm.conversation_id=c.id)
-		FROM conversations c JOIN conversation_members cm ON cm.conversation_id=c.id
-		LEFT JOIN federated_conversations fc ON fc.local_conversation_id=c.id
-		LEFT JOIN federated_instances fi ON fi.id=fc.instance_id
-		LEFT JOIN users ru ON ru.id=fc.remote_user_id
-		WHERE cm.user_id=?
-		ORDER BY CASE WHEN cm.favorite_at IS NULL THEN 1 ELSE 0 END,cm.favorite_at DESC,
-			COALESCE((SELECT MAX(created_at) FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?)),cm.created_at,c.created_at) DESC,c.id DESC`,
-		now, now, now, now, now, auth.UserID(r), now, auth.UserID(r), now)
+	userID := auth.UserID(r)
+	rows, err := h.DB.Query(listConversationsQuery, userID, now, userID, now)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "conversation lookup failed")
 		return
@@ -121,7 +153,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		if rows.Scan(&item.ID, &item.Type, &item.EncryptedTitle, &item.EncryptedDescription, &item.EncryptedAvatar, &item.FederationKeyID,
 			&item.FederationInstanceURL, &item.RemoteUsername, &item.CurrentKeyEpoch, &item.RotationRequired, &item.CreatedBy, &item.CreatedAt, &item.EncryptedConversationKey, &item.Role, &item.FavoriteAt,
 			&item.LastMessageAt, &item.LastMessageEncrypted, &item.LastMessageIV, &item.LastMessageKeyEpoch, &item.LastMessageHasFile, &item.UnreadCount, &memberCount) == nil {
-			item.IsPersonal = item.Type == "private" && item.CreatedBy == auth.UserID(r) && memberCount == 1
+			item.IsPersonal = item.Type == "private" && item.CreatedBy == userID && memberCount == 1
 			result = append(result, item)
 		}
 	}

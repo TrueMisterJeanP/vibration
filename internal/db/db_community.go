@@ -47,7 +47,14 @@ func OpenReadOnly(path string) (*sql.DB, error) {
 	return database, nil
 }
 
-func OpenConfigured(driver, sqlitePath, _ string) (*sql.DB, error) {
+func OpenConfigured(driver, sqlitePath, dsn string) (*sql.DB, error) {
+	return OpenConfiguredPool(driver, sqlitePath, dsn, DefaultPool())
+}
+
+// OpenConfiguredPool keeps the enterprise signature so shared code compiles
+// unchanged. The community edition supports SQLite only, which always runs on a
+// single connection, so the pool settings are not applicable.
+func OpenConfiguredPool(driver, sqlitePath, _ string, _ Pool) (*sql.DB, error) {
 	switch strings.ToLower(strings.TrimSpace(driver)) {
 	case "", "sqlite", "sqlite3":
 		return Open(sqlitePath)

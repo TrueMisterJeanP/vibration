@@ -6,7 +6,7 @@ Application de messagerie web installable, responsive et chiffrée côté naviga
   <img src="docs/interface-community.png" alt="Interface de Vibration Community avec conversations, sondage, évènement, fichier partagé et messages épinglés" width="900">
 </p>
 
-<p align="center"><strong>Vibration Community 1.0.16</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
+<p align="center"><strong>Vibration Community 1.0.17</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
 
 ## Philosophie
 
@@ -30,7 +30,13 @@ Elle inclut :
 - **expérience web et mobile** : interface responsive en six langues, PWA, cache de l’interface, notifications Web Push et reconnexion automatique ;
 - **auto-hébergement** : serveur Go compact, base SQLite locale et aucun service d’analytique ou de télémétrie Vibration requis.
 
-## Nouveautés de Community 1.0.16
+## Nouveautés de Community 1.0.17
+
+- **Temps réel plus robuste** : les évènements persistants ne sont plus abandonnés silencieusement lorsqu’un client WebSocket est trop lent. La connexion demande alors une resynchronisation, tandis que la présence et la saisie restent prioritaires seulement lorsque la capacité le permet.
+- **Appels plus fiables sous charge** : la signalisation WebRTC dispose d’une file dédiée et l’interface avertit désormais explicitement l’utilisateur lorsqu’une offre, une réponse ou un candidat ICE n’a pas pu être transmis.
+- **Chargement des conversations accéléré** : réactions, sondages et évènements sont récupérés par lots, ce qui maintient un nombre constant de requêtes par page de messages.
+- **Accusés de lecture cohérents** : un message déjà marqué comme lu ne peut plus revenir à l’état livré lors d’une mise à jour concurrente.
+- **Activité de session maîtrisée** : l’écriture de la dernière activité est limitée sans relâcher les contrôles de révocation, d’expiration, de bannissement ou d’approbation.
 
 - **Dossier complet et fiable** : les images et les fichiers dont les empreintes de contrôle sont absentes apparaissent désormais correctement dans la liste globale.
 - **Dossier adapté aux longues listes** : les fichiers sont chargés par pages au fil du défilement ; la première page et ses noms déchiffrés sont préparés en arrière-plan pour rendre l’ouverture immédiate sans conserver de données en clair sur le serveur.

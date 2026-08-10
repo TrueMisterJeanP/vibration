@@ -1,4 +1,4 @@
-const CACHE = "chat-pwa-go-v311";
+const CACHE = "chat-pwa-go-v312";
 const SHELL = [
   "/", "/index.html", "/login.html", "/link-device.html", "/share.html", "/css/style.css?v=calendar-toolbar-grid-v311",
   "/js/app.js?v=calendar-toolbar-grid-v311", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios-resume-v297", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=calendar-toolbar-grid-v311",
@@ -22,8 +22,9 @@ const SHELL = [
   "/vendor/html2canvas/html2canvas.min.js?v=office-faithful-preview-v265",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/person.svg", "/icons/group.svg",
 ];
-const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=admin-bootstrap-v301"];
+const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=admin-instant-v312"];
 const STARTUP_CACHE_PATHS = new Set(["/", "/index.html", "/css/style.css", "/js/theme.js"]);
+const ADMIN_CACHE_PATHS = new Set(["/admin.html", "/js/admin.js", "/js/api.js", "/js/ui.js", "/js/i18n.js"]);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then(async (cache) => {
@@ -44,6 +45,19 @@ self.addEventListener("fetch", (event) => {
   if (STARTUP_CACHE_PATHS.has(url.pathname)) {
     event.respondWith(
       caches.match(event.request).then((cached) => {
+        if (cached) return cached;
+        return fetch(event.request).then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+          return response;
+        });
+      }),
+    );
+    return;
+  }
+  if (ADMIN_CACHE_PATHS.has(url.pathname)) {
+    event.respondWith(
+      caches.match(event.request, { ignoreSearch: url.pathname === "/admin.html" }).then((cached) => {
         if (cached) return cached;
         return fetch(event.request).then((response) => {
           const copy = response.clone();

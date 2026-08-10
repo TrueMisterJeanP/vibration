@@ -30,6 +30,13 @@ func editionDatabaseConfig(_ database.ActiveConfig) database.ActiveConfig {
 	return database.ActiveConfig{Driver: "sqlite"}
 }
 
+// editionSupportsExternalDatabase reports false because the community edition
+// runs on SQLite by design: selecting sqlite there is the documented behaviour,
+// not an accidental fallback.
+func editionSupportsExternalDatabase() bool {
+	return false
+}
+
 func editionDisableRegistration(_ bool) bool {
 	return false
 }

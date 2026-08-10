@@ -21,7 +21,7 @@ type FileQuotas struct {
 }
 
 type settingsQueryer interface {
-	QueryRow(query string, args ...any) *sql.Row
+	Query(query string, args ...any) (*sql.Rows, error)
 }
 
 func DefaultFileQuotas() FileQuotas {
@@ -33,26 +33,30 @@ func DefaultFileQuotas() FileQuotas {
 
 func LoadFileQuotas(db settingsQueryer) (FileQuotas, error) {
 	quotas := DefaultFileQuotas()
-	for _, item := range []struct {
-		key   string
-		value *int64
-	}{
-		{FileQuotaMaxFileSizeKey, &quotas.MaxFileSize},
-		{FileQuotaMaxUserSizeKey, &quotas.MaxUserStorage},
-	} {
-		var raw string
-		err := db.QueryRow("SELECT value FROM app_settings WHERE `key`=?", item.key).Scan(&raw)
-		if err == sql.ErrNoRows {
-			continue
-		}
-		if err != nil {
+	rows, err := db.Query("SELECT `key`,value FROM app_settings WHERE `key` IN (?,?)",
+		FileQuotaMaxFileSizeKey, FileQuotaMaxUserSizeKey)
+	if err != nil {
+		return FileQuotas{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, raw string
+		if err := rows.Scan(&key, &raw); err != nil {
 			return FileQuotas{}, err
 		}
 		parsed, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || parsed <= 0 {
-			return FileQuotas{}, fmt.Errorf("invalid file quota setting %s", item.key)
+			return FileQuotas{}, fmt.Errorf("invalid file quota setting %s", key)
 		}
-		*item.value = parsed
+		switch key {
+		case FileQuotaMaxFileSizeKey:
+			quotas.MaxFileSize = parsed
+		case FileQuotaMaxUserSizeKey:
+			quotas.MaxUserStorage = parsed
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return FileQuotas{}, err
 	}
 	if err := ValidateFileQuotas(quotas); err != nil {
 		return FileQuotas{}, err

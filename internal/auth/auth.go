@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"chat-pwa-go/internal/httpx"
@@ -40,6 +41,14 @@ type Handler struct {
 	DisableRegistration   bool
 	DisableInvitationCode bool
 	AuthLimiter           *RateLimiter
+	// SessionActivityInterval overrides the throttling window for
+	// `sessions.last_seen_at` writes. Zero uses sessionActivityInterval.
+	SessionActivityInterval time.Duration
+
+	activityOnce sync.Once
+	activity     *sessionActivityTracker
+	termsOnce    sync.Once
+	terms        *settings.TermsGate
 }
 
 type authRequest struct {

@@ -34,11 +34,15 @@ func main() {
 		log.Fatal(err)
 	}
 	configuredDatabase = editionDatabaseConfig(configuredDatabase)
+	if err := guardSQLiteFallback(cfg, configuredDatabase); err != nil {
+		log.Fatal(err)
+	}
 	activeDatabase := configuredDatabase
-	db, err := openConfiguredDatabase(configuredDatabase, cfg.DatabasePath)
+	db, err := openConfiguredDatabase(configuredDatabase, cfg.DatabasePath, databasePool(cfg))
 	if err != nil {
 		log.Fatal(err)
 	}
+	logDatabasePool(configuredDatabase, cfg)
 	defer db.Close()
 
 	hub := ws.NewHub()
@@ -170,6 +174,7 @@ func main() {
 		})
 	})))
 	mux.Handle("GET /api/ws", authHandler.Middleware(wsHandler))
+	registerMetricsRoute(mux, cfg.MetricsToken, db, hub)
 	registerFederationRoutes(mux, routeDeps)
 	registerEditionRoutes(mux, routeDeps)
 	webDir := strings.TrimSpace(os.Getenv("WEB_DIR"))
@@ -198,15 +203,54 @@ func main() {
 	}
 }
 
-func openConfiguredDatabase(configured database.ActiveConfig, sqlitePath string) (*sql.DB, error) {
+func databasePool(cfg config.Config) database.Pool {
+	return database.Pool{
+		MaxOpenConns:    cfg.DatabasePool.MaxOpenConns,
+		MaxIdleConns:    cfg.DatabasePool.MaxIdleConns,
+		ConnMaxLifetime: cfg.DatabasePool.ConnMaxLifetime,
+		ConnMaxIdleTime: cfg.DatabasePool.ConnMaxIdleTime,
+	}
+}
+
+func logDatabasePool(configured database.ActiveConfig, cfg config.Config) {
 	if database.IsSQLiteDriver(configured.Driver) {
-		return database.OpenConfigured(configured.Driver, sqlitePath, configured.DSN)
+		return
+	}
+	log.Printf("database %s pool max_open=%d max_idle=%d conn_max_lifetime=%s conn_max_idle_time=%s",
+		configured.Driver, cfg.DatabasePool.MaxOpenConns, cfg.DatabasePool.MaxIdleConns,
+		cfg.DatabasePool.ConnMaxLifetime, cfg.DatabasePool.ConnMaxIdleTime)
+}
+
+// guardSQLiteFallback refuses to start on SQLite when the environment asks for
+// an external database. Without it a stale data/database_config.json silently
+// downgrades a MariaDB deployment to the local SQLite file, which looks healthy
+// while serving an empty, unreplicated database.
+func guardSQLiteFallback(cfg config.Config, configured database.ActiveConfig) error {
+	if !database.IsSQLiteDriver(configured.Driver) {
+		return nil
+	}
+	if database.IsSQLiteDriver(cfg.DatabaseDriver) || !editionSupportsExternalDatabase() {
+		return nil
+	}
+	if cfg.DatabaseAllowSQLiteOverride {
+		log.Printf("warning: DATABASE_DRIVER=%s but %s selects sqlite; continuing on sqlite because DATABASE_ALLOW_SQLITE_OVERRIDE=true",
+			cfg.DatabaseDriver, cfg.DatabaseConfigPath)
+		return nil
+	}
+	return fmt.Errorf("DATABASE_DRIVER=%s is configured but %s selects sqlite; refusing to fall back to sqlite silently "+
+		"(fix the stored configuration, or set DATABASE_ALLOW_SQLITE_OVERRIDE=true to accept it)",
+		cfg.DatabaseDriver, cfg.DatabaseConfigPath)
+}
+
+func openConfiguredDatabase(configured database.ActiveConfig, sqlitePath string, pool database.Pool) (*sql.DB, error) {
+	if database.IsSQLiteDriver(configured.Driver) {
+		return database.OpenConfiguredPool(configured.Driver, sqlitePath, configured.DSN, pool)
 	}
 	const startupWait = 90 * time.Second
 	deadline := time.Now().Add(startupWait)
 	var lastErr error
 	for attempt := 1; ; attempt++ {
-		db, err := database.OpenConfigured(configured.Driver, sqlitePath, configured.DSN)
+		db, err := database.OpenConfiguredPool(configured.Driver, sqlitePath, configured.DSN, pool)
 		if err == nil {
 			if attempt > 1 {
 				log.Printf("database %s available after retry", configured.Driver)

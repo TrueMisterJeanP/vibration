@@ -87,6 +87,7 @@ func SaveTerms(db *sql.DB, content string) (Terms, bool, error) {
 	if err := tx.Commit(); err != nil {
 		return Terms{}, false, err
 	}
+	InvalidateTerms()
 	return next, true, nil
 }
 

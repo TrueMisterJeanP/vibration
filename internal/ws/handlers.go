@@ -58,7 +58,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID := auth.UserID(r)
-	client := &Client{UserID: userID, Send: make(chan []byte, 64), Kick: make(chan []byte, 1), Done: make(chan struct{})}
+	client := NewClient(userID)
 	first := h.Hub.Register(client)
 	h.sendPresenceState(userID)
 	if first {
@@ -71,6 +71,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.readLoop(connection, client)
 	last := h.Hub.Unregister(client)
 	close(client.Send)
+	close(client.Call)
 	_ = connection.Close()
 	if last {
 		h.broadcastPresence(userID, "user_offline")
@@ -100,7 +101,15 @@ func (h *Handler) writeLoop(connection *websocket.Conn, client *Client) {
 	for {
 		select {
 		case <-client.Done:
-			_ = connection.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "account disabled"))
+			_ = connection.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if client.policyClose.Load() {
+				_ = connection.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "account disabled"))
+			} else {
+				// Backpressure or shutdown: ask the client to come back. It
+				// refetches conversations and messages on reconnect, so the
+				// events that did not fit in the queue are not lost.
+				_ = connection.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseTryAgainLater, "resync required"))
+			}
 			_ = connection.Close()
 			return
 		case message := <-client.Kick:
@@ -110,6 +119,15 @@ func (h *Handler) writeLoop(connection *websocket.Conn, client *Client) {
 			_ = connection.Close()
 			return
 		case message, ok := <-client.Send:
+			_ = connection.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if !ok {
+				_ = connection.WriteMessage(websocket.CloseMessage, nil)
+				return
+			}
+			if connection.WriteMessage(websocket.TextMessage, message) != nil {
+				return
+			}
+		case message, ok := <-client.Call:
 			_ = connection.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if !ok {
 				_ = connection.WriteMessage(websocket.CloseMessage, nil)
@@ -144,7 +162,9 @@ func (h *Handler) readLoop(connection *websocket.Conn, client *Client) {
 				"type": "typing", "conversation_id": event.ConversationID,
 				"user_id": client.UserID, "typing": event.Typing,
 			}
-			h.broadcastConversation(event.ConversationID, client.UserID, out)
+			// Typing is ephemeral: it may be dropped when a peer's queue is
+			// saturated rather than displacing a durable event.
+			h.broadcastConversation(event.ConversationID, client.UserID, out, true)
 			if h.Federation != nil {
 				h.Federation.RelayRealtime(event.ConversationID, client.UserID, out)
 			}
@@ -203,10 +223,40 @@ func (h *Handler) handleCallSignal(client *Client, event inboundEvent) {
 		return
 	}
 	if event.TargetUserID > 0 {
-		h.Hub.SendToUser(event.TargetUserID, out)
+		if !h.Hub.SendCallToUser(event.TargetUserID, out) {
+			h.reportCallSignalFailure(client, event, event.TargetUserID)
+		}
 		return
 	}
-	h.broadcastConversation(event.ConversationID, client.UserID, out)
+	h.broadcastCallSignal(client, event, out)
+}
+
+func (h *Handler) broadcastCallSignal(client *Client, event inboundEvent, out map[string]any) {
+	rows, err := h.DB.Query(`SELECT user_id FROM conversation_members WHERE conversation_id=? AND user_id<>? AND role<>'pending'`, event.ConversationID, client.UserID)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var userID int64
+		if rows.Scan(&userID) != nil {
+			continue
+		}
+		if !h.Hub.SendCallToUser(userID, out) {
+			h.reportCallSignalFailure(client, event, userID)
+		}
+	}
+}
+
+func (h *Handler) reportCallSignalFailure(client *Client, event inboundEvent, targetUserID int64) {
+	h.Hub.SendCallToUser(client.UserID, map[string]any{
+		"type":            "call_signal_failed",
+		"signal_type":     event.Type,
+		"reason":          "recipient_unavailable",
+		"conversation_id": event.ConversationID,
+		"call_id":         event.CallID,
+		"target_user_id":  targetUserID,
+	})
 }
 
 func (h *Handler) isMember(conversationID, userID int64) bool {
@@ -227,7 +277,7 @@ func (h *Handler) isPrivateConversationMember(conversationID, userID int64) bool
 	return err == nil && kind == "private" && count == 2
 }
 
-func (h *Handler) broadcastConversation(conversationID, except int64, event any) {
+func (h *Handler) broadcastConversation(conversationID, except int64, event any, ephemeral bool) {
 	rows, err := h.DB.Query(`SELECT user_id FROM conversation_members WHERE conversation_id=? AND user_id<>? AND role<>'pending'`, conversationID, except)
 	if err != nil {
 		return
@@ -235,9 +285,14 @@ func (h *Handler) broadcastConversation(conversationID, except int64, event any)
 	defer rows.Close()
 	for rows.Next() {
 		var userID int64
-		if rows.Scan(&userID) == nil {
-			h.Hub.SendToUser(userID, event)
+		if rows.Scan(&userID) != nil {
+			continue
 		}
+		if ephemeral {
+			h.Hub.SendEphemeralToUser(userID, event)
+			continue
+		}
+		h.Hub.SendToUser(userID, event)
 	}
 }
 
@@ -253,7 +308,9 @@ func (h *Handler) broadcastPresence(userID int64, kind string) {
 	for rows.Next() {
 		var target int64
 		if rows.Scan(&target) == nil {
-			h.Hub.SendToUser(target, event)
+			// Presence is ephemeral: the authoritative state is resent in full
+			// as `presence_state` whenever a client (re)connects.
+			h.Hub.SendEphemeralToUser(target, event)
 		}
 	}
 }
@@ -273,5 +330,5 @@ func (h *Handler) sendPresenceState(userID int64) {
 			online = append(online, peerID)
 		}
 	}
-	h.Hub.SendToUser(userID, map[string]any{"type": "presence_state", "online_user_ids": online})
+	h.Hub.SendEphemeralToUser(userID, map[string]any{"type": "presence_state", "online_user_ids": online})
 }

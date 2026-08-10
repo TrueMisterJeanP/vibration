@@ -10,6 +10,13 @@ import (
 	"chat-pwa-go/internal/settings"
 )
 
+// termsGate lazily builds the per-process terms cache so a zero-value Handler
+// keeps working in tests.
+func (h *Handler) termsGate() *settings.TermsGate {
+	h.termsOnce.Do(func() { h.terms = settings.NewTermsGate() })
+	return h.terms
+}
+
 func (h *Handler) Terms(w http.ResponseWriter, _ *http.Request) {
 	terms, err := settings.LoadTerms(h.DB)
 	if err != nil {
@@ -57,6 +64,7 @@ func (h *Handler) AcceptTerms(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusInternalServerError, "terms acceptance failed")
 		return
 	}
+	h.termsGate().Remember(UserID(r), terms.Version)
 	httpx.JSON(w, http.StatusOK, map[string]any{"accepted": true, "version": terms.Version})
 }
 
@@ -99,19 +107,14 @@ func (h *Handler) TermsMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		terms, err := settings.LoadTerms(h.DB)
-		if err != nil {
-			httpx.Error(w, http.StatusInternalServerError, "terms lookup failed")
-			return
-		}
-		accepted, err := settings.TermsAccepted(h.DB, userID, terms.Version)
+		accepted, version, err := h.termsGate().Accepted(h.DB, userID)
 		if err != nil {
 			httpx.Error(w, http.StatusInternalServerError, "terms lookup failed")
 			return
 		}
 		if !accepted {
 			httpx.JSON(w, http.StatusForbidden, map[string]any{
-				"error": "Vous devez accepter les conditions d’utilisation pour continuer.", "code": "terms_acceptance_required", "terms_version": terms.Version,
+				"error": "Vous devez accepter les conditions d’utilisation pour continuer.", "code": "terms_acceptance_required", "terms_version": version,
 			})
 			return
 		}

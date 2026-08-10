@@ -87,6 +87,11 @@ ExecStart=/opt/vibration/backend/vibration-server
 Restart=on-failure
 RestartSec=5
 
+# Chaque utilisateur connecté occupe au moins un descripteur pour sa WebSocket,
+# auxquels s'ajoutent les requêtes REST simultanées et les connexions à la base.
+# La limite par défaut de systemd (1024) est atteinte bien avant 1 000 clients.
+LimitNOFILE=65536
+
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
@@ -97,6 +102,13 @@ WantedBy=multi-user.target
 ```
 
 Remplacer `admin@votre-domaine.fr` par une adresse de contact valide.
+
+Vérifier que la limite est bien appliquée au processus une fois le service démarré :
+
+```bash
+systemctl show vibration -p LimitNOFILE
+grep 'Max open files' /proc/$(systemctl show -p MainPID --value vibration)/limits
+```
 
 Activer et démarrer le service :
 
@@ -204,6 +216,82 @@ sudo a2ensite vibration.conf
 sudo apachectl configtest
 sudo systemctl reload apache2
 ```
+
+### 4 bis. Apache et 1 000 WebSocket simultanées
+
+Une WebSocket occupe un worker Apache pendant toute la durée de la connexion.
+Avec la configuration Debian par défaut (`mpm_prefork`, `MaxRequestWorkers 150`),
+le 151ᵉ client bloque tout le site, y compris les requêtes REST. Deux réglages
+sont donc nécessaires.
+
+Utiliser `mpm_event`, qui traite chaque connexion sur un thread plutôt que sur un
+processus :
+
+```bash
+sudo a2dismod mpm_prefork php8.2   # php-fpm remplace mod_php si nécessaire
+sudo a2enmod mpm_event proxy_wstunnel http2
+```
+
+Dimensionner le pool dans `/etc/apache2/mods-available/mpm_event.conf` :
+
+```apache
+<IfModule mpm_event_module>
+    StartServers             4
+    MinSpareThreads         75
+    MaxSpareThreads        250
+    ThreadLimit            128
+    ThreadsPerChild        128
+    # 1 200 connexions simultanées : les 1 000 WebSocket plus une marge pour le
+    # trafic REST et les rechargements.
+    MaxRequestWorkers     1280
+    MaxConnectionsPerChild   0
+    AsyncRequestWorkerFactor 2
+</IfModule>
+```
+
+`MaxRequestWorkers` doit rester un multiple de `ThreadsPerChild` (ici 10 × 128).
+`MaxConnectionsPerChild 0` évite qu'un recyclage de processus ne coupe des
+WebSocket établies.
+
+Relever la limite de descripteurs d'Apache lui aussi, sinon il refuse les
+connexions bien avant le backend :
+
+```bash
+sudo systemctl edit apache2
+```
+
+```ini
+[Service]
+LimitNOFILE=65536
+```
+
+Le proxy doit laisser vivre les connexions inactives plus longtemps que le ping
+applicatif (25 s) et que le délai de lecture du serveur (60 s) :
+
+```apache
+    ProxyPass /api/ws ws://127.0.0.1:8080/api/ws connectiontimeout=10 timeout=300
+```
+
+Vérifier après rechargement :
+
+```bash
+sudo apachectl -V | grep -i 'Server MPM'      # doit afficher "event"
+sudo apachectl -t -D DUMP_MODULES | grep -E 'mpm|wstunnel'
+# Nombre de connexions réellement établies vers le backend :
+ss -tan state established '( sport = :8080 )' | wc -l
+```
+
+Sur un noyau Linux, relever aussi la file d'attente d'acceptation et la plage de
+ports éphémères, faute de quoi une reconnexion simultanée de 1 000 clients se
+solde par des refus :
+
+```bash
+sudo sysctl -w net.core.somaxconn=4096
+sudo sysctl -w net.ipv4.ip_local_port_range="10240 65535"
+sudo sysctl -w net.ipv4.tcp_max_syn_backlog=4096
+```
+
+Rendre ces valeurs persistantes dans `/etc/sysctl.d/60-vibration.conf`.
 
 ## 5. Installer un certificat avec Certbot
 

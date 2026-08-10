@@ -1,4 +1,5 @@
 .git/
+.claude/
 .DS_Store
 /image.png
 node_modules/
@@ -17,6 +18,9 @@ certs/
 turnserver.conf
 docker-compose.override.yml
 src-tauri/
+/cmd/loadtest/
+/docs/scaling-1000-users.md
+/rapport-charge-*.json
 /tests/admin-file-storage.test.cjs
 /tests/admin-invitations.test.cjs
 /tests/admin-pagination.test.cjs

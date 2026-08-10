@@ -62,7 +62,7 @@ func TestHandleCallSignalRelaysPrivateConversationEvent(t *testing.T) {
 	db := callSignalTestDB(t)
 	hub := NewHub()
 	handler := &Handler{DB: db, Hub: hub}
-	receiver := &Client{UserID: 2, Send: make(chan []byte, 1), Kick: make(chan []byte, 1), Done: make(chan struct{})}
+	receiver := NewClient(2)
 	hub.Register(receiver)
 
 	handler.handleCallSignal(&Client{UserID: 1}, inboundEvent{
@@ -74,7 +74,7 @@ func TestHandleCallSignalRelaysPrivateConversationEvent(t *testing.T) {
 	})
 
 	select {
-	case data := <-receiver.Send:
+	case data := <-receiver.Call:
 		var event map[string]any
 		if err := json.Unmarshal(data, &event); err != nil {
 			t.Fatal(err)
@@ -97,8 +97,8 @@ func TestHandleCallSignalRelaysGroupConversationEvent(t *testing.T) {
 	db := callSignalTestDB(t)
 	hub := NewHub()
 	handler := &Handler{DB: db, Hub: hub}
-	firstReceiver := &Client{UserID: 2, Send: make(chan []byte, 1), Kick: make(chan []byte, 1), Done: make(chan struct{})}
-	receiver := &Client{UserID: 3, Send: make(chan []byte, 1), Kick: make(chan []byte, 1), Done: make(chan struct{})}
+	firstReceiver := NewClient(2)
+	receiver := NewClient(3)
 	hub.Register(firstReceiver)
 	hub.Register(receiver)
 
@@ -126,8 +126,8 @@ func TestHandleCallSignalTargetsGroupMember(t *testing.T) {
 	db := callSignalTestDB(t)
 	hub := NewHub()
 	handler := &Handler{DB: db, Hub: hub}
-	target := &Client{UserID: 3, Send: make(chan []byte, 1), Kick: make(chan []byte, 1), Done: make(chan struct{})}
-	other := &Client{UserID: 2, Send: make(chan []byte, 1), Kick: make(chan []byte, 1), Done: make(chan struct{})}
+	target := NewClient(3)
+	other := NewClient(2)
 	hub.Register(target)
 	hub.Register(other)
 
@@ -145,7 +145,7 @@ func TestHandleCallSignalTargetsGroupMember(t *testing.T) {
 		t.Fatalf("unexpected targeted event: %#v", event)
 	}
 	select {
-	case data := <-other.Send:
+	case data := <-other.Call:
 		t.Fatalf("unexpected untargeted signal: %s", data)
 	default:
 	}
@@ -155,7 +155,7 @@ func TestHandleCallSignalRelaysRejectReason(t *testing.T) {
 	db := callSignalTestDB(t)
 	hub := NewHub()
 	handler := &Handler{DB: db, Hub: hub}
-	receiver := &Client{UserID: 1, Send: make(chan []byte, 1), Kick: make(chan []byte, 1), Done: make(chan struct{})}
+	receiver := NewClient(1)
 	hub.Register(receiver)
 
 	handler.handleCallSignal(&Client{UserID: 2}, inboundEvent{
@@ -179,7 +179,7 @@ func TestHandleCallSignalRelaysICECandidate(t *testing.T) {
 	db := callSignalTestDB(t)
 	hub := NewHub()
 	handler := &Handler{DB: db, Hub: hub}
-	receiver := &Client{UserID: 2, Send: make(chan []byte, 1), Kick: make(chan []byte, 1), Done: make(chan struct{})}
+	receiver := NewClient(2)
 	hub.Register(receiver)
 
 	handler.handleCallSignal(&Client{UserID: 1}, inboundEvent{
@@ -248,7 +248,7 @@ func TestHandleCallSignalIgnoresInvalidPayloads(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			hub := NewHub()
 			handler := &Handler{DB: db, Hub: hub}
-			receiver := &Client{UserID: 2, Send: make(chan []byte, 1), Kick: make(chan []byte, 1), Done: make(chan struct{})}
+			receiver := NewClient(2)
 			hub.Register(receiver)
 			senderID := int64(1)
 			if test.name == "non member" {
@@ -258,7 +258,7 @@ func TestHandleCallSignalIgnoresInvalidPayloads(t *testing.T) {
 			handler.handleCallSignal(&Client{UserID: senderID}, test.event)
 
 			select {
-			case data := <-receiver.Send:
+			case data := <-receiver.Call:
 				t.Fatalf("unexpected signal for invalid payload: %s", data)
 			default:
 			}
@@ -269,7 +269,7 @@ func TestHandleCallSignalIgnoresInvalidPayloads(t *testing.T) {
 func receiveCallEvent(t *testing.T, client *Client) map[string]any {
 	t.Helper()
 	select {
-	case data := <-client.Send:
+	case data := <-client.Call:
 		var event map[string]any
 		if err := json.Unmarshal(data, &event); err != nil {
 			t.Fatal(err)
@@ -278,6 +278,36 @@ func receiveCallEvent(t *testing.T, client *Client) map[string]any {
 	default:
 		t.Fatal("expected call signal to be relayed")
 		return nil
+	}
+}
+
+func TestHandleCallSignalReportsBackpressureToSender(t *testing.T) {
+	db := callSignalTestDB(t)
+	hub := NewHub()
+	handler := &Handler{DB: db, Hub: hub}
+	sender := NewClient(1)
+	receiver := NewClient(2)
+	hub.Register(sender)
+	hub.Register(receiver)
+	for len(receiver.Call) < cap(receiver.Call) {
+		receiver.Call <- []byte(`{"type":"filler"}`)
+	}
+
+	handler.handleCallSignal(sender, inboundEvent{
+		Type:           "call_offer",
+		ConversationID: 1,
+		TargetUserID:   2,
+		CallID:         "call-backpressure",
+		Media:          "audio",
+		SDP:            json.RawMessage(`{"type":"offer","sdp":"v=0"}`),
+	})
+
+	event := receiveCallEvent(t, sender)
+	if event["type"] != "call_signal_failed" || event["signal_type"] != "call_offer" || event["reason"] != "recipient_unavailable" {
+		t.Fatalf("unexpected failure event: %#v", event)
+	}
+	if event["target_user_id"].(float64) != 2 {
+		t.Fatalf("unexpected failure target: %#v", event)
 	}
 }
 

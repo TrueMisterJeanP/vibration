@@ -285,6 +285,7 @@ func (h *Handler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "session not found")
 		return
 	}
+	h.sessionActivity().forget(rawID)
 	current := subtle.ConstantTimeCompare([]byte(rawID), []byte(SessionID(r))) == 1
 	if current {
 		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, SameSite: h.cookieSameSite(), Secure: h.SecureCookies, MaxAge: -1})

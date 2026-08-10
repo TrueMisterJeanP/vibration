@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"chat-pwa-go/internal/auth"
@@ -51,6 +52,12 @@ type Handler struct {
 	Hub        Broadcaster
 	Push       PushSender
 	Federation FederationRouter
+	// ExpirySweepInterval overrides how often expired messages are physically
+	// deleted. Zero uses expirySweepInterval.
+	ExpirySweepInterval time.Duration
+
+	sweepOnce sync.Once
+	sweep     *expirySweeper
 }
 
 type Message struct {
@@ -791,67 +798,151 @@ func expiryTime(seconds int64) (*string, bool) {
 	}
 }
 
+// expirySweepInterval throttles the physical removal of expired messages.
+// Every read path already filters on `expires_at`, so an expired message is
+// never returned; the DELETE is pure housekeeping. Running it on every single
+// page load turned each read into a write that takes row locks on the hottest
+// table, which is what made the message list contend under load.
+const expirySweepInterval = 30 * time.Second
+
 func (h *Handler) deleteExpired(conversationID int64) {
+	if !h.expirySweep().due(conversationID, time.Now().UTC()) {
+		return
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, _ = h.DB.Exec(`DELETE FROM messages WHERE conversation_id=? AND expires_at IS NOT NULL AND expires_at<=?`, conversationID, now)
 }
 
-func (h *Handler) attachReactions(messages []Message, userID int64) {
+func (h *Handler) expirySweep() *expirySweeper {
+	h.sweepOnce.Do(func() {
+		interval := h.ExpirySweepInterval
+		if interval == 0 {
+			interval = expirySweepInterval
+		}
+		h.sweep = newExpirySweeper(interval)
+	})
+	return h.sweep
+}
+
+// messageIDArgs returns the SQL placeholder list and the matching arguments for
+// the identifiers of a page of messages, plus an index from message id to its
+// position in the slice. It returns ok=false when there is nothing to look up.
+func messageIDArgs(messages []Message, leading ...any) (string, []any, map[int64]int, bool) {
+	if len(messages) == 0 {
+		return "", nil, nil, false
+	}
+	positions := make(map[int64]int, len(messages))
+	args := make([]any, 0, len(leading)+len(messages))
+	args = append(args, leading...)
+	placeholders := make([]byte, 0, 2*len(messages))
 	for index := range messages {
-		rows, err := h.DB.Query(`SELECT emoji,COUNT(*),SUM(CASE WHEN user_id=? THEN 1 ELSE 0 END)
-			FROM message_reactions WHERE message_id=? GROUP BY emoji ORDER BY MIN(created_at)`, userID, messages[index].ID)
-		if err != nil {
+		if _, duplicate := positions[messages[index].ID]; duplicate {
 			continue
 		}
-		for rows.Next() {
-			var reaction Reaction
-			var mineCount int
-			if rows.Scan(&reaction.Emoji, &reaction.Count, &mineCount) == nil {
-				reaction.Mine = mineCount > 0
-				messages[index].Reactions = append(messages[index].Reactions, reaction)
-			}
+		positions[messages[index].ID] = index
+		if len(placeholders) > 0 {
+			placeholders = append(placeholders, ',')
 		}
-		rows.Close()
+		placeholders = append(placeholders, '?')
+		args = append(args, messages[index].ID)
+	}
+	return string(placeholders), args, positions, true
+}
+
+// attachReactions loads the reactions of a whole page in a single query. It
+// used to issue one query per message, so a 50-message page cost 50 round
+// trips; the cost is now independent of the page size.
+func (h *Handler) attachReactions(messages []Message, userID int64) {
+	placeholders, args, positions, ok := messageIDArgs(messages, userID)
+	if !ok {
+		return
+	}
+	rows, err := h.DB.Query(`SELECT message_id,emoji,COUNT(*),SUM(CASE WHEN user_id=? THEN 1 ELSE 0 END)
+		FROM message_reactions WHERE message_id IN (`+placeholders+`)
+		GROUP BY message_id,emoji ORDER BY message_id,MIN(created_at)`, args...)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var messageID int64
+		var reaction Reaction
+		var mineCount int
+		if rows.Scan(&messageID, &reaction.Emoji, &reaction.Count, &mineCount) != nil {
+			continue
+		}
+		index, known := positions[messageID]
+		if !known {
+			continue
+		}
+		reaction.Mine = mineCount > 0
+		messages[index].Reactions = append(messages[index].Reactions, reaction)
 	}
 }
 
+// attachPolls loads every poll of a page in a single query.
 func (h *Handler) attachPolls(messages []Message, userID int64) {
-	for index := range messages {
-		rows, err := h.DB.Query(`SELECT po.id,po.position,COUNT(pv.id),
-			COALESCE(SUM(CASE WHEN pv.user_id=? THEN 1 ELSE 0 END),0),m.poll_expires_at
-			FROM poll_options po JOIN messages m ON m.id=po.message_id LEFT JOIN poll_votes pv ON pv.option_id=po.id
-			WHERE po.message_id=? GROUP BY po.id,po.position,m.poll_expires_at ORDER BY po.position`, userID, messages[index].ID)
-		if err != nil {
+	placeholders, args, positions, ok := messageIDArgs(messages, userID)
+	if !ok {
+		return
+	}
+	rows, err := h.DB.Query(`SELECT po.message_id,po.id,po.position,COUNT(pv.id),
+		COALESCE(SUM(CASE WHEN pv.user_id=? THEN 1 ELSE 0 END),0),m.poll_expires_at
+		FROM poll_options po JOIN messages m ON m.id=po.message_id LEFT JOIN poll_votes pv ON pv.option_id=po.id
+		WHERE po.message_id IN (`+placeholders+`)
+		GROUP BY po.message_id,po.id,po.position,m.poll_expires_at ORDER BY po.message_id,po.position`, args...)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	now := time.Now().UTC()
+	for rows.Next() {
+		var messageID int64
+		var option PollOption
+		var mineCount int
+		var expiresAt sql.NullString
+		if rows.Scan(&messageID, &option.ID, &option.Position, &option.VoteCount, &mineCount, &expiresAt) != nil {
 			continue
 		}
-		poll := &Poll{Options: []PollOption{}}
-		for rows.Next() {
-			var option PollOption
-			var mineCount int
-			var expiresAt sql.NullString
-			if rows.Scan(&option.ID, &option.Position, &option.VoteCount, &mineCount, &expiresAt) == nil {
-				if expiresAt.Valid {
-					poll.ExpiresAt = &expiresAt.String
-					poll.Closed = pollExpired(expiresAt.String, time.Now().UTC())
-				}
-				option.Mine = mineCount > 0
-				poll.HasVoted = poll.HasVoted || option.Mine
-				poll.TotalVotes += option.VoteCount
-				poll.Options = append(poll.Options, option)
-			}
+		index, known := positions[messageID]
+		if !known {
+			continue
 		}
-		rows.Close()
-		if len(poll.Options) > 0 {
+		poll := messages[index].Poll
+		if poll == nil {
+			poll = &Poll{Options: []PollOption{}}
 			messages[index].Poll = poll
 		}
+		if expiresAt.Valid {
+			poll.ExpiresAt = &expiresAt.String
+			poll.Closed = pollExpired(expiresAt.String, now)
+		}
+		option.Mine = mineCount > 0
+		poll.HasVoted = poll.HasVoted || option.Mine
+		poll.TotalVotes += option.VoteCount
+		poll.Options = append(poll.Options, option)
 	}
 }
 
+// attachEvents loads every calendar event of a page in a single query.
 func (h *Handler) attachEvents(messages []Message) {
-	for index := range messages {
+	placeholders, args, positions, ok := messageIDArgs(messages)
+	if !ok {
+		return
+	}
+	rows, err := h.DB.Query(`SELECT message_id,starts_at,ends_at FROM message_events
+		WHERE message_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var messageID int64
 		var event Event
-		if h.DB.QueryRow(`SELECT starts_at,ends_at FROM message_events WHERE message_id=?`, messages[index].ID).
-			Scan(&event.StartsAt, &event.EndsAt) == nil {
+		if rows.Scan(&messageID, &event.StartsAt, &event.EndsAt) != nil {
+			continue
+		}
+		if index, known := positions[messageID]; known {
 			messages[index].Event = &event
 		}
 	}
@@ -883,18 +974,30 @@ func (h *Handler) broadcast(message Message) {
 			recipients = append(recipients, userID)
 		}
 	}
+	delivered := make([]int64, 0, len(recipients))
 	for _, userID := range recipients {
-		online := h.Hub != nil && h.Hub.SendToUser(userID, map[string]any{"type": "new_message", "message": message})
-		if online {
-			now := time.Now().UTC().Format(time.RFC3339Nano)
-			_, _ = h.DB.Exec(`UPDATE message_receipts SET status='delivered',created_at=? WHERE message_id=? AND user_id=?`, now, message.ID, userID)
-			if h.Hub != nil {
-				h.Hub.SendToUser(message.SenderID, map[string]any{"type": "message_delivered", "message_id": message.ID, "conversation_id": message.ConversationID, "user_id": userID})
-			}
+		if h.Hub != nil && h.Hub.SendToUser(userID, map[string]any{"type": "new_message", "message": message}) {
+			delivered = append(delivered, userID)
+			h.Hub.SendToUser(message.SenderID, map[string]any{"type": "message_delivered", "message_id": message.ID, "conversation_id": message.ConversationID, "user_id": userID})
 		}
 		if h.Push != nil {
 			go h.Push.NotifyUser(userID)
 		}
+	}
+	// One statement for the whole group instead of one per online recipient.
+	if len(delivered) > 0 {
+		placeholders := make([]byte, 0, 2*len(delivered))
+		args := make([]any, 0, len(delivered)+2)
+		args = append(args, time.Now().UTC().Format(time.RFC3339Nano), message.ID)
+		for _, userID := range delivered {
+			if len(placeholders) > 0 {
+				placeholders = append(placeholders, ',')
+			}
+			placeholders = append(placeholders, '?')
+			args = append(args, userID)
+		}
+		_, _ = h.DB.Exec(`UPDATE message_receipts SET status='delivered',created_at=?
+			WHERE message_id=? AND status='sent' AND user_id IN (`+string(placeholders)+`)`, args...)
 	}
 	h.broadcastEvent(message.ConversationID, map[string]any{"type": "conversation_updated", "conversation_id": message.ConversationID})
 }

@@ -31,6 +31,21 @@ func (h *testHub) SendToUser(userID int64, event any) bool {
 	return true
 }
 
+type readOnDeliveryHub struct {
+	db        *sql.DB
+	messageID int64
+	readerID  int64
+	err       error
+}
+
+func (h *readOnDeliveryHub) SendToUser(userID int64, event any) bool {
+	payload, _ := event.(map[string]any)
+	if userID == h.readerID && payload["type"] == "new_message" && h.err == nil {
+		_, h.err = h.db.Exec(`UPDATE message_receipts SET status='read' WHERE message_id=? AND user_id=?`, h.messageID, h.readerID)
+	}
+	return true
+}
+
 type testPush struct {
 	users chan int64
 }
@@ -145,6 +160,51 @@ func TestBroadcastNotifiesPushEvenWhenRecipientOnline(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("push notification was not sent")
+	}
+}
+
+func TestBroadcastCannotRegressReadReceiptToDelivered(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	registerMessageUserNamed(t, authHandler, "race_sender", "Race Sender")
+	registerMessageUserNamed(t, authHandler, "race_reader", "Race Reader")
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	conversation, err := db.Exec(`INSERT INTO conversations(type,created_by,created_at) VALUES('private',1,?)`, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationID, _ := conversation.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO conversation_members(conversation_id,user_id,encrypted_conversation_key,role,created_at)
+		VALUES(?,1,'owner-key','owner',?),(?,2,'member-key','member',?)`, conversationID, now, conversationID, now); err != nil {
+		t.Fatal(err)
+	}
+	messageResult, err := db.Exec(`INSERT INTO messages(conversation_id,sender_id,encrypted_content,iv,created_at)
+		VALUES(?,1,'encrypted','message-iv',?)`, conversationID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messageID, _ := messageResult.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO message_receipts(message_id,user_id,status,created_at) VALUES(?,2,'sent',?)`, messageID, now); err != nil {
+		t.Fatal(err)
+	}
+
+	hub := &readOnDeliveryHub{db: db, messageID: messageID, readerID: 2}
+	handler := &Handler{DB: db, Hub: hub}
+	content := "encrypted"
+	handler.broadcast(Message{ID: messageID, ConversationID: conversationID, SenderID: 1, EncryptedContent: &content, IV: "message-iv", CreatedAt: now})
+	if hub.err != nil {
+		t.Fatalf("mark receipt read during websocket delivery: %v", hub.err)
+	}
+	var status string
+	if err := db.QueryRow(`SELECT status FROM message_receipts WHERE message_id=? AND user_id=?`, messageID, 2).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "read" {
+		t.Fatalf("receipt regressed to %q, want read", status)
 	}
 }
 

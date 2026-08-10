@@ -13,6 +13,7 @@ import (
 type contextKey string
 
 const userIDKey contextKey = "user_id"
+const usernameKey contextKey = "username"
 const adminKey contextKey = "is_admin"
 const managerKey contextKey = "is_manager"
 const sessionIDKey contextKey = "session_id"
@@ -43,6 +44,11 @@ type sessionTrust struct {
 
 func UserID(r *http.Request) int64 {
 	value, _ := r.Context().Value(userIDKey).(int64)
+	return value
+}
+
+func Username(r *http.Request) string {
+	value, _ := r.Context().Value(usernameKey).(string)
 	return value
 }
 
@@ -139,6 +145,7 @@ func nullableSessionText(value string) any {
 func (h *Handler) deleteSession(w http.ResponseWriter, r *http.Request) {
 	if sessionID, ok := requestSessionID(r); ok {
 		_, _ = h.DB.Exec(`DELETE FROM sessions WHERE id=?`, sessionID)
+		h.sessionActivity().forget(sessionID)
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: "", Path: "/", HttpOnly: true,
@@ -183,12 +190,13 @@ func (h *Handler) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		var userID int64
+		var username string
 		var expires string
 		var approvedAt, approvalExpiresAt sql.NullString
 		var isAdmin, isManager, isBanned bool
-		err := h.DB.QueryRow(`SELECT s.user_id,s.expires_at,s.approved_at,s.approval_expires_at,u.is_admin,u.is_manager,u.is_banned
+		err := h.DB.QueryRow(`SELECT s.user_id,u.username,s.expires_at,s.approved_at,s.approval_expires_at,u.is_admin,u.is_manager,u.is_banned
 			FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=?`, sessionID).
-			Scan(&userID, &expires, &approvedAt, &approvalExpiresAt, &isAdmin, &isManager, &isBanned)
+			Scan(&userID, &username, &expires, &approvedAt, &approvalExpiresAt, &isAdmin, &isManager, &isBanned)
 		if err != nil {
 			if err != sql.ErrNoRows {
 				httpx.Error(w, http.StatusInternalServerError, "session lookup failed")
@@ -221,10 +229,11 @@ func (h *Handler) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), userIDKey, userID)
+		ctx = context.WithValue(ctx, usernameKey, username)
 		ctx = context.WithValue(ctx, adminKey, isAdmin)
 		ctx = context.WithValue(ctx, managerKey, isManager)
 		ctx = context.WithValue(ctx, sessionIDKey, sessionID)
-		_, _ = h.DB.Exec(`UPDATE sessions SET last_seen_at=?,ip_address=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339Nano), truncateSessionText(clientAddress(r), 128), sessionID)
+		h.touchSession(sessionID, truncateSessionText(clientAddress(r), 128))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

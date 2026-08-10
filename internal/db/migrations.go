@@ -625,6 +625,11 @@ func Migrate(database *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_federation_outbox_due ON federation_outbox(sent_at, next_attempt_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_federation_outbox_ready ON federation_outbox(sent_at, next_attempt_at, locked_until_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages(expires_at)`,
+		// The conversation list computes the newest visible message per
+		// conversation with a range filter on created_at. Without this index the
+		// server can only reach those rows through the conversation_id index and
+		// must then read each row to evaluate created_at.
+		`CREATE INDEX IF NOT EXISTS idx_messages_conversation_created ON messages(conversation_id, created_at)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_sender_client_id ON messages(sender_id,client_message_id) WHERE client_message_id IS NOT NULL`,
 		`CREATE INDEX IF NOT EXISTS idx_message_reactions_message ON message_reactions(message_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_message_pins_user ON message_pins(user_id, created_at DESC)`,

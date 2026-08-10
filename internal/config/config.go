@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,12 +19,15 @@ type Config struct {
 	DatabaseDSN                   string
 	DatabaseConfigPath            string
 	DatabasePath                  string
+	DatabasePool                  DatabasePool
+	DatabaseAllowSQLiteOverride   bool
 	DataDir                       string
 	AppSecret                     string
 	SecureCookies                 bool
 	VAPIDSubject                  string
 	DisableRegistration           bool
 	AuthRateLimitPerMinute        int
+	MetricsToken                  string
 	ClientOrigins                 []string
 	ServiceRestartCommand         []string
 	WebRTCICEServers              []ICEServer
@@ -40,6 +44,100 @@ type ICEServer struct {
 	URLs       []string `json:"urls"`
 	Username   string   `json:"username,omitempty"`
 	Credential string   `json:"credential,omitempty"`
+}
+
+// DatabasePool holds the connection pool settings applied to external databases
+// (MariaDB/MySQL, PostgreSQL). SQLite always runs with a single connection.
+type DatabasePool struct {
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+	ConnMaxIdleTime time.Duration
+}
+
+// Pool defaults. Sizes are the historical values so an existing deployment that
+// sets none of the variables keeps the exact same pool as before. Lifetimes are
+// bounded so a connection recycled by MariaDB's wait_timeout is never handed to
+// a request; shorter-lived connections can only reduce, never increase, load.
+const (
+	defaultDatabaseMaxOpenConns    = 10
+	defaultDatabaseMaxIdleConns    = 5
+	defaultDatabaseConnMaxLifetime = 30 * time.Minute
+	defaultDatabaseConnMaxIdleTime = 5 * time.Minute
+
+	maxDatabaseConns          = 4096
+	maxDatabaseConnDuration   = 24 * time.Hour
+	minDatabaseConnDurationOn = time.Second
+)
+
+func databasePool() (DatabasePool, error) {
+	maxOpen, err := envIntBounded("DATABASE_MAX_OPEN_CONNS", defaultDatabaseMaxOpenConns, 1, maxDatabaseConns)
+	if err != nil {
+		return DatabasePool{}, err
+	}
+	maxIdle, err := envIntBounded("DATABASE_MAX_IDLE_CONNS", defaultDatabaseMaxIdleConns, 0, maxDatabaseConns)
+	if err != nil {
+		return DatabasePool{}, err
+	}
+	if maxIdle > maxOpen {
+		return DatabasePool{}, fmt.Errorf("DATABASE_MAX_IDLE_CONNS (%d) must not exceed DATABASE_MAX_OPEN_CONNS (%d)", maxIdle, maxOpen)
+	}
+	lifetime, err := envDurationBounded("DATABASE_CONN_MAX_LIFETIME", defaultDatabaseConnMaxLifetime)
+	if err != nil {
+		return DatabasePool{}, err
+	}
+	idleTime, err := envDurationBounded("DATABASE_CONN_MAX_IDLE_TIME", defaultDatabaseConnMaxIdleTime)
+	if err != nil {
+		return DatabasePool{}, err
+	}
+	if lifetime > 0 && idleTime > lifetime {
+		return DatabasePool{}, fmt.Errorf("DATABASE_CONN_MAX_IDLE_TIME (%s) must not exceed DATABASE_CONN_MAX_LIFETIME (%s)", idleTime, lifetime)
+	}
+	return DatabasePool{MaxOpenConns: maxOpen, MaxIdleConns: maxIdle, ConnMaxLifetime: lifetime, ConnMaxIdleTime: idleTime}, nil
+}
+
+// envIntBounded refuses unparseable or out-of-range values instead of silently
+// falling back: a mistyped pool size must not degrade a production server.
+func envIntBounded(name string, fallback, minimum, maximum int) (int, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer, got %q", name, raw)
+	}
+	if value < minimum || value > maximum {
+		return 0, fmt.Errorf("%s must be between %d and %d, got %d", name, minimum, maximum, value)
+	}
+	return value, nil
+}
+
+// envDurationBounded accepts a Go duration ("30m", "1h30m") or a bare number of
+// seconds. 0 disables the limit, matching database/sql semantics.
+func envDurationBounded(name string, fallback time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil {
+		seconds, secondsErr := strconv.Atoi(raw)
+		if secondsErr != nil {
+			return 0, fmt.Errorf("%s must be a duration (e.g. 30m) or a number of seconds, got %q", name, raw)
+		}
+		value = time.Duration(seconds) * time.Second
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("%s must not be negative, got %s", name, value)
+	}
+	if value == 0 {
+		return 0, nil
+	}
+	if value < minDatabaseConnDurationOn || value > maxDatabaseConnDuration {
+		return 0, fmt.Errorf("%s must be 0 (unlimited) or between %s and %s, got %s", name, minDatabaseConnDurationOn, maxDatabaseConnDuration, value)
+	}
+	return value, nil
 }
 
 func Load() (Config, error) {
@@ -61,18 +159,25 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 	}
+	pool, err := databasePool()
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
 		Addr:                          env("ADDR", ":8080"),
 		DatabaseDriver:                strings.ToLower(env("DATABASE_DRIVER", "sqlite")),
 		DatabaseDSN:                   os.Getenv("DATABASE_DSN"),
 		DatabaseConfigPath:            filepath.Join(dataDir, "database_config.json"),
 		DatabasePath:                  env("DATABASE_PATH", filepath.Join(dataDir, "chat.db")),
+		DatabasePool:                  pool,
+		DatabaseAllowSQLiteOverride:   os.Getenv("DATABASE_ALLOW_SQLITE_OVERRIDE") == "true",
 		DataDir:                       dataDir,
 		AppSecret:                     secret,
 		SecureCookies:                 os.Getenv("SECURE_COOKIES") == "true",
 		VAPIDSubject:                  env("VAPID_SUBJECT", "admin@example.com"),
 		DisableRegistration:           os.Getenv("DISABLE_REGISTRATION") == "true",
 		AuthRateLimitPerMinute:        envInt("AUTH_RATE_LIMIT_PER_MINUTE", 20),
+		MetricsToken:                  strings.TrimSpace(os.Getenv("METRICS_TOKEN")),
 		ClientOrigins:                 clientOrigins,
 		ServiceRestartCommand:         envFields("SERVICE_RESTART_COMMAND"),
 		WebRTCICEServers:              webRTCICEServers(),
