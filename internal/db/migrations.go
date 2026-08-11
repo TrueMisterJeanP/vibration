@@ -242,6 +242,7 @@ var migrations = []string{
 		file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
 		created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		token_hash TEXT UNIQUE NOT NULL,
+		encrypted_link TEXT,
 		encrypted_name TEXT NOT NULL,
 		encrypted_mime TEXT NOT NULL,
 		encrypted_data BLOB NOT NULL,
@@ -451,7 +452,16 @@ func Migrate(database *sql.DB) error {
 			}
 		}
 	}
-	exists, err := columnExists(tx, "conversations", "encrypted_description")
+	exists, err := columnExists(tx, "file_shares", "encrypted_link")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if _, err := tx.Exec(`ALTER TABLE file_shares ADD COLUMN encrypted_link TEXT`); err != nil {
+			return fmt.Errorf("add file_shares.encrypted_link: %w", err)
+		}
+	}
+	exists, err = columnExists(tx, "conversations", "encrypted_description")
 	if err != nil {
 		return err
 	}

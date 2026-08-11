@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -91,6 +92,147 @@ func TestUploadEnforcesConfiguredFileAndUserQuotas(t *testing.T) {
 	}
 	if messageCount != 1 || fileCount != 1 {
 		t.Fatalf("rejected upload left data behind: messages=%d files=%d", messageCount, fileCount)
+	}
+}
+
+func TestUploadAcceptsBinaryMultipartWithoutBase64Expansion(t *testing.T) {
+	db, conversationID, sender, _ := setupFileConversation(t)
+	defer db.Close()
+
+	handler := &Handler{DB: db}
+	mux := fileMux(authHandlerForTest(db), handler)
+	metadata := uploadBody(conversationID)
+	encryptedData, err := base64.StdEncoding.DecodeString(metadata["encrypted_data"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(metadata, "encrypted_data")
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requestBody bytes.Buffer
+	writer := multipart.NewWriter(&requestBody)
+	if err := writer.WriteField("metadata", string(metadataJSON)); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("encrypted_data", "encrypted.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(encryptedData); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/files", &requestBody)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.AddCookie(sender)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("multipart upload status=%d body=%s", response.Code, response.Body.String())
+	}
+	var stored []byte
+	if err := db.QueryRow("SELECT encrypted_data FROM files WHERE owner_id=1").Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stored, encryptedData) {
+		t.Fatalf("stored encrypted data=%q, want %q", stored, encryptedData)
+	}
+}
+
+func TestLargeFileTransferTimeoutExceedsDefaultServerDeadline(t *testing.T) {
+	timeout := fileTransferTimeout(128 << 20)
+	if timeout <= 30*time.Second {
+		t.Fatalf("128 MiB transfer timeout=%s, want more than the server default", timeout)
+	}
+	if timeout > 2*time.Hour {
+		t.Fatalf("transfer timeout=%s, want at most 2h", timeout)
+	}
+}
+
+func TestFileShareAcceptsBinaryMultipartAndDownloadsBinary(t *testing.T) {
+	db, conversationID, sender, recipient := setupFileConversation(t)
+	defer db.Close()
+
+	handler := &Handler{DB: db, Hub: &testHub{}}
+	mux := fileMux(authHandlerForTest(db), handler)
+	uploaded := fileRequest(t, mux, http.MethodPost, "/api/files", uploadBody(conversationID), sender)
+	if uploaded.Code != http.StatusCreated {
+		t.Fatalf("upload status=%d body=%s", uploaded.Code, uploaded.Body.String())
+	}
+	var uploadedFile struct {
+		File struct {
+			ID int64 `json:"id"`
+		} `json:"file"`
+	}
+	if err := json.Unmarshal(uploaded.Body.Bytes(), &uploadedFile); err != nil {
+		t.Fatal(err)
+	}
+
+	shareData := bytes.Repeat([]byte{7}, 20)
+	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{3}, shareTokenBytes))
+	metadata := shareUploadInput{
+		Token: token, EncryptedLink: `{"iv":"share-link-iv","data":"share-link-data"}`,
+		EncryptedName: `{"iv":"share-name-iv","data":"share-name-data"}`,
+		EncryptedMIME: `{"iv":"share-mime-iv","data":"share-mime-data"}`,
+		IV:            "share-data-iv", Size: 4, ExpiresInSeconds: 3600,
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requestBody bytes.Buffer
+	writer := multipart.NewWriter(&requestBody)
+	if err := writer.WriteField("metadata", string(metadataJSON)); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("encrypted_data", "encrypted.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(shareData); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/files/"+formatID(uploadedFile.File.ID)+"/shares", &requestBody)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.AddCookie(recipient)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("multipart share status=%d body=%s", response.Code, response.Body.String())
+	}
+	var created struct {
+		ID    int64  `json:"id"`
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &created); err != nil || created.Token != token {
+		t.Fatalf("created share=%+v err=%v", created, err)
+	}
+	listed := fileRequest(t, mux, http.MethodGet, "/api/files/"+formatID(uploadedFile.File.ID)+"/shares", nil, recipient)
+	if listed.Code != http.StatusOK || !bytes.Contains(listed.Body.Bytes(), []byte(`"encrypted_link":"{\"iv\":\"share-link-iv\",\"data\":\"share-link-data\"}"`)) {
+		t.Fatalf("share history status=%d body=%s", listed.Code, listed.Body.String())
+	}
+
+	metadataResponse := publicFileRequest(t, mux, "/api/file-shares/"+token)
+	if metadataResponse.Code != http.StatusOK || !bytes.Contains(metadataResponse.Body.Bytes(), []byte(`"iv":"share-data-iv"`)) {
+		t.Fatalf("share metadata status=%d body=%s", metadataResponse.Code, metadataResponse.Body.String())
+	}
+	downloadRequest := httptest.NewRequest(http.MethodGet, "/api/file-shares/"+token+"/download", nil)
+	downloadRequest.Header.Set("Accept", "application/octet-stream")
+	downloadResponse := httptest.NewRecorder()
+	mux.ServeHTTP(downloadResponse, downloadRequest)
+	if downloadResponse.Code != http.StatusOK || downloadResponse.Header().Get("Content-Type") != "application/octet-stream" ||
+		!bytes.Equal(downloadResponse.Body.Bytes(), shareData) {
+		t.Fatalf("binary download status=%d content-type=%q size=%d", downloadResponse.Code,
+			downloadResponse.Header().Get("Content-Type"), downloadResponse.Body.Len())
 	}
 }
 
@@ -402,6 +544,7 @@ func TestFileShareIsPublicEncryptedCountedAndRevocableByCreator(t *testing.T) {
 	}
 	shareData := bytes.Repeat([]byte{7}, 20)
 	shareBody := map[string]any{
+		"encrypted_link":     `{"iv":"history-link-iv","data":"history-link-data"}`,
 		"encrypted_name":     `{"iv":"share-name-iv","data":"share-name-data"}`,
 		"encrypted_mime":     `{"iv":"share-mime-iv","data":"share-mime-data"}`,
 		"encrypted_data":     base64.StdEncoding.EncodeToString(shareData),
@@ -428,7 +571,8 @@ func TestFileShareIsPublicEncryptedCountedAndRevocableByCreator(t *testing.T) {
 		t.Fatalf("stored token hash=%q", storedToken)
 	}
 	listed := fileRequest(t, mux, http.MethodGet, "/api/files/"+formatID(uploadedFile.File.ID)+"/shares", nil, recipient)
-	if listed.Code != http.StatusOK || !bytes.Contains(listed.Body.Bytes(), []byte(`"active":true`)) {
+	if listed.Code != http.StatusOK || !bytes.Contains(listed.Body.Bytes(), []byte(`"active":true`)) ||
+		!bytes.Contains(listed.Body.Bytes(), []byte(`"encrypted_link":"{\"iv\":\"history-link-iv\",\"data\":\"history-link-data\"}"`)) {
 		t.Fatalf("share list status=%d body=%s", listed.Code, listed.Body.String())
 	}
 

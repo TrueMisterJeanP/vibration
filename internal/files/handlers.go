@@ -1,10 +1,14 @@
 package files
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"chat-pwa-go/internal/auth"
@@ -19,7 +23,23 @@ const (
 	maxFilePreviewSize     = 512 << 10
 	maxFileRequestBodySize = 36 << 20
 	fileEncryptionOverhead = 64
+	maxUploadMetadataSize  = 1 << 20
 )
+
+type uploadInput struct {
+	ConversationID   int64  `json:"conversation_id"`
+	EncryptedName    string `json:"encrypted_name"`
+	EncryptedMIME    string `json:"encrypted_mime"`
+	EncryptedData    string `json:"encrypted_data,omitempty"`
+	IV               string `json:"iv"`
+	EncryptedPreview string `json:"encrypted_preview_data"`
+	PreviewIV        string `json:"preview_iv"`
+	ExpiresInSeconds int64  `json:"expires_in_seconds"`
+	KeyEpoch         int64  `json:"key_epoch"`
+	CiphertextSHA256 string `json:"ciphertext_sha256"`
+	PreviewSHA256    string `json:"preview_sha256"`
+	messageauth.Input
+}
 
 type Broadcaster interface {
 	SendToUser(userID int64, event any) bool
@@ -155,26 +175,15 @@ func (h *Handler) UploadLimits(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		ConversationID   int64  `json:"conversation_id"`
-		EncryptedName    string `json:"encrypted_name"`
-		EncryptedMIME    string `json:"encrypted_mime"`
-		EncryptedData    string `json:"encrypted_data"`
-		IV               string `json:"iv"`
-		EncryptedPreview string `json:"encrypted_preview_data"`
-		PreviewIV        string `json:"preview_iv"`
-		ExpiresInSeconds int64  `json:"expires_in_seconds"`
-		KeyEpoch         int64  `json:"key_epoch"`
-		CiphertextSHA256 string `json:"ciphertext_sha256"`
-		PreviewSHA256    string `json:"preview_sha256"`
-		messageauth.Input
-	}
+	var input uploadInput
 	quotas, err := settings.LoadFileQuotas(h.DB)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "file quota lookup failed")
 		return
 	}
-	if !httpx.DecodeWithLimit(w, r, &input, fileRequestBodyLimit(quotas.MaxFileSize)) {
+	extendFileTransferDeadlines(w, r, r.ContentLength)
+	data, ok := decodeUpload(w, r, &input, quotas.MaxFileSize)
+	if !ok {
 		return
 	}
 	userID := auth.UserID(r)
@@ -188,8 +197,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid message expiration")
 		return
 	}
-	data, err := base64.StdEncoding.DecodeString(input.EncryptedData)
-	if err != nil || len(data) == 0 || int64(len(data)) > storedFileSizeLimit(quotas.MaxFileSize) {
+	if len(data) == 0 || int64(len(data)) > storedFileSizeLimit(quotas.MaxFileSize) {
 		httpx.Error(w, http.StatusRequestEntityTooLarge, "file exceeds configured size limit")
 		return
 	}
@@ -363,6 +371,7 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "file not found")
 		return
 	}
+	extendFileTransferDeadlines(w, r, size)
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"id": fileID, "encrypted_name": name, "encrypted_mime": mime,
 		"encrypted_data": base64.StdEncoding.EncodeToString(data), "iv": iv, "size": size, "ciphertext_sha256": digest,
@@ -459,4 +468,111 @@ func fileRequestBodyLimit(maxFileSize int64) int64 {
 		return maxFileRequestBodySize
 	}
 	return limit
+}
+
+func multipartFileRequestBodyLimit(maxFileSize int64) int64 {
+	return storedFileSizeLimit(maxFileSize) + maxUploadMetadataSize + 128<<10
+}
+
+func decodeUpload(w http.ResponseWriter, r *http.Request, input *uploadInput, maxFileSize int64) ([]byte, bool) {
+	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data") {
+		if !httpx.DecodeWithLimit(w, r, input, fileRequestBodyLimit(maxFileSize)) {
+			return nil, false
+		}
+		data, err := base64.StdEncoding.DecodeString(input.EncryptedData)
+		if err != nil {
+			httpx.Error(w, http.StatusRequestEntityTooLarge, "file exceeds configured size limit")
+			return nil, false
+		}
+		return data, true
+	}
+	data, ok := decodeMultipartEncryptedBody(w, r, input, maxFileSize, "invalid encrypted file")
+	if !ok || input.EncryptedData != "" {
+		if ok {
+			httpx.Error(w, http.StatusBadRequest, "invalid encrypted file")
+		}
+		return nil, false
+	}
+	return data, true
+}
+
+func decodeMultipartEncryptedBody(w http.ResponseWriter, r *http.Request, input any, maxFileSize int64, invalidMessage string) ([]byte, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, multipartFileRequestBodyLimit(maxFileSize))
+	reader, err := r.MultipartReader()
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, invalidMessage)
+		return nil, false
+	}
+	var metadata, data []byte
+	for {
+		part, partErr := reader.NextPart()
+		if partErr == io.EOF {
+			break
+		}
+		if partErr != nil {
+			httpx.Error(w, http.StatusBadRequest, invalidMessage)
+			return nil, false
+		}
+		switch part.FormName() {
+		case "metadata":
+			if metadata != nil {
+				httpx.Error(w, http.StatusBadRequest, invalidMessage)
+				return nil, false
+			}
+			metadata, err = io.ReadAll(io.LimitReader(part, maxUploadMetadataSize+1))
+			if err != nil || len(metadata) > maxUploadMetadataSize {
+				httpx.Error(w, http.StatusBadRequest, invalidMessage)
+				return nil, false
+			}
+		case "encrypted_data":
+			if data != nil {
+				httpx.Error(w, http.StatusBadRequest, invalidMessage)
+				return nil, false
+			}
+			data, err = io.ReadAll(io.LimitReader(part, storedFileSizeLimit(maxFileSize)+1))
+			if err != nil || int64(len(data)) > storedFileSizeLimit(maxFileSize) {
+				httpx.Error(w, http.StatusRequestEntityTooLarge, "file exceeds configured size limit")
+				return nil, false
+			}
+		}
+		part.Close()
+	}
+	if len(metadata) == 0 || len(data) == 0 {
+		httpx.Error(w, http.StatusBadRequest, invalidMessage)
+		return nil, false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(metadata))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(input) != nil {
+		httpx.Error(w, http.StatusBadRequest, invalidMessage)
+		return nil, false
+	}
+	var trailing any
+	if decoder.Decode(&trailing) != io.EOF {
+		httpx.Error(w, http.StatusBadRequest, invalidMessage)
+		return nil, false
+	}
+	return data, true
+}
+
+func extendFileTransferDeadlines(w http.ResponseWriter, r *http.Request, size int64) {
+	timeout := fileTransferTimeout(size)
+	deadline := time.Now().Add(timeout)
+	controller := http.NewResponseController(w)
+	_ = controller.SetReadDeadline(deadline)
+	_ = controller.SetWriteDeadline(deadline)
+}
+
+func fileTransferTimeout(size int64) time.Duration {
+	if size < 0 {
+		size = 0
+	}
+	// Allow roughly 128 KiB/s plus setup time, bounded so a stalled client
+	// cannot reserve a connection forever. This overrides the server's short
+	// default deadline only for authenticated file transfers.
+	timeout := 2*time.Minute + time.Duration(size/(128<<10))*time.Second
+	if timeout > 2*time.Hour {
+		timeout = 2 * time.Hour
+	}
+	return timeout
 }

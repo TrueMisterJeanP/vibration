@@ -12,7 +12,11 @@ const (
 	FileQuotaMaxUserSizeKey = "file_quota_max_user_size"
 	DefaultMaxFileSize      = 25 << 20
 	DefaultMaxUserStorage   = 1 << 30
-	MaxConfiguredQuotaBytes = 1 << 40
+	// MaxConfiguredFileSizeBytes is the largest clear file accepted by the
+	// administration UI and API. Production keeps MariaDB's packet limit above
+	// this value so encryption and SQL protocol overhead still fit.
+	MaxConfiguredFileSizeBytes = 320 << 20
+	MaxConfiguredQuotaBytes    = 1 << 40
 )
 
 type FileQuotas struct {
@@ -66,7 +70,7 @@ func LoadFileQuotas(db settingsQueryer) (FileQuotas, error) {
 
 func ValidateFileQuotas(quotas FileQuotas) error {
 	if quotas.MaxFileSize <= 0 || quotas.MaxUserStorage <= 0 ||
-		quotas.MaxFileSize > MaxConfiguredQuotaBytes || quotas.MaxUserStorage > MaxConfiguredQuotaBytes ||
+		quotas.MaxFileSize > MaxConfiguredFileSizeBytes || quotas.MaxUserStorage > MaxConfiguredQuotaBytes ||
 		quotas.MaxFileSize > quotas.MaxUserStorage {
 		return fmt.Errorf("invalid file quotas")
 	}

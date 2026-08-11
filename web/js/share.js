@@ -1,4 +1,4 @@
-import { decryptBytes, decryptEnvelope, importShareKey } from "./crypto.js?v=ios17-pdf-v199";
+import { base64ToBytes, decryptEnvelope, importShareKey } from "./crypto.js?v=file-share-history-v323";
 import { locale, localizeDocument, t } from "./i18n.js";
 
 localizeDocument();
@@ -19,6 +19,8 @@ let token = "";
 let shareKey = null;
 let fileName = "Fichier partagé";
 let fileMIME = "application/octet-stream";
+let fileIV = "";
+let fileSize = 0;
 let downloading = false;
 
 const serverShareErrors = new Map([
@@ -72,9 +74,16 @@ async function downloadSharedFile(automatic = false) {
     const response = await fetch(`/api/file-shares/${encodeURIComponent(token)}/download`, {
       credentials: "include",
       cache: "no-store",
+      headers: { Accept: "application/octet-stream" },
     });
-    const payload = await responseJSON(response);
-    const clear = await decryptBytes(shareKey, payload.encrypted_data, payload.iv);
+    if (!response.ok) await responseJSON(response);
+    const encrypted = await response.arrayBuffer();
+    if (encrypted.byteLength !== fileSize + 16) throw new Error("Le fichier partagé est incomplet.");
+    const clear = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: base64ToBytes(fileIV) },
+      shareKey,
+      encrypted,
+    );
     const url = URL.createObjectURL(new Blob([clear], { type: fileMIME }));
     const link = document.createElement("a");
     link.href = url;
@@ -104,6 +113,9 @@ async function init() {
     cache: "no-store",
   });
   const metadata = await responseJSON(response);
+  fileIV = metadata.iv || "";
+  fileSize = Number(metadata.size) || 0;
+  if (!fileIV || fileSize <= 0) throw new SharePageError("Ce fichier partagé n’est pas disponible.");
   [fileName, fileMIME] = await Promise.all([
     decryptEnvelope(shareKey, metadata.encrypted_name),
     decryptEnvelope(shareKey, metadata.encrypted_mime),

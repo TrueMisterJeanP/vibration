@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,31 +31,39 @@ type publicShare struct {
 	LastDownloaded sql.NullString
 }
 
+type shareUploadInput struct {
+	Token            string `json:"token,omitempty"`
+	EncryptedLink    string `json:"encrypted_link,omitempty"`
+	EncryptedName    string `json:"encrypted_name"`
+	EncryptedMIME    string `json:"encrypted_mime"`
+	EncryptedData    string `json:"encrypted_data,omitempty"`
+	IV               string `json:"iv"`
+	Size             int64  `json:"size"`
+	ExpiresInSeconds int64  `json:"expires_in_seconds"`
+}
+
 func (h *Handler) CreateShare(w http.ResponseWriter, r *http.Request) {
 	fileID, err := httpx.PathID(r, "id")
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	var input struct {
-		EncryptedName    string `json:"encrypted_name"`
-		EncryptedMIME    string `json:"encrypted_mime"`
-		EncryptedData    string `json:"encrypted_data"`
-		IV               string `json:"iv"`
-		Size             int64  `json:"size"`
-		ExpiresInSeconds int64  `json:"expires_in_seconds"`
-	}
+	var input shareUploadInput
 	quotas, err := settings.LoadFileQuotas(h.DB)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "file quota lookup failed")
 		return
 	}
-	if !httpx.DecodeWithLimit(w, r, &input, fileRequestBodyLimit(quotas.MaxFileSize)) {
+	extendFileTransferDeadlines(w, r, r.ContentLength)
+	data, ok := decodeShareUpload(w, r, &input, quotas.MaxFileSize)
+	if !ok {
 		return
 	}
 	if len(input.EncryptedName) < 10 || len(input.EncryptedName) > 4096 ||
 		len(input.EncryptedMIME) < 10 || len(input.EncryptedMIME) > 4096 ||
-		len(input.IV) < 8 || len(input.IV) > 128 || input.Size <= 0 {
+		(input.EncryptedLink != "" && (len(input.EncryptedLink) < 10 || len(input.EncryptedLink) > 4096)) ||
+		len(input.IV) < 8 || len(input.IV) > 128 || input.Size <= 0 ||
+		(input.Token != "" && !validShareToken(input.Token)) {
 		httpx.Error(w, http.StatusBadRequest, "invalid encrypted file share")
 		return
 	}
@@ -62,8 +71,7 @@ func (h *Handler) CreateShare(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusRequestEntityTooLarge, "file exceeds configured size limit")
 		return
 	}
-	data, err := base64.StdEncoding.DecodeString(input.EncryptedData)
-	if err != nil || int64(len(data)) != input.Size+16 {
+	if int64(len(data)) != input.Size+16 {
 		httpx.Error(w, http.StatusBadRequest, "invalid encrypted file share")
 		return
 	}
@@ -100,14 +108,20 @@ func (h *Handler) CreateShare(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusConflict, "too many active file shares")
 		return
 	}
-	token, tokenHash, err := newShareToken()
-	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "file share creation failed")
-		return
+	token := input.Token
+	tokenHash := ""
+	if token == "" {
+		token, tokenHash, err = newShareToken()
+		if err != nil {
+			httpx.Error(w, http.StatusInternalServerError, "file share creation failed")
+			return
+		}
+	} else {
+		tokenHash = shareTokenHash(token)
 	}
 	createdAt := now.Format(time.RFC3339Nano)
-	result, err := h.DB.Exec(`INSERT INTO file_shares(file_id,created_by,token_hash,encrypted_name,encrypted_mime,encrypted_data,iv,size,expires_at,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`, fileID, userID, tokenHash, input.EncryptedName, input.EncryptedMIME, data, input.IV, input.Size,
+	result, err := h.DB.Exec(`INSERT INTO file_shares(file_id,created_by,token_hash,encrypted_link,encrypted_name,encrypted_mime,encrypted_data,iv,size,expires_at,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, fileID, userID, tokenHash, nullableInput(input.EncryptedLink), input.EncryptedName, input.EncryptedMIME, data, input.IV, input.Size,
 		expiresAt.Format(time.RFC3339Nano), createdAt)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "file share creation failed")
@@ -117,6 +131,28 @@ func (h *Handler) CreateShare(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, map[string]any{
 		"id": id, "token": token, "expires_at": expiresAt.Format(time.RFC3339Nano), "created_at": createdAt,
 	})
+}
+
+func decodeShareUpload(w http.ResponseWriter, r *http.Request, input *shareUploadInput, maxFileSize int64) ([]byte, bool) {
+	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data") {
+		if !httpx.DecodeWithLimit(w, r, input, fileRequestBodyLimit(maxFileSize)) {
+			return nil, false
+		}
+		data, err := base64.StdEncoding.DecodeString(input.EncryptedData)
+		if err != nil {
+			httpx.Error(w, http.StatusBadRequest, "invalid encrypted file share")
+			return nil, false
+		}
+		return data, true
+	}
+	data, ok := decodeMultipartEncryptedBody(w, r, input, maxFileSize, "invalid encrypted file share")
+	if !ok || input.EncryptedData != "" {
+		if ok {
+			httpx.Error(w, http.StatusBadRequest, "invalid encrypted file share")
+		}
+		return nil, false
+	}
+	return data, true
 }
 
 func (h *Handler) ListShares(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +170,7 @@ func (h *Handler) ListShares(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "file not found")
 		return
 	}
-	rows, err := h.DB.Query(`SELECT id,expires_at,revoked_at,download_count,last_downloaded_at,created_at
+	rows, err := h.DB.Query(`SELECT id,encrypted_link,expires_at,revoked_at,download_count,last_downloaded_at,created_at
 		FROM file_shares WHERE file_id=? AND created_by=? ORDER BY id DESC`, fileID, userID)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "file share lookup failed")
@@ -146,18 +182,25 @@ func (h *Handler) ListShares(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id, downloads int64
 		var expiresAt, createdAt string
-		var revokedAt, lastDownloaded sql.NullString
-		if rows.Scan(&id, &expiresAt, &revokedAt, &downloads, &lastDownloaded, &createdAt) != nil {
+		var encryptedLink, revokedAt, lastDownloaded sql.NullString
+		if rows.Scan(&id, &encryptedLink, &expiresAt, &revokedAt, &downloads, &lastDownloaded, &createdAt) != nil {
 			continue
 		}
 		deadline, _ := time.Parse(time.RFC3339Nano, expiresAt)
 		result = append(result, map[string]any{
-			"id": id, "expires_at": expiresAt, "revoked_at": nullableString(revokedAt),
+			"id": id, "encrypted_link": nullableString(encryptedLink), "expires_at": expiresAt, "revoked_at": nullableString(revokedAt),
 			"download_count": downloads, "last_downloaded_at": nullableString(lastDownloaded),
 			"created_at": createdAt, "active": !revokedAt.Valid && deadline.After(now),
 		})
 	}
 	httpx.JSON(w, http.StatusOK, result)
+}
+
+func nullableInput(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func (h *Handler) PublicShare(w http.ResponseWriter, r *http.Request) {
@@ -168,8 +211,10 @@ func (h *Handler) PublicShare(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusOK, map[string]any{
+		"id":                 share.ID,
 		"encrypted_name":     share.EncryptedName,
 		"encrypted_mime":     share.EncryptedMIME,
+		"iv":                 share.IV,
 		"size":               share.Size,
 		"expires_at":         share.ExpiresAt,
 		"download_count":     share.DownloadCount,
@@ -183,6 +228,7 @@ func (h *Handler) DownloadShare(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, status, err.Error())
 		return
 	}
+	extendFileTransferDeadlines(w, r, int64(len(share.EncryptedData)))
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := h.DB.Exec(`UPDATE file_shares SET download_count=download_count+1,last_downloaded_at=?
 		WHERE id=? AND revoked_at IS NULL AND expires_at>?`, now, share.ID, now)
@@ -196,6 +242,13 @@ func (h *Handler) DownloadShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
+	if strings.Contains(strings.ToLower(r.Header.Get("Accept")), "application/octet-stream") {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", strconv.Itoa(len(share.EncryptedData)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(share.EncryptedData)
+		return
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"encrypted_data": base64.StdEncoding.EncodeToString(share.EncryptedData), "iv": share.IV, "size": share.Size,
 	})

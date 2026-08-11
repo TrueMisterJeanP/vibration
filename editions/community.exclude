@@ -53,3 +53,4 @@ internal/db/transfer_test.go
 web/admin.html
 web/js/admin.js
 /scripts/turn-relay-e2e.mjs
+/scripts/60-vibration-mariadb.cnf

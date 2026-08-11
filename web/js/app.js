@@ -1,6 +1,7 @@
 import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=ios17-pdf-v199";
 import {
   base64ToBytes,
+  bytesToBase64,
   decryptBytes,
   decryptEnvelope,
   decryptText,
@@ -18,7 +19,7 @@ import {
   verifyMessagePayload,
   unwrapGroupKey,
   wrapGroupKey,
-} from "./crypto.js";
+} from "./crypto.js?v=file-share-history-v323";
 import {
   forgetRememberedIdentity,
 	forgetTrustedDeviceCredential,
@@ -39,7 +40,7 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=calendar-toolbar-grid-v311";
+} from "./notifications.js?v=file-share-history-v323";
 import { ChatSocket } from "./websocket.js?v=ios-resume-v297";
 import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios-resume-v297";
 import { locale, t } from "./i18n.js?v=calendar-toolbar-grid-v311";
@@ -70,7 +71,7 @@ import {
   sameCallIdentity,
   shouldOfferAfterAccept,
   shouldOfferInGroup,
-} from "./call-negotiation.js?v=conversation-ready-v317";
+} from "./call-negotiation.js?v=file-share-history-v323";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
 import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
@@ -98,7 +99,7 @@ const GLOBAL_FILES_PAGE_SIZE = 40;
 const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
 const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "conversation-ready-v317";
+const APP_BUILD = "file-share-history-v323";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
 const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;
@@ -2887,7 +2888,7 @@ function warmAdminShell() {
   adminShellPreloaded = true;
   for (const [rel, href] of [
     ["prefetch", "/admin.html?from=chat"],
-    ["modulepreload", "/js/admin.js?v=admin-instant-v313"],
+    ["modulepreload", "/js/admin.js?v=file-quota-v321"],
   ]) {
     const link = document.createElement("link");
     link.rel = rel;
@@ -8252,6 +8253,7 @@ async function sendFile(event) {
 }
 
 const FILE_PREVIEW_MAX_BYTES = 512 * 1024;
+const FILE_PREVIEW_SOURCE_MAX_BYTES = 64 * 1024 * 1024;
 
 function canvasJPEG(canvas, quality = 0.76) {
   return new Promise((resolve) => {
@@ -8509,6 +8511,9 @@ async function renderTemporaryOfficeThumbnail(container) {
 
 async function encryptedFilePreview(file, data, key) {
   try {
+    // Previewing very large sources makes browsers keep additional decoded
+    // copies in memory. The preview is optional; the encrypted file is not.
+    if (data.byteLength > FILE_PREVIEW_SOURCE_MAX_BYTES) return null;
     const mime = mimeEssence(normalizedFileMIME(file.type, file.name));
     let blob = null;
     if (/^image\/(avif|bmp|gif|jpeg|png|webp)$/i.test(mime)) {
@@ -8526,6 +8531,12 @@ async function encryptedFilePreview(file, data, key) {
     console.warn("Création de l’aperçu chiffré impossible", error);
     return null;
   }
+}
+
+async function encryptFileBytes(key, bytes) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const data = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, bytes);
+  return { iv: bytesToBase64(iv), data };
 }
 
 async function sendEncryptedFile(file, successMessage) {
@@ -8548,7 +8559,7 @@ async function sendEncryptedFile(file, successMessage) {
     const key = await getConversationKey(conversation);
     const data = await file.arrayBuffer();
     const [encrypted, encryptedName, encryptedMIME, preview] = await Promise.all([
-      encryptBytes(key, data),
+      encryptFileBytes(key, data),
       encryptEnvelope(key, file.name),
       encryptEnvelope(key, file.type || "application/octet-stream"),
       encryptedFilePreview(file, data, key),
@@ -8557,19 +8568,21 @@ async function sendEncryptedFile(file, successMessage) {
       conversation_id: conversation.id,
       encrypted_name: encryptedName,
       encrypted_mime: encryptedMIME,
-      encrypted_data: encrypted.data,
       iv: encrypted.iv,
       encrypted_preview_data: preview?.data || "",
       preview_iv: preview?.iv || "",
       expires_in_seconds: expiresInSeconds,
       key_epoch: conversationKeyEpoch(conversation),
-      ciphertext_sha256: await sha256Hex(base64ToBytes(encrypted.data)),
+      ciphertext_sha256: await sha256Hex(encrypted.data),
       preview_sha256: preview?.data ? await sha256Hex(base64ToBytes(preview.data)) : "",
     };
     Object.assign(body, await messageSignature("file", conversation.id, body));
+    const upload = new FormData();
+    upload.append("metadata", JSON.stringify(body));
+    upload.append("encrypted_data", new Blob([encrypted.data], { type: "application/octet-stream" }), "encrypted.bin");
     const message = await api("/api/files", {
       method: "POST",
-      body,
+      body: upload,
     });
     rememberGlobalFileClear(message, {
       name: file.name,
@@ -8729,16 +8742,24 @@ function openFileShareDialog(message, clear, conversation = state.current) {
   elements.fileShareExisting.hidden = true;
   elements.fileShareExistingList.replaceChildren();
   elements.fileShareDialog.showModal();
-  loadExistingFileShares(message.file.id);
+  loadExistingFileShares(message, conversation);
 }
 
-async function loadExistingFileShares(fileID) {
+async function loadExistingFileShares(message, conversation = state.current) {
+  const fileID = message?.file?.id;
+  if (!fileID || !conversation) return;
   try {
     const shares = await api(`/api/files/${fileID}/shares`);
     elements.fileShareExistingList.replaceChildren();
     const active = shares.filter((share) => share.active);
     updateCachedGlobalFileShareCount(fileID, active.length);
     elements.fileShareExisting.hidden = active.length === 0;
+    let conversationKey = null;
+    if (active.some((share) => share.encrypted_link)) {
+      try {
+        conversationKey = await getMessageKey(message, conversation);
+      } catch {}
+    }
     for (const share of active) {
       const row = document.createElement("div");
       row.className = "file-share-existing-row";
@@ -8748,6 +8769,22 @@ async function loadExistingFileShares(fileID) {
       const downloads = document.createElement("small");
       downloads.textContent = `${share.download_count} téléchargement${share.download_count === 1 ? "" : "s"}`;
       details.append(label, downloads);
+      const actions = document.createElement("div");
+      actions.className = "file-share-existing-actions";
+      if (conversationKey && share.encrypted_link) {
+        try {
+          const link = await decryptEnvelope(conversationKey, share.encrypted_link);
+          const copy = document.createElement("button");
+          copy.type = "button";
+          copy.className = "outline";
+          copy.textContent = t("Copier le lien");
+          copy.addEventListener("click", async () => {
+            if (await copyTextToClipboard(link)) toast("Lien copié.", "success");
+            else toast("Impossible de copier le lien.", "error");
+          });
+          actions.append(copy);
+        } catch {}
+      }
       const revoke = document.createElement("button");
       revoke.type = "button";
       revoke.className = "outline danger-text";
@@ -8765,7 +8802,8 @@ async function loadExistingFileShares(fileID) {
           elements.fileShareError.textContent = frenchErrorMessage(error, "Impossible de désactiver le lien.");
         }
       });
-      row.append(details, revoke);
+      actions.append(revoke);
+      row.append(details, actions);
       elements.fileShareExistingList.append(row);
     }
   } catch {
@@ -8789,33 +8827,55 @@ async function createFileShare(event) {
     const conversationKey = await getMessageKey(message, conversation);
     const file = await loadDecryptedFile(message, conversationKey);
     const shareKey = await generateShareKey();
+    const shareToken = bytesToBase64(crypto.getRandomValues(new Uint8Array(32)))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
     const [encrypted, encryptedName, encryptedMIME, exportedKey] = await Promise.all([
-      encryptBytes(shareKey, file.data),
+      encryptFileBytes(shareKey, file.data),
       encryptEnvelope(shareKey, file.name),
       encryptEnvelope(shareKey, file.mime || "application/octet-stream"),
       exportShareKey(shareKey),
     ]);
-    const share = await api(`/api/files/${message.file.id}/shares`, {
-      method: "POST",
-      body: {
-        encrypted_name: encryptedName,
-        encrypted_mime: encryptedMIME,
-        encrypted_data: encrypted.data,
-        iv: encrypted.iv,
-        size: file.data.byteLength,
-        expires_in_seconds: Number(elements.fileShareExpiration.value),
-      },
-    });
     const publicURL = new URL("/share.html", `${getInstanceURL() || location.origin}/`);
-    publicURL.searchParams.set("token", share.token);
+    publicURL.searchParams.set("token", shareToken);
     publicURL.hash = new URLSearchParams({ key: exportedKey }).toString();
+    const encryptedLink = await encryptEnvelope(conversationKey, publicURL.toString());
+    const metadata = {
+      token: shareToken,
+      encrypted_link: encryptedLink,
+      encrypted_name: encryptedName,
+      encrypted_mime: encryptedMIME,
+      iv: encrypted.iv,
+      size: file.data.byteLength,
+      expires_in_seconds: Number(elements.fileShareExpiration.value),
+    };
+    const upload = new FormData();
+    upload.append("metadata", JSON.stringify(metadata));
+    upload.append("encrypted_data", new Blob([encrypted.data], { type: "application/octet-stream" }), "encrypted.bin");
+    let share;
+    try {
+      share = await api(`/api/files/${message.file.id}/shares`, {
+        method: "POST",
+        body: upload,
+      });
+    } catch (creationError) {
+      // If a proxy loses the small JSON response after the database commit,
+      // the client-generated token still lets us recover the usable link.
+      try {
+        const recovered = await api(`/api/file-shares/${shareToken}`);
+        share = { ...recovered, token: shareToken };
+      } catch {
+        throw creationError;
+      }
+    }
     elements.fileShareURL.value = publicURL.toString();
     elements.fileShareValidity.textContent = t("Valable jusqu’au {date}.", { date: new Intl.DateTimeFormat(locale, { dateStyle: "long", timeStyle: "short" }).format(new Date(share.expires_at)) });
     elements.fileShareResult.hidden = false;
     elements.fileShareCreateActions.hidden = true;
     elements.fileShareExpiration.disabled = true;
     state.activeFileShareID = share.id;
-    loadExistingFileShares(message.file.id);
+    loadExistingFileShares(message, conversation);
     toast("Lien de partage sécurisé créé.", "success");
   } catch (error) {
     elements.fileShareError.textContent = frenchErrorMessage(error, "Impossible de créer le lien de partage.");
@@ -8827,17 +8887,32 @@ async function createFileShare(event) {
 async function copyFileShareLink() {
   const link = elements.fileShareURL.value;
   if (!link) return;
-  try {
-    await navigator.clipboard.writeText(link);
-  } catch {
-    elements.fileShareURL.focus();
-    elements.fileShareURL.select();
-    if (!document.execCommand("copy")) {
-      toast("Sélectionnez puis copiez le lien manuellement.", "error");
-      return;
-    }
+  if (!await copyTextToClipboard(link, elements.fileShareURL)) {
+    toast("Sélectionnez puis copiez le lien manuellement.", "error");
+    return;
   }
   toast("Lien copié.", "success");
+}
+
+async function copyTextToClipboard(text, fallbackInput = null) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const target = fallbackInput || document.createElement("textarea");
+    if (!fallbackInput) {
+      target.value = text;
+      target.readOnly = true;
+      target.style.position = "fixed";
+      target.style.opacity = "0";
+      document.body.append(target);
+    }
+    target.focus();
+    target.select();
+    const copied = document.execCommand("copy");
+    if (!fallbackInput) target.remove();
+    return copied;
+  }
 }
 
 async function revokeFileShare() {
@@ -8853,7 +8928,7 @@ async function revokeFileShare() {
     if (state.pendingFileShare?.message?.file?.id) {
       const fileID = state.pendingFileShare.message.file.id;
       updateCachedGlobalFileShareCount(fileID, Number(state.pendingFileShare.message.file.active_share_count || 1) - 1);
-      loadExistingFileShares(fileID);
+      loadExistingFileShares(state.pendingFileShare.message, state.pendingFileShare.conversation);
     }
   } catch (error) {
     elements.fileShareError.textContent = frenchErrorMessage(error, "Impossible de désactiver le lien.");
@@ -9342,6 +9417,26 @@ function supportsFullFilePreview(file) {
     /(?:json|xml|javascript)$/i.test(mime) || Boolean(modernOfficeKind(file));
 }
 
+function safeFullFilePreviewSource(message, container) {
+  const file = {
+    name: container.dataset.fileName || "",
+    mime: normalizedFileMIME(container.dataset.fileMime, container.dataset.fileName),
+  };
+  const size = Number(message.file?.size) || 0;
+  return supportsFullFilePreview(file) && size > 0 && size <= FILE_PREVIEW_SOURCE_MAX_BYTES;
+}
+
+function renderUnavailableFilePreview(container) {
+  const unavailable = document.createElement("div");
+  unavailable.className = "file-preview-unavailable";
+  const icon = document.createElement("span");
+  icon.append(materialFileIcon("file"));
+  const label = document.createElement("span");
+  label.textContent = t("Aperçu non disponible pour ce format");
+  unavailable.append(icon, label);
+  container.replaceChildren(unavailable);
+}
+
 function prefetchRecentFullFilePreviews(
   decryptedMessages,
   limit = 4,
@@ -9711,6 +9806,13 @@ async function renderFilePreview(message, container, key) {
   let temporaryOfficeThumbnailURL = "";
   try {
     if (await renderEncryptedFileThumbnail(message, container, key) || !container.isConnected) return;
+    // Do not fetch and decrypt an entire archive (or another very large file)
+    // merely to discover that the browser cannot preview it. The explicit
+    // download action remains available on the attachment.
+    if (!safeFullFilePreviewSource(message, container)) {
+      renderUnavailableFilePreview(container);
+      return;
+    }
     if (message.file.has_preview !== true) {
       temporaryOfficeThumbnailURL = await renderTemporaryOfficeThumbnail(container);
     }
@@ -9766,14 +9868,7 @@ async function renderFilePreview(message, container, key) {
       }
       return;
     }
-    const unavailable = document.createElement("div");
-    unavailable.className = "file-preview-unavailable";
-    const icon = document.createElement("span");
-    icon.append(materialFileIcon("file"));
-    const label = document.createElement("span");
-    label.textContent = t("Aperçu non disponible pour ce format");
-    unavailable.append(icon, label);
-    container.append(unavailable);
+    renderUnavailableFilePreview(container);
   } catch (error) {
     if (!container.isConnected) return;
     console.error("Chargement de l’aperçu impossible", error);
@@ -9787,6 +9882,10 @@ async function renderFilePreview(message, container, key) {
 async function renderReplyFilePreview(message, container, key) {
   try {
     if (await renderEncryptedFileThumbnail(message, container, key) || !container.isConnected) return;
+    if (!safeFullFilePreviewSource(message, container)) {
+      renderUnavailableReplyPreview(container);
+      return;
+    }
     const file = await loadDecryptedFile(message, key);
     if (!container.isConnected) return;
     const mime = mimeEssence(file.mime);

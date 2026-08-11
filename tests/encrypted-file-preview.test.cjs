@@ -3,11 +3,13 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const app = fs.readFileSync(path.join(__dirname, "../web/js/app.js"), "utf8");
+const crypto = fs.readFileSync(path.join(__dirname, "../web/js/crypto.js"), "utf8");
 const ui = fs.readFileSync(path.join(__dirname, "../web/js/ui.js"), "utf8");
 const styles = fs.readFileSync(path.join(__dirname, "../web/css/style.css"), "utf8");
 const server = fs.readFileSync(path.join(__dirname, "../cmd/server/main.go"), "utf8");
 
 assert.match(app, /const FILE_PREVIEW_MAX_BYTES = 512 \* 1024/);
+assert.match(app, /const FILE_PREVIEW_SOURCE_MAX_BYTES = 64 \* 1024 \* 1024/);
 assert.match(app, /async function encryptedFilePreview\(file, data, key\)/);
 assert.match(app, /mime === "application\/pdf"[\s\S]*pdfFilePreview\(data\)/);
 assert.match(app, /async function videoFilePreview\(file, data\)[\s\S]*video\.currentTime[\s\S]*return canvasJPEG\(canvas, 0\.78\)/);
@@ -19,6 +21,28 @@ assert.match(app, /preview\?\.size > 0 && preview\.size <= FILE_PREVIEW_MAX_BYTE
 assert.match(app, /message\.file\.has_preview !== true[\s\S]*renderTemporaryOfficeThumbnail\(container\)/);
 assert.match(app, /encrypted_preview_data: preview\?\.data \|\| ""/);
 assert.match(app, /preview_iv: preview\?\.iv \|\| ""/);
+assert.match(app, /from "\.\/crypto\.js\?v=file-share-history-v323"/);
+assert.match(app, /async function encryptFileBytes\(key, bytes\)/);
+assert.match(app, /encryptFileBytes\(key, data\)/);
+
+const cryptoImportBlock = [...app.matchAll(/import\s*\{([\s\S]*?)\}\s*from "([^"]+)"/g)]
+  .find((match) => match[2].startsWith("./crypto.js?"));
+const cryptoImports = cryptoImportBlock?.[1]
+  .split(",")
+  .map((name) => name.trim())
+  .filter(Boolean) || [];
+const cryptoExports = new Set(
+  [...crypto.matchAll(/export\s+(?:async\s+)?(?:function|const|class)\s+([A-Za-z_$][\w$]*)/g)]
+    .map((match) => match[1]),
+);
+for (const imported of cryptoImports) {
+  assert.ok(cryptoExports.has(imported), `crypto.js doit exporter ${imported}`);
+}
+assert.match(app, /upload\.append\("metadata", JSON\.stringify\(body\)\)/);
+assert.match(app, /upload\.append\("encrypted_data", new Blob\(\[encrypted\.data\]/);
+assert.match(app, /api\("\/api\/files", \{[\s\S]*body: upload/);
+assert.match(app, /function safeFullFilePreviewSource\(message, container\)[\s\S]*supportsFullFilePreview\(file\)[\s\S]*size <= FILE_PREVIEW_SOURCE_MAX_BYTES/);
+assert.match(app, /async function renderFilePreview[\s\S]*safeFullFilePreviewSource\(message, container\)[\s\S]*loadDecryptedFile\(message, key\)/);
 assert.match(app, /api\(`\/api\/files\/\$\{message\.file\.id\}\/preview`\)/);
 assert.match(ui, /preview\.dataset\.fileMime = clear\?\.mime \|\| ""/);
 assert.match(app, /previewMIME === "application\/pdf"[\s\S]*preparedPDFThumbnail\(thumbnail\)[\s\S]*fitPDFPreviewToAspect\(container, display\.width \|\| image\.naturalWidth, display\.height \|\| image\.naturalHeight\)/);

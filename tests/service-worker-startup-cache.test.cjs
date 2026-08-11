@@ -18,7 +18,7 @@ assert.ok(
   startupBranch.indexOf("caches.match(event.request)") < startupBranch.indexOf("fetch(event.request)"),
   "l’écran de démarrage doit être lu dans Cache Storage avant toute requête réseau",
 );
-assert.match(startupBranch, /if \(cached\) return cached/);
+assert.match(startupBranch, /if \(cached\) \{[\s\S]*fetch\(event\.request\)[\s\S]*return cached;/);
 assert.match(worker, /"\/vendor\/hash-wasm\/argon2\.umd\.min\.js\?v=identity-v2"/);
 assert.equal(manifest.background_color, "#1b5260");
 
@@ -40,6 +40,12 @@ assert.equal(appVersion, moduleVersion, "app.js and the negotiation module must 
 assert.ok(
   page.includes(`/js/app.js?v=${appVersion}`),
   "index.html must request the same app.js version the service worker caches",
+);
+const cryptoVersion = app.match(/from "\.\/crypto\.js\?v=([^"]+)"/)?.[1];
+assert.equal(cryptoVersion, appVersion, "app.js and crypto.js must share one cache-busting version");
+assert.ok(
+  worker.includes(`"/js/crypto.js?v=${cryptoVersion}"`),
+  "the exact crypto.js imported by app.js must be in the service worker shell",
 );
 const cacheVersion = worker.match(/const CACHE = "chat-pwa-go-v(\d+)"/)?.[1];
 assert.ok(Number(cacheVersion) >= 313, "the cache generation must be bumped when the shell changes");

@@ -76,6 +76,9 @@ WorkingDirectory=/opt/vibration/backend
 Environment=ADDR=127.0.0.1:8080
 Environment=DATA_DIR=/var/lib/vibration
 Environment=DATABASE_PATH=/var/lib/vibration/chat.db
+Environment=DATABASE_BACKUP_DIR=/var/lib/vibration/backups
+# Laisser les opérations destructrices désactivées jusqu’au test de restauration.
+Environment=ALLOW_DATABASE_DESTRUCTIVE_ACTIONS=false
 Environment=SECURE_COOKIES=true
 Environment=VAPID_SUBJECT=admin@votre-domaine.fr
 Environment=FEDERATION_OUTBOX_BATCH=20
@@ -427,6 +430,25 @@ Alias /icons/ "/usr/share/apache2/icons/"
 Dans ce cas, ajouter l’alias `/icons/` dans le vhost de Vibration comme montré plus haut, puis recharger Apache.
 
 ## 10. Sauvegardes
+
+En édition Enterprise, l’onglet **Administration > Base de données** crée des archives logiques dans `/var/lib/vibration/backups`. Elles peuvent être téléchargées sans exposer la chaîne de connexion. Chaque restauration et remise à zéro crée automatiquement une archive de secours avant de modifier les données.
+
+Pour activer ces deux actions destructrices après validation en préproduction, le compte système `vibration` doit pouvoir redémarrer uniquement son propre service. Par exemple, ajouter avec `visudo` une règle strictement limitée :
+
+```sudoers
+vibration ALL=(root) NOPASSWD: /usr/bin/systemctl restart vibration.service
+```
+
+Puis ajouter au service :
+
+```ini
+Environment="SERVICE_RESTART_COMMAND=/usr/bin/sudo -n /usr/bin/systemctl restart vibration.service"
+Environment=ALLOW_DATABASE_DESTRUCTIVE_ACTIONS=true
+```
+
+Exécuter `sudo systemctl daemon-reload` puis `sudo systemctl restart vibration`. Le mot de passe administrateur et une phrase saisie exactement restent exigés dans l’interface. Si cette délégation `sudoers` n’est pas souhaitée, conserver `ALLOW_DATABASE_DESTRUCTIVE_ACTIONS=false` : la création et le téléchargement des sauvegardes continuent de fonctionner.
+
+Ces archives contiennent les données de l’application, mais pas `app_secret` ni les clés VAPID. Elles complètent donc, sans la remplacer, la sauvegarde complète suivante.
 
 Sauvegarder régulièrement :
 

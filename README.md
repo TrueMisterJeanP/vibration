@@ -6,7 +6,7 @@ Application de messagerie web installable, responsive et chiffrée côté naviga
   <img src="docs/interface-community.png" alt="Interface de Vibration Community avec conversations, sondage, évènement, fichier partagé et messages épinglés" width="900">
 </p>
 
-<p align="center"><strong>Vibration Community 1.0.18</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
+<p align="center"><strong>Vibration Community 1.0.19</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
 
 ## Philosophie
 
@@ -103,6 +103,15 @@ Le périmètre des appels et groupes fédérés est détaillé dans [Community e
 
 ## Nouveautés
 
+### Community 1.0.19
+
+- **Transfert des fichiers sans Base64** : l’envoi, la création d’un partage et le téléchargement public utilisent désormais des données binaires, ce qui évite l’augmentation de taille d’environ un tiers et réduit la pression mémoire du navigateur.
+- **Délais adaptés aux fichiers volumineux** : le serveur prolonge automatiquement les délais de lecture et d’écriture selon la taille transférée, afin d’éviter qu’un proxy renvoie une erreur 502 alors que le partage a déjà été enregistré.
+- **Récupération après une réponse réseau perdue** : le navigateur génère le jeton de partage et peut retrouver le partage si la petite réponse JSON disparaît après l’enregistrement côté serveur.
+- **Historique des liens copiable** : les nouveaux liens sont conservés chiffrés avec la clé de la conversation et peuvent être recopiés depuis « Vos liens précédents », sans exposer leur jeton ni leur clé de fichier en clair au serveur.
+- **Aperçu sûr des archives volumineuses** : les formats non prévisualisables, notamment ZIP, ne déclenchent plus automatiquement le téléchargement complet lors de l’ouverture de l’aperçu.
+- **Cache PWA v323** : Safari et les applications installées reçoivent ensemble le nouveau client, la page de partage et les ressources de chiffrement associées.
+
 ### Community 1.0.18
 
 - **Listes de discussions prêtes avant affichage** : avec un cache local, les conversations apparaissent immédiatement ; sans cache, la région reste en chargement jusqu’à la résolution complète des titres, avatars et aperçus, puis s’affiche en une seule fois.
@@ -174,6 +183,7 @@ Elle ajoute notamment :
 - fédération entre instances approuvées ;
 - configuration WebRTC depuis l’administration ;
 - migration ou recopie vers MariaDB/MySQL ou PostgreSQL ;
+- sauvegarde logique, téléchargement, restauration protégée et remise à zéro contrôlée de la base active ;
 - accompagnement d’installation, sauvegarde, maintenance et support.
 
 Offre Enterprise : https://vibration-shop.appbox.fr
@@ -459,7 +469,18 @@ Push :
 
 Appels :
 
-- `GET /api/calls/config`
+- `GET /api/calls/config` — serveurs ICE, politique de relais et identité fédérée de l’appelant
+- `GET /api/calls/capabilities?conversation_id=` — indique si chaque instance de la conversation parle `federated-calls-v1`
+- `POST /api/federation/calls` — signalisation d’appel entre instances (Enterprise, signée HMAC)
+
+Vérification TURN optionnelle (infrastructure réelle requise, ignorée par défaut) :
+
+```bash
+TURN_E2E=1 TURN_URL=turns:turn.example.com:5349 \
+TURN_USERNAME=vibration TURN_CREDENTIAL=... npm run test:turn
+```
+
+Ce script ouvre deux `RTCPeerConnection` réelles en politique `relay`, et vérifie que les deux pairs atteignent `connected`, qu’une piste distante est reçue et que le candidat sélectionné est bien de type `relay`. Les autres tests d’appel valident la **signalisation** et la **négociation simulée** : ils ne prouvent pas qu’un flux média a traversé TURN.
 - `GET /api/ws`
 
 ## Configuration
@@ -474,12 +495,22 @@ Variables d’environnement :
 | `DATA_DIR` | `data` | répertoire des données |
 | `WEB_DIR` | `web` | répertoire des fichiers statiques servis par le backend |
 | `DATABASE_PATH` | `data/chat.db` | chemin SQLite |
+| `DATABASE_DRIVER` | `sqlite` | moteur actif : `sqlite`, `mysql`/`mariadb` ou `postgres` (Enterprise) |
+| `DATABASE_DSN` | vide | chaîne de connexion externe, conservée uniquement côté serveur (Enterprise) |
+| `DATABASE_BACKUP_DIR` | `DATA_DIR/backups` | répertoire protégé des archives logiques créées depuis l’administration (Enterprise) |
+| `ALLOW_DATABASE_DESTRUCTIVE_ACTIONS` | `false` | autorise explicitement restauration et remise à zéro (Enterprise) |
+| `SERVICE_RESTART_COMMAND` | vide | commande directe de redémarrage requise après une restauration ou remise à zéro (Enterprise) |
 | `APP_SECRET` | fichier généré | secret local réservé aux extensions de session |
 | `SECURE_COOKIES` | `false` | activer l’attribut cookie `Secure` en HTTPS |
 | `SESSION_SAME_SITE` | `lax` | mode SameSite du cookie de session : `lax`, `strict` ou `none` |
 | `VAPID_SUBJECT` | `admin@example.com` | adresse de contact VAPID, sans préfixe `mailto:` |
 | `AUTH_RATE_LIMIT_PER_MINUTE` | `20` | nombre maximal de tentatives de connexion ou inscription par minute, par IP et nom d’utilisateur |
 | `CLIENT_ORIGINS` | vide | origines web explicites autorisées à appeler l’API et le WebSocket, séparées par des virgules ; le joker `*` est refusé |
+| `WEBRTC_TURN_URLS` | vide | serveurs TURN privés, séparés par des virgules (Enterprise) |
+| `WEBRTC_TURN_USERNAME` | vide | identifiant TURN (Enterprise) |
+| `WEBRTC_TURN_CREDENTIAL` | vide | secret TURN (Enterprise) ; jamais journalisé ni renvoyé par l’API d’administration |
+| `WEBRTC_PUBLIC_FALLBACK_URLS` | `stun:stun.l.google.com:19302` | serveurs STUN publics de secours |
+| `WEBRTC_RELAY_POLICY` | `all` | `relay` force chaque appel à passer par TURN (`iceTransportPolicy: "relay"`), pour tester un déploiement Coturn de bout en bout |
 
 Exemple production derrière un reverse proxy HTTPS :
 
@@ -494,9 +525,32 @@ go run -tags community ./cmd/server
 
 Le serveur doit être placé derrière un reverse proxy HTTPS ; `SECURE_COOKIES=true` active aussi l’en-tête HSTS. L'édition Community garde les inscriptions ouvertes par conception.
 
+### Sauvegarde et restauration depuis l’administration
+
+Le panneau **Base de données** de l’édition Enterprise peut créer une archive cohérente de la base active, la télécharger et restaurer une archive encore présente sur le serveur. L’archive contient les données applicatives sensibles — comptes, empreintes de mots de passe, métadonnées et contenus chiffrés — mais pas le DSN, `APP_SECRET` ni les clés VAPID. Elle doit donc être stockée dans un emplacement chiffré et protégé.
+
+Une restauration est limitée au même moteur et à un schéma compatible. Avant toute restauration ou remise à zéro, le serveur crée obligatoirement une sauvegarde de secours. La remise à zéro conserve le compte administrateur qui lance l’opération, sa session actuelle, son historique d’identité et ses appareils de confiance afin d’éviter un verrouillage à distance. Les écritures concurrentes sont temporairement refusées pendant l’opération.
+
+La création et le téléchargement de sauvegardes sont disponibles dès que `DATABASE_BACKUP_DIR` est accessible. Les deux opérations destructrices exigent en plus `ALLOW_DATABASE_DESTRUCTIVE_ACTIONS=true`, un `SERVICE_RESTART_COMMAND` fonctionnel, le mot de passe administrateur actuel et la phrase de confirmation affichée dans l’interface. Laissez le drapeau à `false` tant que le redémarrage et une restauration en préproduction n’ont pas été validés.
+
 Si le frontend web est servi depuis une origine différente de l’instance serveur, ajouter cette origine dans `CLIENT_ORIGINS` et utiliser `SESSION_SAME_SITE=none` avec `SECURE_COOKIES=true`. Sans ces réglages, le navigateur refusera les cookies de session cross-site ou les requêtes CORS.
 
 En Community, les appels audio/vidéo utilisent uniquement `stun:stun.l.google.com:19302`. Google fournit ici un STUN de secours, pas un TURN public. Pour des appels plus fiables en production, notamment derrière certains pare-feu ou réseaux mobiles, l'édition Enterprise permet de configurer un Coturn privé.
+
+### Coturn et appels fédérés
+
+STUN seul ne suffit pas derrière un NAT symétrique, sur beaucoup de réseaux mobiles et derrière certains pare-feu d’entreprise : sans relais, l’appel sonne mais aucun média ne passe. Un TURN est donc nécessaire en production, et d’autant plus pour un appel entre deux instances, où les deux navigateurs sont sur des réseaux sans rapport.
+
+Étapes de déploiement :
+
+1. Installer Coturn sur un hôte joignable publiquement en UDP et TCP sur `3478`, et en TLS sur `5349`.
+2. Dans `/etc/turnserver.conf`, activer `listening-port=3478`, `tls-listening-port=5349`, `fingerprint`, `lt-cred-mech`, `realm=<votre-domaine>` et un `user=` dédié. Fournir `cert=`/`pkey=` pour TURN-TLS : c’est le transport à privilégier, car `turns:` sur 5349 traverse les pare-feu qui n’autorisent que du trafic TLS sortant.
+3. Ouvrir la plage de ports relais (`min-port`/`max-port`, par exemple `49160-49200`) sur le pare-feu et, en cloud, sur le groupe de sécurité.
+4. Déclarer le serveur côté Vibration, par variables d’environnement (`WEBRTC_TURN_URLS=turns:turn.example.com:5349`, `WEBRTC_TURN_USERNAME`, `WEBRTC_TURN_CREDENTIAL`) ou depuis l’administration Enterprise. L’interface d’administration ne renvoie jamais le secret, seulement l’indicateur `turn_credential_set`.
+5. Vérifier le relais réellement emprunté : régler la politique sur `relay` (`WEBRTC_RELAY_POLICY=relay` ou le réglage d’administration) et passer un appel. Le navigateur reçoit alors `iceTransportPolicy: "relay"` et n’a plus le droit d’utiliser un chemin direct : soit l’appel passe par Coturn, soit il échoue. C’est le seul test qui distingue un TURN fonctionnel d’un TURN cassé masqué par une connexion directe. Revenir ensuite à `all`, qui reste préférable en exploitation.
+6. Répéter l’opération sur chaque instance fédérée : le relais est choisi par chaque navigateur pour lui-même, un Coturn correctement configuré d’un seul côté ne suffit pas.
+
+Les identifiants TURN restent des identifiants statiques de longue durée. Si votre déploiement Coturn le permet, préférez des identifiants temporaires (`use-auth-secret` avec un secret partagé et des noms d’utilisateur horodatés) : le durcissement correspondant côté serveur n’est pas encore implémenté et est suivi séparément.
 
 ## Structure
 
@@ -577,7 +631,10 @@ rm -f data/chat.db data/chat.db-shm data/chat.db-wal data/app_secret data/vapid.
 - la rotation des clés de groupe protège les messages futurs après un ajout ou un retrait, mais ne crée pas de forward secrecy par message ;
 - l’API permet au propriétaire d’ajouter/retirer des membres, mais l’interface V1 sélectionne principalement les membres à la création ;
 - les appels audio/vidéo sont WebRTC et chiffrés par le navigateur, mais ne disposent pas encore d’une couche E2EE applicative indépendante avec vérification d’identité ;
-- les appels audio/vidéo ne sont pas encore fédérés entre serveurs ;
+- les appels audio/vidéo sont fédérés entre instances via le protocole versionné `federated-calls-v1` (appels privés et appels de groupe mêlant participants locaux et distants) ; l’interface désactive les boutons d’appel lorsque l’instance du correspondant n’annonce pas cette capacité ;
+- le périmètre officiellement supporté d’un groupe fédéré est : **plusieurs participants locaux et exactement un participant distant**. La distribution des clés de groupe et la réplication des métadonnées ne visent qu’une instance pair ; un second participant distant est refusé explicitement (`a federated group currently supports one remote participant`) plutôt que créé dans un état qui ne convergerait jamais ;
+- le schéma autorise déjà plusieurs destinations fédérées par conversation, et les API ne dupliquent plus une conversation qui en aurait plusieurs, mais la création de cette configuration reste interdite tant que la réplication des groupes, des clés et des métadonnées n’est pas complète et testée ;
+- l’architecture d’appel de groupe est un maillage complet (une connexion WebRTC par paire) : elle convient à de petits groupes, de l’ordre de 4 à 6 participants, et n’intègre pas de SFU ;
 - les métadonnées techniques restent visibles du serveur : comptes, appartenances, heures, tailles et fréquence ;
 - la modération administrative des messages est nécessairement « aveugle » : l’administrateur ne peut pas lire le contenu E2EE et agit à partir des métadonnées et des catégories d’infraction choisies lors des signalements internes ;
 - cache PWA limité à l’interface ; les messages ne sont pas mis en cache hors ligne ;

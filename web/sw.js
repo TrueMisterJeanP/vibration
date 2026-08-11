@@ -1,8 +1,8 @@
-const CACHE = "chat-pwa-go-v317";
+const CACHE = "chat-pwa-go-v323";
 const SHELL = [
-  "/", "/index.html", "/login.html", "/link-device.html", "/share.html", "/css/style.css?v=conversation-ready-v317",
-  "/js/app.js?v=conversation-ready-v317", "/js/call-negotiation.js?v=conversation-ready-v317", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js", "/js/websocket.js?v=ios-resume-v297", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=calendar-toolbar-grid-v311",
-  "/js/notifications.js?v=calendar-toolbar-grid-v311", "/js/device-vault.js?v=trusted-device-v300", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js?v=calendar-toolbar-grid-v311", "/js/ui.js?v=ios-resume-v297", "/js/share.js?v=ios17-pdf-v199", "/js/login.js?v=calendar-toolbar-grid-v311", "/js/link-device.js?v=ios-resume-v297", "/js/qr-scanner.js?v=qr-scanner-v296", "/manifest.json?v=desktop-titlebar-v252",
+  "/", "/index.html", "/login.html", "/link-device.html", "/share.html", "/css/style.css?v=file-share-history-v323",
+  "/js/app.js?v=file-share-history-v323", "/js/call-negotiation.js?v=file-share-history-v323", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js?v=file-share-history-v323", "/js/websocket.js?v=ios-resume-v297", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=calendar-toolbar-grid-v311",
+  "/js/notifications.js?v=file-share-history-v323", "/js/device-vault.js?v=trusted-device-v300", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js?v=calendar-toolbar-grid-v311", "/js/ui.js?v=ios-resume-v297", "/js/share.js?v=file-share-history-v323", "/js/login.js?v=calendar-toolbar-grid-v311", "/js/link-device.js?v=ios-resume-v297", "/js/qr-scanner.js?v=qr-scanner-v296", "/manifest.json?v=desktop-titlebar-v252",
   "/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2",
   "/vendor/jsqr/jsQR.js?v=qr-scanner-v296",
   "/js/pdf-preview-compat.js?v=ios17-pdf-v199",
@@ -22,7 +22,7 @@ const SHELL = [
   "/vendor/html2canvas/html2canvas.min.js?v=office-faithful-preview-v265",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/person.svg", "/icons/group.svg",
 ];
-const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=admin-instant-v313"];
+const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=file-quota-v321"];
 const STARTUP_CACHE_PATHS = new Set(["/", "/index.html", "/css/style.css", "/js/theme.js"]);
 const ADMIN_CACHE_PATHS = new Set(["/admin.html", "/js/admin.js", "/js/api.js", "/js/ui.js", "/js/i18n.js"]);
 
@@ -45,7 +45,15 @@ self.addEventListener("fetch", (event) => {
   if (STARTUP_CACHE_PATHS.has(url.pathname)) {
     event.respondWith(
       caches.match(event.request).then((cached) => {
-        if (cached) return cached;
+        if (cached) {
+          // Keep the instant/offline startup, but refresh the shell in the
+          // background so Safari can recover from an older cached module.
+          fetch(event.request).then((response) => {
+            if (!response.ok) return;
+            caches.open(CACHE).then((cache) => cache.put(event.request, response));
+          }).catch(() => {});
+          return cached;
+        }
         return fetch(event.request).then((response) => {
           const copy = response.clone();
           caches.open(CACHE).then((cache) => cache.put(event.request, copy));

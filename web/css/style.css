@@ -322,6 +322,7 @@ html.ios-pwa-splash-positioned #startup-splash svg { visibility: visible; }
 .file-share-existing-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .55rem; padding: .55rem; border: 1px solid var(--line); border-radius: .65rem; background: var(--panel-2); }
 .file-share-existing-row span { display: grid; gap: .15rem; min-width: 0; }
 .file-share-existing-row button { padding: .45rem .6rem; }
+.file-share-existing-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .4rem; }
 .danger-text { color: var(--danger) !important; }
 .share-page { min-height: 100%; display: grid; place-items: center; padding: clamp(1rem, 4vw, 3rem); }
 .share-shell { display: grid; grid-template-columns: minmax(260px, .9fr) minmax(320px, 1.1fr); gap: clamp(1rem, 4vw, 3rem); width: min(100%, 980px); }

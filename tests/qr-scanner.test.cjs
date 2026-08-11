@@ -40,7 +40,7 @@ async function importSource(source, suffix) {
   assert.match(app, /sessionApprovalTokenFromQR\(value, getInstanceURL\(\)\)/);
   assert.match(app, /sessions\/preview[\s\S]*body: \{ token \}[\s\S]*sessions\/approve[\s\S]*body: \{ token \}/);
   assert.match(app, /sessionQRScannerStream\?\.getTracks\?\.\(\)[\s\S]*track\.stop\(\)/);
-  assert.match(worker, /chat-pwa-go-v317/);
+  assert.match(worker, /chat-pwa-go-v323/);
   assert.match(worker, /\/js\/qr-scanner\.js\?v=qr-scanner-v296/);
   assert.match(worker, /\/vendor\/jsqr\/jsQR\.js\?v=qr-scanner-v296/);
   assert.equal(fs.existsSync(path.join(root, "web/vendor/jsqr/LICENSE")), true);
