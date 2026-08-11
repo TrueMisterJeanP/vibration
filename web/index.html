@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1b5260">
-  <meta name="vibration-build" content="file-share-history-v323">
+  <meta name="vibration-build" content="conversation-search-v325">
   <style>
     :root { --avatar-bg: #1b5260; --avatar-fg: #a9fff4; background-color: #1b5260; }
     html[data-theme="light"] { --avatar-bg: #c9e7e4; --avatar-fg: #075e57; background-color: #c9e7e4; }
@@ -21,7 +21,7 @@
   <link rel="manifest" href="/manifest.json?v=desktop-titlebar-v252">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=file-share-history-v323">
+  <link rel="stylesheet" href="/css/style.css?v=conversation-search-v325">
 </head>
 <body>
   <div class="desktop-titlebar-drag-region" data-tauri-drag-region aria-hidden="true"></div>
@@ -50,6 +50,11 @@
       </div>
       <div id="conversation-list-loading" class="conversation-list-loading" role="status">Chargement des discussions…</div>
       <div id="conversation-lists" aria-busy="true" hidden>
+        <div class="conversation-search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m16 16 5 5"></path></svg>
+          <input id="conversation-search" type="search" autocomplete="off" autocapitalize="none" spellcheck="false"
+            placeholder="Rechercher une discussion" aria-label="Rechercher une discussion">
+        </div>
         <button id="personal-conversation-button" class="conversation-item personal-conversation-item" type="button" hidden>
           <span class="avatar personal-note-avatar" aria-hidden="true">
             <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6Z"></path><path d="M15 3v4h4"></path><path d="m9 16 6.7-6.7a1.4 1.4 0 0 1 2 2L11 18l-3 1Z"></path></svg>
@@ -571,6 +576,6 @@
   <div id="toasts" aria-live="polite"></div>
   <script src="/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2"></script>
   <script src="/vendor/jsqr/jsQR.js?v=qr-scanner-v296"></script>
-  <script type="module" src="/js/app.js?v=file-share-history-v323"></script>
+  <script type="module" src="/js/app.js?v=conversation-search-v325"></script>
 </body>
 </html>

@@ -19,7 +19,7 @@ import {
   verifyMessagePayload,
   unwrapGroupKey,
   wrapGroupKey,
-} from "./crypto.js?v=file-share-history-v323";
+} from "./crypto.js?v=conversation-search-v325";
 import {
   forgetRememberedIdentity,
 	forgetTrustedDeviceCredential,
@@ -40,10 +40,10 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=file-share-history-v323";
+} from "./notifications.js?v=conversation-search-v325";
 import { ChatSocket } from "./websocket.js?v=ios-resume-v297";
 import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios-resume-v297";
-import { locale, t } from "./i18n.js?v=calendar-toolbar-grid-v311";
+import { locale, t } from "./i18n.js?v=conversation-search-v325";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
 import { nonWhiteImageBounds } from "./file-preview-image.js?v=ios17-pdf-v199";
 import {
@@ -71,7 +71,7 @@ import {
   sameCallIdentity,
   shouldOfferAfterAccept,
   shouldOfferInGroup,
-} from "./call-negotiation.js?v=file-share-history-v323";
+} from "./call-negotiation.js?v=conversation-search-v325";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
 import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
@@ -99,7 +99,7 @@ const GLOBAL_FILES_PAGE_SIZE = 40;
 const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
 const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "file-share-history-v323";
+const APP_BUILD = "conversation-search-v325";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
 const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;
@@ -220,6 +220,7 @@ const elements = {
   shell: document.querySelector("#app-shell"),
   conversationLists: document.querySelector("#conversation-lists"),
   conversationListLoading: document.querySelector("#conversation-list-loading"),
+  conversationSearch: document.querySelector("#conversation-search"),
   conversations: document.querySelector("#conversation-list"),
   personalConversationButton: document.querySelector("#personal-conversation-button"),
   personalConversationPreview: document.querySelector("#personal-conversation-preview"),
@@ -1271,6 +1272,7 @@ function bindUI() {
   elements.replyClear.addEventListener("click", clearReplyTarget);
   bindExpirationDialog();
   elements.input.addEventListener("input", sendTyping);
+  elements.conversationSearch.addEventListener("input", applyConversationSearch);
   document.querySelector("#contact-search").addEventListener("input", debounce(searchContacts, 300));
   document.querySelector("#group-user-search").addEventListener("input", debounce(searchNewGroupMembers, 300));
   document.querySelector("#group-form").addEventListener("submit", createGroup);
@@ -3324,10 +3326,56 @@ function keepConversationSelectedDuringTransition(button) {
   button.classList.add("active");
 }
 
+function normalizedConversationSearch(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase(locale)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function conversationMatchesSearch(searchText, query) {
+  const normalizedQuery = normalizedConversationSearch(query);
+  return !normalizedQuery || normalizedConversationSearch(searchText).includes(normalizedQuery);
+}
+
+function applyConversationSearch() {
+  const query = elements.conversationSearch.value;
+  const candidates = [
+    elements.personalConversationButton,
+    ...elements.conversations.querySelectorAll("[data-conversation-search]"),
+  ];
+  let visibleCount = 0;
+  for (const candidate of candidates) {
+    const matches = conversationMatchesSearch(candidate.dataset.conversationSearch, query);
+    candidate.classList.toggle("conversation-search-hidden", !matches);
+    if (matches && !candidate.hidden) visibleCount += 1;
+  }
+
+  const normalizedQuery = normalizedConversationSearch(query);
+  elements.conversations.querySelector(".conversation-list-base-empty")
+    ?.classList.toggle("conversation-search-hidden", Boolean(normalizedQuery));
+  let empty = elements.conversations.querySelector(".conversation-search-empty");
+  if (normalizedQuery && visibleCount === 0) {
+    if (!empty) {
+      empty = document.createElement("p");
+      empty.className = "muted sidebar-empty conversation-search-empty";
+      empty.setAttribute("role", "status");
+      empty.textContent = t("Aucune discussion trouvée");
+      elements.conversations.append(empty);
+    }
+  } else {
+    empty?.remove();
+  }
+}
+
 async function renderPersonalConversation(isCurrentRender = () => true) {
   const conversation = state.conversations.find((item) => item.is_personal);
   if (!conversation) {
-    if (isCurrentRender()) elements.personalConversationButton.hidden = true;
+    if (isCurrentRender()) {
+      elements.personalConversationButton.hidden = true;
+      delete elements.personalConversationButton.dataset.conversationSearch;
+    }
     return;
   }
   const unreadCount = Number(conversation.unread_count || 0);
@@ -3355,6 +3403,11 @@ async function renderPersonalConversation(isCurrentRender = () => true) {
     { count: unreadCount },
   ));
   elements.personalConversationPreview.textContent = preview;
+  elements.personalConversationButton.dataset.conversationSearch = [
+    t("Mes notes"),
+    t("Messages et fichiers personnels"),
+    preview,
+  ].join(" ");
 }
 
 async function renderConversations({ freshMembers = false } = {}) {
@@ -3435,6 +3488,7 @@ async function renderConversations({ freshMembers = false } = {}) {
       preview,
     ]),
   });
+  applyConversationSearch();
   if (renderKey === conversationListRenderKey) return;
   const list = document.createDocumentFragment();
   for (const contact of pendingContacts) {
@@ -3442,11 +3496,12 @@ async function renderConversations({ freshMembers = false } = {}) {
   }
   if (!listedConversations.length && !pendingContacts.length && elements.personalConversationButton.hidden) {
     const empty = document.createElement("p");
-    empty.className = "muted sidebar-empty";
+    empty.className = "muted sidebar-empty conversation-list-base-empty";
     empty.textContent = t("Aucune conversation");
     list.append(empty);
     conversationListRenderKey = renderKey;
     elements.conversations.replaceChildren(list);
+    applyConversationSearch();
     return;
   }
   for (const { conversation, display, callState, typing, online, preview } of details) {
@@ -3456,6 +3511,7 @@ async function renderConversations({ freshMembers = false } = {}) {
     }
     const row = document.createElement("div");
     row.className = "conversation-row swipe-row";
+    row.dataset.conversationSearch = [display?.title, display?.description, preview].filter(Boolean).join(" ");
     const actions = document.createElement("div");
     actions.className = "swipe-actions conversation-swipe-actions";
     const button = document.createElement("button");
@@ -3579,12 +3635,14 @@ async function renderConversations({ freshMembers = false } = {}) {
   if (isCurrentRender()) {
     conversationListRenderKey = renderKey;
     elements.conversations.replaceChildren(list);
+    applyConversationSearch();
   }
 }
 
 function renderGroupInvitation(conversation, display = null) {
   const row = document.createElement("div");
   row.className = "contact-request-row";
+  row.dataset.conversationSearch = [display?.title, display?.description, t("Invitation de groupe")].filter(Boolean).join(" ");
   const avatar = document.createElement("span");
   avatar.className = "avatar";
   avatar.textContent = "G";
@@ -3652,6 +3710,11 @@ async function refuseGroupInvitation(conversation, button) {
 function renderContactRequest(contact) {
   const row = document.createElement("div");
   row.className = "contact-request-row";
+  row.dataset.conversationSearch = [
+    contact.display_name,
+    contact.username,
+    t(contact.direction === "incoming" ? "Demande de contact" : "En attente d’acceptation"),
+  ].filter(Boolean).join(" ");
   const avatar = document.createElement("span");
   avatar.className = "avatar";
   if (contact.avatar) {
@@ -9026,6 +9089,12 @@ async function deleteMessage(message, row) {
     await api(`/api/messages/${message.id}`, { method: "DELETE" });
     state.cache?.deleteMessage(message.conversation_id, message.id);
     if (message.file) {
+      const deletedFileSize = Math.max(0, Number(message.file.size) || 0);
+      if (state.fileQuotas && deletedFileSize > 0) {
+        const usedStorage = Math.max(0, Number(state.fileQuotas.used_storage) || 0);
+        state.fileQuotas.used_storage = Math.max(0, usedStorage - deletedFileSize);
+        updateProfileStorage();
+      }
       const cached = state.files.get(message.file.id);
       if (cached) URL.revokeObjectURL(cached.url);
       const thumbnail = state.fileThumbnails.get(message.file.id);
@@ -9037,6 +9106,7 @@ async function deleteMessage(message, row) {
       state.globalFileClears.delete(String(message.file.id));
       invalidateGlobalFilesIndex();
       scheduleGlobalFilesPreload();
+      await refreshFileQuotas();
     }
     clearMessageExpiration(message);
     state.messageClears.get(message.conversation_id)?.delete(message.id);
@@ -9427,13 +9497,21 @@ function safeFullFilePreviewSource(message, container) {
 }
 
 function renderUnavailableFilePreview(container) {
+  container.classList.add("file-preview-empty");
   const unavailable = document.createElement("div");
   unavailable.className = "file-preview-unavailable";
   const icon = document.createElement("span");
+  icon.className = "file-preview-unavailable-icon";
+  icon.setAttribute("aria-hidden", "true");
   icon.append(materialFileIcon("file"));
-  const label = document.createElement("span");
+  const copy = document.createElement("span");
+  copy.className = "file-preview-unavailable-copy";
+  const label = document.createElement("strong");
   label.textContent = t("Aperçu non disponible pour ce format");
-  unavailable.append(icon, label);
+  const hint = document.createElement("small");
+  hint.textContent = t("Le fichier reste disponible au téléchargement.");
+  copy.append(label, hint);
+  unavailable.append(icon, copy);
   container.replaceChildren(unavailable);
 }
 

@@ -1,4 +1,4 @@
-import { locale, localizeDocument, t } from "./i18n.js?v=ios-resume-v297";
+import { locale, localizeDocument, t } from "./i18n.js?v=conversation-search-v325";
 
 localizeDocument();
 

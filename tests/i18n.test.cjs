@@ -31,6 +31,14 @@ async function load(language) {
     pt: ["As minhas notas", "Mensagens e ficheiros pessoais", "1 mensagem não lida", "3 mensagens não lidas", "Identidade pessoal não encontrada."],
     de: ["Meine Notizen", "Persönliche Nachrichten und Dateien", "1 ungelesene Nachricht", "3 ungelesene Nachrichten", "Persönliche Identität nicht gefunden."],
   };
+  const expectedConversationSearch = {
+    en: ["Search conversations", "No conversations found"],
+    fr: ["Rechercher une discussion", "Aucune discussion trouvée"],
+    es: ["Buscar conversaciones", "No se encontraron conversaciones"],
+    it: ["Cerca conversazioni", "Nessuna conversazione trovata"],
+    pt: ["Pesquisar conversas", "Nenhuma conversa encontrada"],
+    de: ["Unterhaltungen suchen", "Keine Unterhaltungen gefunden"],
+  };
   const expectedCallStatuses = {
     en: ["Audio call pending", "Video call pending", "Audio call in progress", "Video call in progress"],
     fr: ["Appel audio en attente", "Appel vidéo en attente", "Appel audio en cours", "Appel vidéo en cours"],
@@ -88,6 +96,10 @@ async function load(language) {
       i18n.t("{count} messages non lus", { count: 3 }),
       i18n.t("Identité personnelle introuvable."),
     ], expectedNotes[language]);
+    assert.deepEqual([
+      i18n.t("Rechercher une discussion"),
+      i18n.t("Aucune discussion trouvée"),
+    ], expectedConversationSearch[language]);
     assert.deepEqual([
       i18n.t("Appel audio en attente"),
       i18n.t("Appel vidéo en attente"),

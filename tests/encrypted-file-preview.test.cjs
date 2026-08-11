@@ -21,7 +21,7 @@ assert.match(app, /preview\?\.size > 0 && preview\.size <= FILE_PREVIEW_MAX_BYTE
 assert.match(app, /message\.file\.has_preview !== true[\s\S]*renderTemporaryOfficeThumbnail\(container\)/);
 assert.match(app, /encrypted_preview_data: preview\?\.data \|\| ""/);
 assert.match(app, /preview_iv: preview\?\.iv \|\| ""/);
-assert.match(app, /from "\.\/crypto\.js\?v=file-share-history-v323"/);
+assert.match(app, /from "\.\/crypto\.js\?v=conversation-search-v325"/);
 assert.match(app, /async function encryptFileBytes\(key, bytes\)/);
 assert.match(app, /encryptFileBytes\(key, data\)/);
 
@@ -58,6 +58,10 @@ assert.match(styles, /\.fitted-pdf-message \.file-attachment\s*\{[^}]*width:\s*v
 assert.match(styles, /\.file-preview\.fitted-pdf-preview > img\s*\{[^}]*max-height:\s*none;/);
 assert.match(styles, /\.video-file-thumbnail\s*\{/);
 assert.match(styles, /\.video-file-play-button\s*\{/);
+assert.match(app, /function renderUnavailableFilePreview\(container\)[\s\S]*file-preview-empty[\s\S]*file-preview-unavailable-copy/);
+assert.match(styles, /\.file-preview\.file-preview-empty\s*\{[^}]*radial-gradient/);
+assert.match(styles, /\.file-preview-unavailable-icon\s*\{[^}]*border-radius/);
+assert.match(styles, /:root\[data-theme="light"\] \.file-preview\.file-preview-empty\s*\{/);
 
 for (const functionName of ["renderFilePreview", "renderReplyFilePreview"]) {
   const start = app.indexOf(`async function ${functionName}`);

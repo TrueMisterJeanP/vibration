@@ -1,5 +1,5 @@
 import { api } from "./api.js?v=ios17-pdf-v199";
-import { locale, t } from "./i18n.js?v=ios-resume-v297";
+import { locale, t } from "./i18n.js?v=conversation-search-v325";
 import { frenchErrorMessage, setBusy } from "./ui.js?v=ios-resume-v297";
 
 const introduction = document.querySelector("#link-device-introduction");
