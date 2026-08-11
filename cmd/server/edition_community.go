@@ -26,6 +26,17 @@ func editionInfo() map[string]any {
 
 func registerEditionRoutes(_ *http.ServeMux, _ editionRouteDeps) {}
 
+type communityDatabaseMaintenance struct{}
+
+func (communityDatabaseMaintenance) Middleware(next http.Handler) http.Handler { return next }
+
+func (communityDatabaseMaintenance) RunShared(operation func()) bool {
+	operation()
+	return true
+}
+
+func editionDatabaseMaintenance() databaseMaintenance { return communityDatabaseMaintenance{} }
+
 func editionDatabaseConfig(_ database.ActiveConfig) database.ActiveConfig {
 	return database.ActiveConfig{Driver: "sqlite"}
 }
@@ -53,7 +64,7 @@ func editionWebRTCConfig(_ *sql.DB, defaults settings.WebRTCDefaults) (settings.
 	return settings.WebRTCConfig{
 		ICEServers:            defaults.ICEServers,
 		PublicFallbackURLs:    defaults.PublicFallbackURLs,
-		RelayPolicy:           "all",
+		RelayPolicy:           settings.NormalizeRelayPolicy(defaults.RelayPolicy),
 		PrivateTURNConfigured: false,
 		Source:                "community",
 	}, nil
@@ -65,4 +76,10 @@ func startFederationWorkers(_ editionRouteDeps, _ federationWorkerConfig) {}
 
 func newEditionFederation(_ *sql.DB, _ *ws.Hub, _ messages.PushSender, _ string) messages.FederationRouter {
 	return nil
+}
+
+// editionCallCapability always reports support: without federation every call
+// stays inside this instance, which necessarily speaks its own protocol.
+func editionCallCapability(_ messages.FederationRouter, _ int64) (bool, string) {
+	return true, ""
 }

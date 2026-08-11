@@ -43,14 +43,18 @@ type Handler struct {
 }
 
 type Conversation struct {
-	ID                       int64   `json:"id"`
-	Type                     string  `json:"type"`
-	EncryptedTitle           *string `json:"encrypted_title"`
-	EncryptedDescription     *string `json:"encrypted_description"`
-	EncryptedAvatar          *string `json:"encrypted_avatar"`
-	FederationKeyID          *string `json:"federation_key_id"`
-	FederationInstanceURL    *string `json:"federation_instance_url"`
-	RemoteUsername           *string `json:"remote_username"`
+	ID                    int64   `json:"id"`
+	Type                  string  `json:"type"`
+	EncryptedTitle        *string `json:"encrypted_title"`
+	EncryptedDescription  *string `json:"encrypted_description"`
+	EncryptedAvatar       *string `json:"encrypted_avatar"`
+	FederationKeyID       *string `json:"federation_key_id"`
+	FederationInstanceURL *string `json:"federation_instance_url"`
+	RemoteUsername        *string `json:"remote_username"`
+	// IsFederated is computed with EXISTS rather than inferred from the
+	// presence of an instance URL, so it stays correct whatever number of
+	// destinations a conversation has.
+	IsFederated              bool    `json:"is_federated"`
 	CurrentKeyEpoch          int64   `json:"current_key_epoch"`
 	RotationRequired         bool    `json:"rotation_required"`
 	CreatedBy                int64   `json:"created_by"`
@@ -115,7 +119,17 @@ const listConversationsQuery = `WITH memberships AS (
 		JOIN memberships mm ON mm.conversation_id=acm.conversation_id
 		GROUP BY acm.conversation_id
 	)
-	SELECT c.id,c.type,c.encrypted_title,c.encrypted_description,c.encrypted_avatar,c.federation_key_id,fi.base_url,ru.remote_username,c.current_key_epoch,c.rotation_required,
+	SELECT c.id,c.type,c.encrypted_title,c.encrypted_description,c.encrypted_avatar,c.federation_key_id,
+	-- A conversation federates once per remote instance, so joining the mapping
+	-- table would repeat the conversation for every destination it has. These
+	-- correlated lookups keep exactly one row per conversation and pick the
+	-- destination deterministically instead of letting the join order decide.
+	(SELECT fi.base_url FROM federated_conversations fc JOIN federated_instances fi ON fi.id=fc.instance_id
+		WHERE fc.local_conversation_id=c.id ORDER BY fc.instance_id LIMIT 1),
+	(SELECT ru.remote_username FROM federated_conversations fc JOIN users ru ON ru.id=fc.remote_user_id
+		WHERE fc.local_conversation_id=c.id ORDER BY fc.instance_id LIMIT 1),
+	CASE WHEN EXISTS(SELECT 1 FROM federated_conversations fc WHERE fc.local_conversation_id=c.id) THEN 1 ELSE 0 END,
+	c.current_key_epoch,c.rotation_required,
 	c.created_by,c.created_at,mm.encrypted_conversation_key,mm.role,mm.favorite_at,
 	v.last_at,
 	lm.encrypted_content,
@@ -131,9 +145,6 @@ const listConversationsQuery = `WITH memberships AS (
 	LEFT JOIN files lf ON lf.message_id=lm.id
 	LEFT JOIN unread un ON un.conversation_id=c.id
 	LEFT JOIN member_counts mc ON mc.conversation_id=c.id
-	LEFT JOIN federated_conversations fc ON fc.local_conversation_id=c.id
-	LEFT JOIN federated_instances fi ON fi.id=fc.instance_id
-	LEFT JOIN users ru ON ru.id=fc.remote_user_id
 	ORDER BY CASE WHEN mm.favorite_at IS NULL THEN 1 ELSE 0 END,mm.favorite_at DESC,
 		COALESCE(v.last_at,mm.created_at,c.created_at) DESC,c.id DESC`
 
@@ -150,9 +161,11 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var item Conversation
 		var memberCount int
+		var federated int
 		if rows.Scan(&item.ID, &item.Type, &item.EncryptedTitle, &item.EncryptedDescription, &item.EncryptedAvatar, &item.FederationKeyID,
-			&item.FederationInstanceURL, &item.RemoteUsername, &item.CurrentKeyEpoch, &item.RotationRequired, &item.CreatedBy, &item.CreatedAt, &item.EncryptedConversationKey, &item.Role, &item.FavoriteAt,
+			&item.FederationInstanceURL, &item.RemoteUsername, &federated, &item.CurrentKeyEpoch, &item.RotationRequired, &item.CreatedBy, &item.CreatedAt, &item.EncryptedConversationKey, &item.Role, &item.FavoriteAt,
 			&item.LastMessageAt, &item.LastMessageEncrypted, &item.LastMessageIV, &item.LastMessageKeyEpoch, &item.LastMessageHasFile, &item.UnreadCount, &memberCount) == nil {
+			item.IsFederated = federated != 0
 			item.IsPersonal = item.Type == "private" && item.CreatedBy == userID && memberCount == 1
 			result = append(result, item)
 		}
@@ -376,7 +389,17 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var conversation Conversation
 	var memberCount int
-	err = h.DB.QueryRow(`SELECT c.id,c.type,c.encrypted_title,c.encrypted_description,c.encrypted_avatar,c.federation_key_id,fi.base_url,ru.remote_username,c.current_key_epoch,c.rotation_required,
+	var federated int
+	err = h.DB.QueryRow(`SELECT c.id,c.type,c.encrypted_title,c.encrypted_description,c.encrypted_avatar,c.federation_key_id,
+		-- Correlated lookups rather than joins: a conversation holds one
+		-- federated_conversations row per remote instance, and joining them
+		-- would return the conversation once per destination.
+		(SELECT fi.base_url FROM federated_conversations fc JOIN federated_instances fi ON fi.id=fc.instance_id
+			WHERE fc.local_conversation_id=c.id ORDER BY fc.instance_id LIMIT 1),
+		(SELECT ru.remote_username FROM federated_conversations fc JOIN users ru ON ru.id=fc.remote_user_id
+			WHERE fc.local_conversation_id=c.id ORDER BY fc.instance_id LIMIT 1),
+		CASE WHEN EXISTS(SELECT 1 FROM federated_conversations fc WHERE fc.local_conversation_id=c.id) THEN 1 ELSE 0 END,
+		c.current_key_epoch,c.rotation_required,
 		c.created_by,c.created_at,cm.encrypted_conversation_key,cm.role,cm.favorite_at,
 		(SELECT MAX(created_at) FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?)),
 		(SELECT encrypted_content FROM messages WHERE conversation_id=c.id AND created_at>=cm.created_at AND (expires_at IS NULL OR expires_at>?) ORDER BY id DESC LIMIT 1),
@@ -387,18 +410,16 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 			WHERE m.conversation_id=c.id AND m.created_at>=cm.created_at AND mr.user_id=? AND mr.status<>'read' AND (m.expires_at IS NULL OR m.expires_at>?)),
 		(SELECT COUNT(*) FROM conversation_members personal_cm WHERE personal_cm.conversation_id=c.id)
 		FROM conversations c JOIN conversation_members cm ON cm.conversation_id=c.id
-		LEFT JOIN federated_conversations fc ON fc.local_conversation_id=c.id
-		LEFT JOIN federated_instances fi ON fi.id=fc.instance_id
-		LEFT JOIN users ru ON ru.id=fc.remote_user_id
 		WHERE c.id=? AND cm.user_id=?`, now, now, now, now, now, auth.UserID(r), now, id, auth.UserID(r)).
 		Scan(&conversation.ID, &conversation.Type, &conversation.EncryptedTitle, &conversation.EncryptedDescription, &conversation.EncryptedAvatar,
-			&conversation.FederationKeyID, &conversation.FederationInstanceURL, &conversation.RemoteUsername, &conversation.CurrentKeyEpoch, &conversation.RotationRequired, &conversation.CreatedBy, &conversation.CreatedAt,
+			&conversation.FederationKeyID, &conversation.FederationInstanceURL, &conversation.RemoteUsername, &federated, &conversation.CurrentKeyEpoch, &conversation.RotationRequired, &conversation.CreatedBy, &conversation.CreatedAt,
 			&conversation.EncryptedConversationKey, &conversation.Role, &conversation.FavoriteAt, &conversation.LastMessageAt, &conversation.LastMessageEncrypted, &conversation.LastMessageIV,
 			&conversation.LastMessageKeyEpoch, &conversation.LastMessageHasFile, &conversation.UnreadCount, &memberCount)
 	if err != nil {
 		httpx.Error(w, http.StatusNotFound, "conversation not found")
 		return
 	}
+	conversation.IsFederated = federated != 0
 	conversation.IsPersonal = conversation.Type == "private" && conversation.CreatedBy == auth.UserID(r) && memberCount == 1
 	httpx.JSON(w, http.StatusOK, conversation)
 }
@@ -668,7 +689,15 @@ func (h *Handler) RotateGroupKeys(w http.ResponseWriter, r *http.Request) {
 			remoteMembers++
 		}
 	}
-	if remoteMembers > 1 || len(input.EncryptedKeys) != len(finalMembers) {
+	// A federated group is still limited to one remote participant. Group key
+	// distribution and metadata replication address a single peer instance, so
+	// accepting a second one would build a group whose members silently never
+	// converge. Refusing it explicitly is better than creating it broken.
+	if remoteMembers > 1 {
+		httpx.Error(w, http.StatusBadRequest, "a federated group currently supports one remote participant")
+		return
+	}
+	if len(input.EncryptedKeys) != len(finalMembers) {
 		httpx.Error(w, http.StatusBadRequest, "invalid group members")
 		return
 	}

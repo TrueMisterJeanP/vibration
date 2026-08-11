@@ -695,6 +695,7 @@ func TestRemoveGroupMemberNotifiesRemovedUser(t *testing.T) {
 func conversationMux(authHandler *auth.Handler, handler *Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/conversations", authHandler.Middleware(http.HandlerFunc(handler.List)))
+	mux.Handle("GET /api/conversations/{id}", authHandler.Middleware(http.HandlerFunc(handler.Get)))
 	mux.Handle("POST /api/conversations/private", authHandler.Middleware(http.HandlerFunc(handler.CreatePrivate)))
 	mux.Handle("POST /api/conversations/personal", authHandler.Middleware(http.HandlerFunc(handler.CreatePersonal)))
 	mux.Handle("POST /api/conversations/group", authHandler.Middleware(http.HandlerFunc(handler.CreateGroup)))
@@ -777,4 +778,67 @@ func assertConversationCount(t *testing.T, db *sql.DB, id string, want int) {
 
 func formatID(id int64) string {
 	return strconv.FormatInt(id, 10)
+}
+
+// TestListDeduplicatesMultiInstanceFederatedConversations covers the shape the
+// schema now allows: one conversation federated with several instances holds
+// one mapping row per destination. Joining that table returned the conversation
+// once per row, so the list showed the same conversation twice.
+func TestListDeduplicatesMultiInstanceFederatedConversations(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	authHandler := &auth.Handler{DB: db}
+	handler := &Handler{DB: db, Hub: testHub{}}
+	owner := registerUser(t, authHandler, "federated_owner")
+	registerUser(t, authHandler, "federated_peer")
+	mux := conversationMux(authHandler, handler)
+	ensureAcceptedContact(t, db, 1, 2)
+	conversationID := createPrivateConversation(t, mux, owner, 2)
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	for id, baseURL := range map[int64]string{1: "https://beta.example", 2: "https://gamma.example"} {
+		if _, err := db.Exec(`INSERT INTO federated_instances(id,name,base_url,host,shared_secret,is_active,created_at,updated_at)
+			VALUES(?,?,?,?,'secret',1,?,?)`, id, baseURL, baseURL, baseURL, now, now); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO federated_conversations(local_conversation_id,instance_id,remote_conversation_id,local_user_id,remote_user_id,federation_key_id,created_at)
+			VALUES(?,?,?,1,2,?,?)`, conversationID, id, -id, "key-"+baseURL, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	list := request(t, mux, http.MethodGet, "/api/conversations", nil, owner)
+	if list.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", list.Code, list.Body.String())
+	}
+	var conversations []Conversation
+	if err := json.Unmarshal(list.Body.Bytes(), &conversations); err != nil {
+		t.Fatal(err)
+	}
+	if len(conversations) != 1 {
+		t.Fatalf("conversations=%d, a conversation must appear once per membership, not once per federated destination", len(conversations))
+	}
+	if !conversations[0].IsFederated {
+		t.Fatal("is_federated must be computed from the mapping table, not inferred from a join")
+	}
+	// The exposed destination has to be deterministic rather than whichever row
+	// the planner happened to return first.
+	if conversations[0].FederationInstanceURL == nil || *conversations[0].FederationInstanceURL != "https://beta.example" {
+		t.Fatalf("federation_instance_url=%v", conversations[0].FederationInstanceURL)
+	}
+
+	single := request(t, mux, http.MethodGet, "/api/conversations/"+conversationID, nil, owner)
+	if single.Code != http.StatusOK {
+		t.Fatalf("get status=%d body=%s", single.Code, single.Body.String())
+	}
+	var fetched Conversation
+	if err := json.Unmarshal(single.Body.Bytes(), &fetched); err != nil {
+		t.Fatal(err)
+	}
+	if !fetched.IsFederated || strconv.FormatInt(fetched.ID, 10) != conversationID {
+		t.Fatalf("fetched conversation=%+v", fetched)
+	}
 }

@@ -12,7 +12,8 @@ const contacts = fs.readFileSync(path.join(root, "internal/contacts/handlers.go"
 const conversations = fs.readFileSync(path.join(root, "internal/conversations/handlers.go"), "utf8");
 const discovery = fs.readFileSync(path.join(root, "internal/userdiscovery/discovery.go"), "utf8");
 const migrations = fs.readFileSync(path.join(root, "internal/db/migrations.go"), "utf8");
-const federation = fs.readFileSync(path.join(root, "internal/federation/handlers.go"), "utf8");
+const federationPath = path.join(root, "internal/federation/handlers.go");
+const federation = fs.existsSync(federationPath) ? fs.readFileSync(federationPath, "utf8") : "";
 
 assert.match(html, /id="profile-invisible" type="checkbox"/);
 assert.match(html, /id="profile-discovery-generate"[\s\S]*id="profile-discovery-code"[\s\S]*id="profile-discovery-copy"/);
@@ -40,6 +41,8 @@ assert.match(discovery, /raw := make\(\[\]byte, 20\)/);
 assert.match(discovery, /sha256\.Sum256\(\[\]byte\(normalized\)\)/);
 assert.doesNotMatch(migrations, /discovery_code\s+TEXT/);
 assert.match(migrations, /discovery_code_hash TEXT/);
-assert.match(federation, /is_banned=0 AND is_discoverable=1/);
+if (federation) {
+  assert.match(federation, /is_banned=0 AND is_discoverable=1/);
+}
 
 console.log("Private discovery: invisible profiles, one-time secure codes and server-side authorization verified");

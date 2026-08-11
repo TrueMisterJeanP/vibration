@@ -15,6 +15,26 @@ const (
 	TURNTransportPlain = "plain"
 )
 
+const (
+	// RelayPolicyAll lets the browser try host, server-reflexive and relayed
+	// candidates. It is the right default: a direct path is cheaper and lower
+	// latency than a TURN relay whenever the network allows one.
+	RelayPolicyAll = "all"
+	// RelayPolicyRelay forces every candidate through TURN. It exists to make a
+	// TURN deployment testable end to end: with it the call either works through
+	// Coturn or fails outright, instead of quietly succeeding over a direct path
+	// and leaving a broken relay undetected until a symmetric NAT hits it.
+	RelayPolicyRelay = "relay"
+)
+
+// NormalizeRelayPolicy maps any input onto a policy the browser understands.
+func NormalizeRelayPolicy(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), RelayPolicyRelay) {
+		return RelayPolicyRelay
+	}
+	return RelayPolicyAll
+}
+
 type WebRTCConfig struct {
 	ICEServers            []config.ICEServer `json:"ice_servers"`
 	PublicFallbackURLs    []string           `json:"public_fallback_urls"`
@@ -26,6 +46,7 @@ type WebRTCConfig struct {
 type WebRTCDefaults struct {
 	ICEServers         []config.ICEServer
 	PublicFallbackURLs []string
+	RelayPolicy        string
 }
 
 type WebRTCSettings struct {
@@ -34,6 +55,7 @@ type WebRTCSettings struct {
 	TURNUsername       string   `json:"turn_username"`
 	TURNCredential     string   `json:"turn_credential,omitempty"`
 	PublicFallbackURLs []string `json:"public_fallback_urls"`
+	RelayPolicy        string   `json:"relay_policy"`
 }
 
 type WebRTCAdminSettings struct {
@@ -43,6 +65,7 @@ type WebRTCAdminSettings struct {
 	TURNCredential        string   `json:"turn_credential,omitempty"`
 	TURNCredentialSet     bool     `json:"turn_credential_set"`
 	PublicFallbackURLs    []string `json:"public_fallback_urls"`
+	RelayPolicy           string   `json:"relay_policy"`
 	UsingEnvironment      bool     `json:"using_environment"`
 	PrivateTURNConfigured bool     `json:"private_turn_configured"`
 }
@@ -58,7 +81,7 @@ func EffectiveWebRTCConfig(db *sql.DB, defaults WebRTCDefaults) (WebRTCConfig, e
 	return WebRTCConfig{
 		ICEServers:            defaults.ICEServers,
 		PublicFallbackURLs:    defaults.PublicFallbackURLs,
-		RelayPolicy:           "all",
+		RelayPolicy:           NormalizeRelayPolicy(defaults.RelayPolicy),
 		PrivateTURNConfigured: hasTURN(defaults.ICEServers, defaults.PublicFallbackURLs),
 		Source:                "environment",
 	}, nil
@@ -76,6 +99,7 @@ func LoadWebRTCAdminSettings(db *sql.DB, defaults WebRTCDefaults) (WebRTCAdminSe
 			TURNUsername:          stored.TURNUsername,
 			TURNCredentialSet:     strings.TrimSpace(stored.TURNCredential) != "",
 			PublicFallbackURLs:    stored.PublicFallbackURLs,
+			RelayPolicy:           NormalizeRelayPolicy(stored.RelayPolicy),
 			UsingEnvironment:      false,
 			PrivateTURNConfigured: len(stored.TURNURLs) > 0,
 		}, nil
@@ -87,6 +111,7 @@ func LoadWebRTCAdminSettings(db *sql.DB, defaults WebRTCDefaults) (WebRTCAdminSe
 		TURNUsername:          username,
 		TURNCredentialSet:     credentialSet,
 		PublicFallbackURLs:    defaults.PublicFallbackURLs,
+		RelayPolicy:           NormalizeRelayPolicy(defaults.RelayPolicy),
 		UsingEnvironment:      true,
 		PrivateTURNConfigured: len(turnURLs) > 0,
 	}, nil
@@ -110,6 +135,7 @@ func LoadWebRTCSettings(db *sql.DB) (WebRTCSettings, bool, error) {
 	value.TURNTransport = EffectiveTURNTransport(value.TURNTransport, value.TURNURLs)
 	value.TURNURLs = ApplyTURNTransport(value.TURNURLs, value.TURNTransport)
 	value.TURNUsername = strings.TrimSpace(value.TURNUsername)
+	value.RelayPolicy = NormalizeRelayPolicy(value.RelayPolicy)
 	return value, true, nil
 }
 
@@ -120,6 +146,7 @@ func SaveWebRTCSettings(db *sql.DB, value WebRTCSettings) error {
 	value.TURNURLs = ApplyTURNTransport(value.TURNURLs, value.TURNTransport)
 	value.TURNUsername = strings.TrimSpace(value.TURNUsername)
 	value.TURNCredential = strings.TrimSpace(value.TURNCredential)
+	value.RelayPolicy = NormalizeRelayPolicy(value.RelayPolicy)
 	data, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -146,10 +173,16 @@ func webRTCConfigFromSettings(value WebRTCSettings, source string) WebRTCConfig 
 		})
 	}
 	servers = append(servers, config.ICEServer{URLs: fallbacks})
+	policy := NormalizeRelayPolicy(value.RelayPolicy)
+	// A relay-only policy without a TURN server would produce zero usable
+	// candidates and every call would fail to connect with no explanation.
+	if policy == RelayPolicyRelay && len(value.TURNURLs) == 0 {
+		policy = RelayPolicyAll
+	}
 	return WebRTCConfig{
 		ICEServers:            servers,
 		PublicFallbackURLs:    fallbacks,
-		RelayPolicy:           "all",
+		RelayPolicy:           policy,
 		PrivateTURNConfigured: len(value.TURNURLs) > 0,
 		Source:                source,
 	}

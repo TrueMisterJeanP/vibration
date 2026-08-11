@@ -39,6 +39,23 @@ assert.match(app, /setConversationInfoTrigger\(conversation\)/);
 assert.match(app, /elements\.chatAvatar\.onclick/);
 assert.match(app, /elements\.chatIdentity\.addEventListener\("keydown"/);
 
+const infoDialogLoader = app.slice(
+  app.indexOf("async function openCurrentConversationInfo()"),
+  app.indexOf("function renderConversationHeader"),
+);
+const membersLoadedAt = infoDialogLoader.indexOf("await getMembers(");
+const displayLoadedAt = infoDialogLoader.indexOf("await resolveConversationDisplay(");
+const trustLoadedAt = infoDialogLoader.indexOf("await getIdentityTrust(");
+const dialogShownAt = infoDialogLoader.indexOf("conversationInfoDialog.showModal()");
+assert.ok(membersLoadedAt >= 0 && membersLoadedAt < dialogShownAt, "members must load before the information dialog opens");
+assert.ok(displayLoadedAt >= 0 && displayLoadedAt < dialogShownAt, "the contact or group display data must load before the information dialog opens");
+assert.ok(trustLoadedAt >= 0 && trustLoadedAt < dialogShownAt, "contact trust data must load before the information dialog opens");
+assert.ok(
+  infoDialogLoader.indexOf("elements.conversationInfoDescription.textContent", displayLoadedAt) < dialogShownAt,
+  "the information dialog must be populated before it opens",
+);
+assert.doesNotMatch(infoDialogLoader, /conversationInfoName\.textContent = t\("Chargement…"\)/);
+
 assert.match(css, /\.conversation-info-dialog\s*\{/);
 assert.match(css, /\.conversation-info-avatar\s*\{/);
 assert.match(css, /\.conversation-info-details\s*\{/);

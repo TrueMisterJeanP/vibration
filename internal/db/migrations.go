@@ -292,15 +292,20 @@ var migrations = []string{
 		seen_at TEXT NOT NULL,
 		UNIQUE(instance_id, signature)
 	)`,
+	// A conversation federates once per remote instance. A group whose members
+	// live on three servers therefore holds three rows, one per peer, each with
+	// its own federation key. Keying the table on local_conversation_id alone
+	// silently capped every group at a single remote destination.
 	`CREATE TABLE IF NOT EXISTS federated_conversations (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		local_conversation_id INTEGER UNIQUE NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+		local_conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
 		instance_id INTEGER NOT NULL REFERENCES federated_instances(id) ON DELETE CASCADE,
 		remote_conversation_id INTEGER NOT NULL,
 		local_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		remote_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		federation_key_id TEXT NOT NULL,
 		created_at TEXT NOT NULL,
+		UNIQUE(local_conversation_id, instance_id),
 		UNIQUE(instance_id, remote_conversation_id)
 	)`,
 	`CREATE TABLE IF NOT EXISTS federated_message_map (
@@ -468,6 +473,11 @@ func Migrate(database *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	if !exists {
+		if _, err := tx.Exec(`ALTER TABLE conversations ADD COLUMN federation_key_id TEXT`); err != nil {
+			return fmt.Errorf("add conversations.federation_key_id: %w", err)
+		}
+	}
 	for _, column := range []struct {
 		name       string
 		definition string
@@ -483,11 +493,6 @@ func Migrate(database *sql.DB) error {
 			if _, err := tx.Exec(`ALTER TABLE conversations ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
 				return fmt.Errorf("add conversations.%s: %w", column.name, err)
 			}
-		}
-	}
-	if !exists {
-		if _, err := tx.Exec(`ALTER TABLE conversations ADD COLUMN federation_key_id TEXT`); err != nil {
-			return fmt.Errorf("add conversations.federation_key_id: %w", err)
 		}
 	}
 	exists, err = columnExists(tx, "contacts", "status")
@@ -527,6 +532,9 @@ func Migrate(database *sql.DB) error {
 				return fmt.Errorf("add federation_outbox.%s: %w", column, err)
 			}
 		}
+	}
+	if err := widenFederatedConversationKey(tx); err != nil {
+		return err
 	}
 	if err := backfillFederatedInstanceHosts(tx); err != nil {
 		return err
@@ -692,6 +700,112 @@ func columnExists(tx *sql.Tx, table, column string) (bool, error) {
 		}
 	}
 	return false, rows.Err()
+}
+
+// widenFederatedConversationKey replaces the historical
+// "local_conversation_id UNIQUE" constraint with UNIQUE(local_conversation_id,
+// instance_id), so one conversation can federate with several instances.
+//
+// SQLite cannot drop a column constraint in place, so the table is rebuilt.
+// The migration is idempotent: it first looks for the single-column unique
+// index SQLite creates for the old schema and returns immediately when it is
+// already gone. Every existing row is copied with its original id, so remote
+// conversation mappings and federation keys survive untouched.
+func widenFederatedConversationKey(tx *sql.Tx) error {
+	legacy, err := hasSingleColumnUniqueIndex(tx, "federated_conversations", "local_conversation_id")
+	if err != nil || !legacy {
+		return err
+	}
+	for _, statement := range []string{
+		`CREATE TABLE federated_conversations_rebuilt (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			local_conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+			instance_id INTEGER NOT NULL REFERENCES federated_instances(id) ON DELETE CASCADE,
+			remote_conversation_id INTEGER NOT NULL,
+			local_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			remote_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			federation_key_id TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			UNIQUE(local_conversation_id, instance_id),
+			UNIQUE(instance_id, remote_conversation_id)
+		)`,
+		`INSERT INTO federated_conversations_rebuilt(id,local_conversation_id,instance_id,remote_conversation_id,
+			local_user_id,remote_user_id,federation_key_id,created_at)
+			SELECT id,local_conversation_id,instance_id,remote_conversation_id,
+				local_user_id,remote_user_id,federation_key_id,created_at FROM federated_conversations`,
+		`DROP TABLE federated_conversations`,
+		`ALTER TABLE federated_conversations_rebuilt RENAME TO federated_conversations`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return fmt.Errorf("widen federated_conversations key: %w", err)
+		}
+	}
+	return nil
+}
+
+// hasSingleColumnUniqueIndex reports whether a table still carries a unique
+// constraint on exactly one named column.
+func hasSingleColumnUniqueIndex(tx *sql.Tx, table, column string) (bool, error) {
+	rows, err := tx.Query(`PRAGMA index_list(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	type index struct {
+		name   string
+		unique bool
+	}
+	indexes := []index{}
+	for rows.Next() {
+		var sequence int
+		var name, origin string
+		var unique, partial int
+		if err := rows.Scan(&sequence, &name, &unique, &origin, &partial); err != nil {
+			rows.Close()
+			return false, err
+		}
+		if unique == 1 && partial == 0 {
+			indexes = append(indexes, index{name: name, unique: true})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return false, err
+	}
+	rows.Close()
+	for _, item := range indexes {
+		columns, err := indexColumns(tx, item.name)
+		if err != nil {
+			return false, err
+		}
+		if len(columns) == 1 && columns[0] == column {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func indexColumns(tx *sql.Tx, name string) ([]string, error) {
+	rows, err := tx.Query(`PRAGMA index_info(` + quoteSQLiteIdentifier(name) + `)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	columns := []string{}
+	for rows.Next() {
+		var position, columnID int
+		var columnName sql.NullString
+		if err := rows.Scan(&position, &columnID, &columnName); err != nil {
+			return nil, err
+		}
+		if columnName.Valid {
+			columns = append(columns, columnName.String)
+		}
+	}
+	return columns, rows.Err()
+}
+
+func quoteSQLiteIdentifier(name string) string {
+	return `'` + strings.ReplaceAll(name, `'`, `''`) + `'`
 }
 
 func backfillFederatedInstanceHosts(tx *sql.Tx) error {

@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"chat-pwa-go/internal/auth"
+	"chat-pwa-go/internal/callsig"
 	"github.com/gorilla/websocket"
 )
 
@@ -16,6 +18,15 @@ type Handler struct {
 	Hub           *Hub
 	ClientOrigins []string
 	Federation    FederationRouter
+	// LocalBaseURL is this instance's federation base URL. It is the instance
+	// half of every canonical identity minted here; when it is empty the
+	// identities stay local-only, which is exactly right for a deployment that
+	// does not federate.
+	LocalBaseURL string
+
+	callOnce sync.Once
+	ledger   *callsig.Ledger
+	limiter  *callsig.RateLimiter
 }
 
 type FederationRouter interface {
@@ -23,26 +34,22 @@ type FederationRouter interface {
 	RelayPresence(userID int64, online bool)
 }
 
-var callSignalTypes = map[string]struct{}{
-	"call_invite":   {},
-	"call_accept":   {},
-	"call_reject":   {},
-	"call_offer":    {},
-	"call_answer":   {},
-	"ice_candidate": {},
-	"call_hangup":   {},
-}
-
 type inboundEvent struct {
-	Type           string          `json:"type"`
-	ConversationID int64           `json:"conversation_id"`
-	TargetUserID   int64           `json:"target_user_id"`
-	Typing         bool            `json:"typing"`
-	CallID         string          `json:"call_id"`
-	Media          string          `json:"media"`
-	Reason         string          `json:"reason"`
-	SDP            json.RawMessage `json:"sdp"`
-	Candidate      json.RawMessage `json:"candidate"`
+	Type           string `json:"type"`
+	ConversationID int64  `json:"conversation_id"`
+	// TargetUserID is the legacy addressing form. It is still accepted so a
+	// client that has not reloaded keeps working, but it is resolved against the
+	// membership and immediately replaced by the canonical identity.
+	TargetUserID int64                       `json:"target_user_id"`
+	Target       callsig.Identity            `json:"target"`
+	Typing       bool                        `json:"typing"`
+	EventID      string                      `json:"event_id"`
+	CallID       string                      `json:"call_id"`
+	Sequence     int64                       `json:"sequence"`
+	Media        string                      `json:"media"`
+	Reason       string                      `json:"reason"`
+	SDP          *callsig.SessionDescription `json:"sdp"`
+	Candidate    *callsig.IceCandidate       `json:"candidate"`
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -170,93 +177,13 @@ func (h *Handler) readLoop(connection *websocket.Conn, client *Client) {
 			}
 			continue
 		}
-		if _, ok := callSignalTypes[event.Type]; ok {
+		if isCallSignal(event.Type) {
+			// handleCallSignal never blocks: federated hops are handed to the
+			// dispatcher, so a remote instance that takes twelve seconds to
+			// answer cannot stall this connection's reader.
 			h.handleCallSignal(client, event)
 		}
 	}
-}
-
-func (h *Handler) handleCallSignal(client *Client, event inboundEvent) {
-	event.CallID = strings.TrimSpace(event.CallID)
-	event.Media = strings.TrimSpace(event.Media)
-	event.Reason = strings.TrimSpace(event.Reason)
-	if event.CallID == "" || len(event.CallID) > 96 || !h.isMember(event.ConversationID, client.UserID) {
-		return
-	}
-	if event.TargetUserID < 0 || event.TargetUserID == client.UserID {
-		return
-	}
-	if event.TargetUserID > 0 && !h.isMember(event.ConversationID, event.TargetUserID) {
-		return
-	}
-	if len(event.Media) > 16 || len(event.Reason) > 160 || len(event.SDP) > 96<<10 || len(event.Candidate) > 16<<10 {
-		return
-	}
-	switch event.Media {
-	case "", "audio", "video":
-	default:
-		return
-	}
-
-	out := map[string]any{
-		"type":            event.Type,
-		"conversation_id": event.ConversationID,
-		"user_id":         client.UserID,
-		"call_id":         event.CallID,
-	}
-	if event.TargetUserID > 0 {
-		out["target_user_id"] = event.TargetUserID
-	}
-	if event.Media != "" {
-		out["media"] = event.Media
-	}
-	if event.Reason != "" {
-		out["reason"] = event.Reason
-	}
-	if len(event.SDP) > 0 {
-		out["sdp"] = event.SDP
-	}
-	if len(event.Candidate) > 0 {
-		out["candidate"] = event.Candidate
-	}
-	if h.Federation != nil && h.Federation.RelayRealtime(event.ConversationID, client.UserID, out) {
-		return
-	}
-	if event.TargetUserID > 0 {
-		if !h.Hub.SendCallToUser(event.TargetUserID, out) {
-			h.reportCallSignalFailure(client, event, event.TargetUserID)
-		}
-		return
-	}
-	h.broadcastCallSignal(client, event, out)
-}
-
-func (h *Handler) broadcastCallSignal(client *Client, event inboundEvent, out map[string]any) {
-	rows, err := h.DB.Query(`SELECT user_id FROM conversation_members WHERE conversation_id=? AND user_id<>? AND role<>'pending'`, event.ConversationID, client.UserID)
-	if err != nil {
-		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var userID int64
-		if rows.Scan(&userID) != nil {
-			continue
-		}
-		if !h.Hub.SendCallToUser(userID, out) {
-			h.reportCallSignalFailure(client, event, userID)
-		}
-	}
-}
-
-func (h *Handler) reportCallSignalFailure(client *Client, event inboundEvent, targetUserID int64) {
-	h.Hub.SendCallToUser(client.UserID, map[string]any{
-		"type":            "call_signal_failed",
-		"signal_type":     event.Type,
-		"reason":          "recipient_unavailable",
-		"conversation_id": event.ConversationID,
-		"call_id":         event.CallID,
-		"target_user_id":  targetUserID,
-	})
 }
 
 func (h *Handler) isMember(conversationID, userID int64) bool {

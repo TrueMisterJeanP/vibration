@@ -56,6 +56,21 @@ import {
   preloadModernOfficePreview,
   renderModernOfficePreview,
 } from "./office-preview.js?v=office-faithful-preview-v265";
+import {
+  CALL_EVENT_TTL_MS,
+  callCapabilityMessage,
+  callFailureMessage,
+  callIdentity,
+  callRTCConfigurationFrom,
+  canonicalCallIdentity,
+  createCallSequencer,
+  createCallSignalLedger,
+  createPeerLink,
+  newCallEventID,
+  sameCallIdentity,
+  shouldOfferAfterAccept,
+  shouldOfferInGroup,
+} from "./call-negotiation.js?v=conversation-ready-v317";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
 import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
@@ -83,7 +98,7 @@ const GLOBAL_FILES_PAGE_SIZE = 40;
 const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
 const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "calendar-toolbar-grid-v311";
+const APP_BUILD = "conversation-ready-v317";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
 const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;
@@ -142,6 +157,9 @@ const state = {
   previewURLs: new Set(),
   fileCacheGeneration: 0,
   callConfig: null,
+  // callIdentity is this browser's canonical federated identity, served by
+  // /api/calls/config. It is what decides who offers, never a numeric user id.
+  callIdentity: null,
   replyTo: null,
   messageExpirationSeconds: 0,
   call: null,
@@ -168,9 +186,13 @@ let ios17PDFJSModule;
 let conversationRenderVersion = 0;
 let conversationListRenderKey = "";
 let conversationSelectionVersion = 0;
+let conversationInfoLoadVersion = 0;
 let globalFilesLoadVersion = 0;
 let globalFilesPreloadScheduled = false;
 let carnetLoadVersion = 0;
+let calendarOpenTask = null;
+let pinnedPanelOpenTask = null;
+let pinnedPanelLoadVersion = 0;
 let appReady = false;
 let appShellPrepared = false;
 let appUIBound = false;
@@ -195,6 +217,8 @@ let sessionQRScannerGeneration = 0;
 
 const elements = {
   shell: document.querySelector("#app-shell"),
+  conversationLists: document.querySelector("#conversation-lists"),
+  conversationListLoading: document.querySelector("#conversation-list-loading"),
   conversations: document.querySelector("#conversation-list"),
   personalConversationButton: document.querySelector("#personal-conversation-button"),
   personalConversationPreview: document.querySelector("#personal-conversation-preview"),
@@ -768,6 +792,7 @@ async function boot() {
   }
   if (!appShellPrepared) {
     elements.shell.hidden = false;
+    elements.conversationListLoading.textContent = t("Chargement des discussions…");
     updateIdentityLabel();
     const adminLink = document.querySelector("#admin-link");
     const canOpenAdmin = state.edition.admin_panel && (state.me.is_admin || state.me.is_manager);
@@ -1177,9 +1202,15 @@ function bindUI() {
     }
   };
   elements.eventButton.addEventListener("click", () => openEventDialog());
-  elements.pinnedWindowButton.addEventListener("click", () => setPinnedPanelOpen(elements.pinnedPanel.hidden));
-  elements.closePinnedPanel.addEventListener("click", () => setPinnedPanelOpen(false));
-  elements.calendarButton.addEventListener("click", () => openCalendar());
+  elements.pinnedWindowButton.addEventListener("click", () => {
+    void setPinnedPanelOpen(elements.pinnedPanel.hidden);
+  });
+  elements.closePinnedPanel.addEventListener("click", () => {
+    void setPinnedPanelOpen(false);
+  });
+  elements.calendarButton.addEventListener("click", () => {
+    void openCalendar();
+  });
   elements.carnetButton.addEventListener("click", () => openCarnet());
   elements.globalFilesButton.addEventListener("click", () => openGlobalFiles());
   document.querySelector("#event-form").addEventListener("submit", submitEvent);
@@ -1732,33 +1763,9 @@ async function openCurrentConversationInfo() {
   const conversation = state.current;
   if (!conversation || conversation.is_personal || !["private", "group"].includes(conversation.type)) return;
   const isGroup = conversation.type === "group";
-  state.conversationInfoIdentity = null;
-  elements.conversationInfoTitle.textContent = t(isGroup ? "Informations du groupe" : "Informations du contact");
-  elements.conversationInfoKind.textContent = t(isGroup ? "Groupe" : "Contact");
-  elements.conversationInfoName.textContent = t("Chargement…");
-  elements.conversationInfoNameLabel.textContent = t(isGroup ? "Nom du groupe" : "Nom affiché");
-  elements.conversationInfoDisplayName.textContent = "—";
-  elements.conversationInfoUsernameRow.hidden = isGroup;
-  elements.conversationInfoAddressRow.hidden = isGroup;
-  elements.conversationInfoUsername.textContent = "—";
-  elements.conversationInfoAddress.textContent = "—";
-  elements.conversationInfoInstance.textContent = "—";
-  elements.conversationInfoDescription.textContent = "—";
-  elements.conversationInfoFingerprintRow.hidden = isGroup;
-  elements.conversationInfoFingerprint.textContent = "—";
-  elements.conversationInfoTrustStatus.textContent = "";
-  elements.conversationInfoVerify.hidden = true;
-  elements.conversationInfoMembersSection.hidden = !isGroup;
-  elements.conversationInfoMembersCount.textContent = "0";
-  elements.conversationInfoMembers.replaceChildren();
-  replaceAvatarContent(elements.conversationInfoAvatar, null, isGroup ? "G" : "?");
-  if (!elements.conversationInfoDialog.open) elements.conversationInfoDialog.showModal();
-  elements.conversationInfoTitle.setAttribute("tabindex", "-1");
-  elements.conversationInfoTitle.focus({ preventScroll: true });
-
+  const loadVersion = ++conversationInfoLoadVersion;
   const members = await getMembers(conversation.id, { fresh: true, interactive: true });
   const display = await resolveConversationDisplay(conversation);
-  if (!elements.conversationInfoDialog.open) return;
   const peer = isGroup ? null : members.find((member) => member.user_id !== state.me.id);
   if (!isGroup && !peer) throw new Error("Participant introuvable.");
   const displayName = isGroup
@@ -1771,8 +1778,18 @@ async function openCurrentConversationInfo() {
   const description = isGroup
     ? (conversation.encrypted_description ? display.description : "")
     : peer?.description || "";
+  const identity = peer ? identityTrustInput(peer) : null;
+  const trust = identity ? await getIdentityTrust(identity) : null;
+
+  if (loadVersion !== conversationInfoLoadVersion || !sameID(state.current?.id, conversation.id)) return;
+  state.conversationInfoIdentity = identity;
+  elements.conversationInfoTitle.textContent = t(isGroup ? "Informations du groupe" : "Informations du contact");
+  elements.conversationInfoKind.textContent = t(isGroup ? "Groupe" : "Contact");
   elements.conversationInfoName.textContent = displayName;
+  elements.conversationInfoNameLabel.textContent = t(isGroup ? "Nom du groupe" : "Nom affiché");
   elements.conversationInfoDisplayName.textContent = displayName;
+  elements.conversationInfoUsernameRow.hidden = isGroup;
+  elements.conversationInfoAddressRow.hidden = isGroup;
   elements.conversationInfoUsername.textContent = username
     ? (username.startsWith("@") ? username : `@${username}`)
     : t("Non renseigné");
@@ -1780,16 +1797,24 @@ async function openCurrentConversationInfo() {
   elements.conversationInfoInstance.textContent = conversationInstanceLabel(instance);
   elements.conversationInfoInstance.title = instance || "";
   elements.conversationInfoDescription.textContent = description || t("Aucune description.");
+  elements.conversationInfoFingerprintRow.hidden = isGroup;
+  elements.conversationInfoFingerprint.textContent = identity
+    ? formatPublicKeyFingerprint(trust?.record?.fingerprint)
+    : "—";
+  elements.conversationInfoTrustStatus.textContent = identity ? identityVerificationStatus(trust?.record) : "";
+  elements.conversationInfoVerify.hidden = !identity || Boolean(trust?.record?.verifiedAt);
+  elements.conversationInfoMembersSection.hidden = !isGroup;
+  elements.conversationInfoMembersCount.textContent = "0";
+  elements.conversationInfoMembers.replaceChildren();
   replaceAvatarContent(
     elements.conversationInfoAvatar,
     display.avatar,
     conversationAvatarFallback(display, conversation),
   );
   if (isGroup) renderConversationInfoMembers(members);
-  if (peer) {
-    state.conversationInfoIdentity = identityTrustInput(peer);
-    await refreshConversationIdentityTrust();
-  }
+  if (!elements.conversationInfoDialog.open) elements.conversationInfoDialog.showModal();
+  elements.conversationInfoTitle.setAttribute("tabindex", "-1");
+  elements.conversationInfoTitle.focus({ preventScroll: true });
 }
 
 function renderConversationHeader(conversation, display) {
@@ -2862,7 +2887,7 @@ function warmAdminShell() {
   adminShellPreloaded = true;
   for (const [rel, href] of [
     ["prefetch", "/admin.html?from=chat"],
-    ["modulepreload", "/js/admin.js?v=admin-instant-v312"],
+    ["modulepreload", "/js/admin.js?v=admin-instant-v313"],
   ]) {
     const link = document.createElement("link");
     link.rel = rel;
@@ -3140,6 +3165,25 @@ function dismissStartupSplash() {
   document.querySelector("#startup-splash")?.setAttribute("hidden", "");
 }
 
+function revealConversationLists() {
+  elements.conversationLists.hidden = false;
+  elements.conversationLists.removeAttribute("aria-busy");
+  elements.conversationListLoading.hidden = true;
+}
+
+function refreshCarnetInBackground() {
+  const loadVersion = ++carnetLoadVersion;
+  return api("/api/carnet")
+    .then((entries) => {
+      if (loadVersion !== carnetLoadVersion) return;
+      state.carnet = entries;
+      state.carnetLoaded = true;
+    })
+    .catch((error) => {
+      console.warn("Actualisation du carnet en arrière-plan impossible", error);
+    });
+}
+
 async function refreshAll() {
   const cachedConversations = !state.conversations.length
     ? await state.cache?.getConversations()
@@ -3149,25 +3193,25 @@ async function refreshAll() {
     state.members.clear();
     state.verifiedConversationMembers.clear();
     await renderConversations();
+    revealConversationLists();
   }
+  void refreshCarnetInBackground();
   try {
-    let [contacts, conversations, carnetEntries] = await Promise.all([
+    let [contacts, conversations] = await Promise.all([
       api("/api/contacts"),
       api("/api/conversations"),
-      api("/api/carnet"),
     ]);
     if (!conversations.some((conversation) => conversation.is_personal)) {
       await api("/api/conversations/personal", { method: "POST" });
       conversations = await api("/api/conversations");
     }
     state.contacts = contacts;
-    state.carnet = carnetEntries;
-    state.carnetLoaded = true;
     state.conversations = conversations;
     state.members.clear();
     state.verifiedConversationMembers.clear();
     state.cache?.saveConversations(conversations);
     await renderConversations({ freshMembers: true });
+    revealConversationLists();
     const preload = scheduleBackgroundConversationPreloads(conversations);
     if (document.documentElement.classList.contains("ios-pwa-starting")) await preload;
     dismissStartupSplash();
@@ -3178,6 +3222,7 @@ async function refreshAll() {
     state.members.clear();
     state.verifiedConversationMembers.clear();
     await renderConversations();
+    revealConversationLists();
     const preload = scheduleBackgroundConversationPreloads(cachedConversations);
     if (document.documentElement.classList.contains("ios-pwa-starting")) await preload;
     dismissStartupSplash();
@@ -4339,6 +4384,7 @@ async function selectConversation(conversation, targetMessageID = null) {
     toast("Les nouveaux envois sont suspendus jusqu’au renouvellement de la clé par le propriétaire du groupe.", "error");
   }
   updateCallButtons();
+  refreshCallCapability(conversation).catch(() => {});
   const display = await resolveConversationDisplay(conversation);
   if (selectionVersion !== conversationSelectionVersion || !sameID(state.current?.id, selectedID)) return;
   state.conversationDisplays.set(String(selectedID), display);
@@ -4370,12 +4416,117 @@ function sameID(left, right) {
   return left != null && right != null && String(left) === String(right);
 }
 
+const callCapabilityCache = new Map();
+const callCapabilityProbes = new Map();
+// Bounded: one entry per conversation the user visits in a session. The oldest
+// are evicted rather than kept for the lifetime of the tab.
+const CALL_CAPABILITY_CACHE_LIMIT = 256;
+const CALL_CAPABILITY_TTL_MS = 5 * 60 * 1000;
+// A failed probe is retried quickly. It usually means a transient network
+// error, and making the user wait out the full cache before the buttons can
+// come back would turn a blip into a five-minute outage.
+const CALL_CAPABILITY_RETRY_MS = 15 * 1000;
+
+// callCapability reports whether every instance in a conversation speaks the
+// versioned call protocol. A successful answer is cached for a few minutes: it
+// changes only when an administrator upgrades or disables an instance, and
+// probing it on every render would put an HTTP round trip in front of a button.
+function callCapability(conversationID) {
+  const entry = callCapabilityCache.get(String(conversationID));
+  if (!entry) return null;
+  const ttl = entry.verified ? CALL_CAPABILITY_TTL_MS : CALL_CAPABILITY_RETRY_MS;
+  return Date.now() - entry.checkedAt < ttl ? entry : null;
+}
+
+function rememberCallCapability(key, entry) {
+  callCapabilityCache.set(key, entry);
+  while (callCapabilityCache.size > CALL_CAPABILITY_CACHE_LIMIT) {
+    const oldest = callCapabilityCache.keys().next().value;
+    if (oldest === key) break;
+    callCapabilityCache.delete(oldest);
+  }
+}
+
+async function refreshCallCapability(conversation = state.current) {
+  if (!conversation?.id || !["private", "group"].includes(conversation.type)) return;
+  const key = String(conversation.id);
+  if (callCapability(key)) return;
+  // One probe at a time per conversation: rendering a list can ask for the same
+  // answer several times in the same tick.
+  const inFlight = callCapabilityProbes.get(key);
+  if (inFlight) {
+    await inFlight;
+    return;
+  }
+  const probe = (async () => {
+    try {
+      const result = await api(`/api/calls/capabilities?conversation_id=${encodeURIComponent(conversation.id)}`);
+      rememberCallCapability(key, {
+        supported: Boolean(result.supported),
+        reason: result.reason || "",
+        verified: true,
+        checkedAt: Date.now(),
+      });
+    } catch (error) {
+      // A federated conversation must never be enabled on a network error: we
+      // would be asserting compatibility we could not check, and the user would
+      // start a call whose signalling has nowhere to go. A purely local
+      // conversation needs no remote instance, so it stays available.
+      console.warn("Capacités d’appel indisponibles", error?.message || error);
+      rememberCallCapability(key, {
+        supported: !isFederatedConversation(conversation),
+        reason: "unverified",
+        verified: false,
+        checkedAt: Date.now(),
+      });
+    } finally {
+      callCapabilityProbes.delete(key);
+    }
+  })();
+  callCapabilityProbes.set(key, probe);
+  await probe;
+  if (!sameID(state.current?.id, conversation.id)) return;
+  updateCallButtons();
+  scheduleCallCapabilityRetry(conversation);
+}
+
+let callCapabilityRetryTimer = null;
+
+// scheduleCallCapabilityRetry brings the buttons back on their own once a
+// transient failure clears. Without it an unverified conversation would stay
+// disabled until the user navigated away and back.
+function scheduleCallCapabilityRetry(conversation) {
+  const entry = callCapabilityCache.get(String(conversation.id));
+  if (entry?.verified) return;
+  window.clearTimeout(callCapabilityRetryTimer);
+  callCapabilityRetryTimer = window.setTimeout(() => {
+    callCapabilityRetryTimer = null;
+    if (!sameID(state.current?.id, conversation.id)) return;
+    refreshCallCapability(conversation).catch(() => {});
+  }, CALL_CAPABILITY_RETRY_MS);
+}
+
 function updateCallButtons() {
-  const enabled = canSignalCall() && !state.call;
+  const capability = state.current ? callCapability(state.current.id) : null;
+  // An unknown capability keeps a federated conversation disabled while the
+  // probe is in flight: starting a call that can never connect is worse than
+  // waiting for the answer.
+  const compatible = capability ? capability.supported : !isFederatedConversation(state.current);
+  const enabled = canSignalCall() && !state.call && compatible;
   elements.audioCallButton.disabled = !enabled;
   elements.videoCallButton.disabled = !enabled;
+  if (!compatible) {
+    const explanation = callCapabilityMessage(capability?.reason);
+    elements.audioCallButton.title = explanation;
+    elements.videoCallButton.title = explanation;
+    return;
+  }
   elements.audioCallButton.title = t(state.current?.type === "group" ? "Appel audio de groupe" : "Appel audio");
   elements.videoCallButton.title = t(state.current?.type === "group" ? "Appel vidéo de groupe" : "Appel vidéo");
+}
+
+function isFederatedConversation(conversation = state.current) {
+  return Boolean(conversation?.is_federated || conversation?.federation_instance_url);
 }
 
 function callLabel(media) {
@@ -4444,6 +4595,7 @@ function scheduleCallVideoPlaybackResume(delay = 120) {
 }
 
 function callRejectMessage(reason) {
+  if (reason === "identity_unavailable") return "Le correspondant n’a pas pu charger sa configuration d’appel.";
   if (reason === "busy") return "Correspondant occupé.";
   if (reason === "timeout") return "Appel sans réponse.";
   if (reason === "media_error") return "Microphone ou caméra indisponible chez le correspondant.";
@@ -4473,10 +4625,15 @@ function getCallPeer(userID) {
   if (!state.call || !userID) return null;
   const peers = callPeers();
   if (!peers.has(userID)) {
+    const identity = callPeerIdentity(userID);
     peers.set(userID, {
       userID,
+      identity,
+      // link and negotiation are created with the RTCPeerConnection in
+      // ensureCallPeer; there is no second implementation to keep in step.
+      link: null,
+      negotiation: null,
       peer: null,
-      pendingCandidates: [],
       remoteStream: null,
       audioElement: null,
       videoElement: null,
@@ -4507,19 +4664,135 @@ function newCallID() {
   return `call-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+const callSequencer = createCallSequencer();
+const callSignalLedger = createCallSignalLedger();
+
+// localCallIdentity is this browser's canonical, cross-instance identity. It
+// comes from the server, which is the only party that knows both this
+// instance's federation base URL and the account behind the session.
+function localCallIdentity() {
+  return state.callIdentity || null;
+}
+
+// callPeerIdentity is the canonical identity of another participant. It is
+// learned from the signals themselves — every call event carries its sender's
+// identity alongside the numeric id this instance uses locally — so the two
+// never have to be reconciled through a lookup that could disagree.
+function callPeerIdentity(userID, call = state.call) {
+  return call?.identities?.get(Number(userID)) || null;
+}
+
+// callKnownSenders lists every identity that may have signalled for this call:
+// the remote participants learned from their own signals, plus this browser.
+// A tombstone is per sender, so ending a call has to record one for each.
+function callKnownSenders(call) {
+  const senders = [];
+  const local = localCallIdentity();
+  if (local) senders.push(local);
+  for (const identity of call?.identities?.values() ?? []) senders.push(identity);
+  return senders;
+}
+
+function rememberCallPeerIdentity(userID, identity, call = state.call) {
+  if (!call || !userID || !identity?.username) return null;
+  const known = callIdentity(identity.instance, identity.username);
+  if (!call.identities) call.identities = new Map();
+  call.identities.set(Number(userID), known);
+  const peerState = call.peers?.get(Number(userID));
+  if (peerState) {
+    peerState.identity = known;
+    // The negotiation link must adopt the identity too. A peer is often created
+    // before its canonical identity is known, and leaving the old one in place
+    // would keep a polite/impolite role derived from nothing — which both sides
+    // can pick identically, producing exactly the offer collision the role
+    // exists to prevent.
+    peerState.link?.learnIdentities(known, localCallIdentity());
+  }
+  return known;
+}
+
+// callNegotiationIdentityReady reports whether this browser knows its own
+// canonical identity. Without it the polite/impolite role cannot be derived,
+// and falling back to numeric identifiers is precisely the bug this protocol
+// exists to remove — so a call that needs the role is refused instead.
+function callNegotiationIdentityReady() {
+  return Boolean(canonicalCallIdentity(localCallIdentity()));
+}
+
+// callNeedsCanonicalIdentity reports whether a conversation's negotiation
+// depends on canonical identities. A private call between two users of this
+// instance is decided by the call's own direction, so it keeps working even if
+// the call configuration could not be loaded.
+function callNeedsCanonicalIdentity(conversation = state.current) {
+  return Boolean(conversation) && (conversation.type === "group" || isFederatedConversation(conversation));
+}
+
+// memberCallIdentity builds a participant's identity from the membership list.
+// It is the fallback used before that participant has sent anything.
+function memberCallIdentity(member) {
+  if (!member) return null;
+  if (member.is_remote) {
+    if (!member.federation_instance_url || !member.remote_username) return null;
+    return callIdentity(member.federation_instance_url, member.remote_username);
+  }
+  const local = localCallIdentity();
+  if (!local) return null;
+  return callIdentity(local.instance, member.username);
+}
+
+async function resolveCallPeerIdentity(conversationID, userID) {
+  const known = callPeerIdentity(userID);
+  if (known) return known;
+  const members = await getMembers(conversationID).catch(() => []);
+  const identity = memberCallIdentity(members.find((item) => sameID(item.user_id, userID)));
+  return identity ? rememberCallPeerIdentity(userID, identity) : null;
+}
+
 function sendCallSignal(type, extra = {}) {
   const conversationID = extra.conversation_id || state.call?.conversationID || state.current?.id;
-  if (!conversationID) return;
-  const { conversation_id: ignoredConversationID, ...payload } = extra;
+  if (!conversationID) return null;
+  const { conversation_id: ignoredConversationID, target_user_id: targetUserID, target, ...payload } = extra;
+  const callID = payload.call_id || state.call?.id || "";
+  const eventID = newCallEventID();
+  const createdAt = new Date();
+  // The target is addressed by canonical identity. The numeric id is still sent
+  // so a peer that has not reloaded keeps working, but the server resolves the
+  // identity first and only falls back to the id when no identity is given.
+  const resolvedTarget = target || (targetUserID ? callPeerIdentity(targetUserID) : null);
   state.socket.send({
     type,
+    version: "federated-calls-v1",
     conversation_id: conversationID,
+    event_id: eventID,
+    // The sequence is scoped by conversation, sender, call *and* addressee: a
+    // signal sent to one participant must never make a signal to another look
+    // stale, and the same call id in another conversation must not share it.
+    sequence: callSequencer.next({
+      conversationID,
+      sender: localCallIdentity(),
+      callID,
+      target: resolvedTarget,
+    }),
+    created_at: createdAt.toISOString(),
+    expires_at: new Date(createdAt.getTime() + CALL_EVENT_TTL_MS).toISOString(),
+    ...(resolvedTarget ? { target: resolvedTarget } : {}),
+    ...(targetUserID ? { target_user_id: targetUserID } : {}),
     ...payload,
   });
+  return eventID;
 }
 
 async function startCallInvite(media) {
   if (!canSignalCall() || state.call) return;
+  await loadCallConfig().catch(() => {});
+  if (state.call) return;
+  // A federated or group call cannot pick the polite/impolite role without the
+  // canonical identity, so the configuration is retried once here rather than
+  // failing on a stale earlier error.
+  if (callNeedsCanonicalIdentity() && !(await ensureCallIdentity())) {
+    toast(callCapabilityMessage("no_local_identity"), "error");
+    return;
+  }
   const call = {
     id: newCallID(),
     conversationID: state.current.id,
@@ -4528,6 +4801,7 @@ async function startCallInvite(media) {
     status: "ringing",
     facingMode: "user",
     peers: new Map(),
+    identities: new Map(),
     acceptedUserIDs: new Set(),
   };
   state.call = call;
@@ -4545,6 +4819,20 @@ async function acceptIncomingCall() {
   refreshConversationCallIndicators();
   try {
     await openCallConversation();
+    // The identity is verified before the microphone or camera is opened. There
+    // is no point prompting for device access for a call that cannot negotiate,
+    // and no acceptance is announced until we know we can honour it.
+    if (callNeedsCanonicalIdentity(callConversation()) && !(await ensureCallIdentity())) {
+      sendCallSignal("call_reject", {
+        call_id: state.call.id,
+        media: state.call.media,
+        reason: "identity_unavailable",
+        target_user_id: state.call.callerID,
+      });
+      clearCallState();
+      toast(callCapabilityMessage("no_local_identity"), "error");
+      return;
+    }
     await ensureLocalCallStream();
     state.call.status = "accepted";
     sendCallSignal("call_accept", { call_id: state.call.id, media: state.call.media });
@@ -4709,6 +4997,20 @@ async function clearCallState(conversationID = state.call?.conversationID) {
   if (call?.closing) return;
   if (call) call.closing = true;
   clearCallSignalLossTimer(call);
+  // Drop the ordering state of the finished call but *keep* its tombstone.
+  // Erasing the tombstone here would undo the protection it exists for: a late
+  // offer or invitation for this call, carrying an event id never seen before,
+  // would be admitted into a session the user has already ended.
+  if (call?.id) {
+    for (const identity of callKnownSenders(call)) {
+      callSignalLedger.endCall({ conversationID: call.conversationID, sender: identity, callID: call.id });
+    }
+    callSequencer.forget({
+      conversationID: call.conversationID,
+      sender: localCallIdentity(),
+      callID: call.id,
+    });
+  }
   await exitCallFullscreen();
   closeCallResources(call);
   if (state.call === call) state.call = null;
@@ -4757,6 +5059,11 @@ function closeCallPeer(peerState) {
     peerState.peer.close();
     peerState.peer = null;
   }
+  // The link owns the pending candidate queue and the negotiation state; it dies
+  // with the connection it drove rather than outliving it.
+  peerState.link?.dropPendingCandidates();
+  peerState.link = null;
+  peerState.negotiation = null;
   if (peerState.whiteboardChannel) {
     peerState.whiteboardChannel.onopen = null;
     peerState.whiteboardChannel.onmessage = null;
@@ -5566,20 +5873,29 @@ async function ensureCallPeer(userID) {
   if (typeof RTCPeerConnection === "undefined") throw new Error("WebRTC n’est pas disponible dans ce navigateur.");
   const peer = new RTCPeerConnection(await callRTCConfiguration());
   peerState.peer = peer;
-  peerState.pendingCandidates ||= [];
+  // The negotiation state machine lives in call-negotiation.js and is the only
+  // implementation: offers, glare resolution, candidate buffering and ICE
+  // restarts all go through this link. Keeping a second copy here is what let
+  // the unit tests pass while production ran different code.
+  peerState.link = createPeerLink({
+    peer,
+    localIdentity: localCallIdentity(),
+    remoteIdentity: peerState.identity || callPeerIdentity(userID),
+    send: (signal) => {
+      if (!state.call) return;
+      sendCallSignal(signal.type, {
+        call_id: state.call.id,
+        media: state.call.media,
+        target_user_id: userID,
+        ...(signal.sdp ? { sdp: signal.sdp } : {}),
+        ...(signal.candidate ? { candidate: signal.candidate } : {}),
+      });
+    },
+  });
+  peerState.negotiation = peerState.link.negotiation;
   peer.onicecandidate = ({ candidate }) => {
     if (!candidate || !state.call) return;
-    sendCallSignal("ice_candidate", {
-      call_id: state.call.id,
-      media: state.call.media,
-      target_user_id: userID,
-      candidate: {
-        candidate: candidate.candidate,
-        sdpMid: candidate.sdpMid,
-        sdpMLineIndex: candidate.sdpMLineIndex,
-        usernameFragment: candidate.usernameFragment,
-      },
-    });
+    peerState.link.emitCandidate(candidate);
   };
   peer.ontrack = ({ streams }) => {
     const [stream] = streams;
@@ -5669,36 +5985,87 @@ function attachRemoteCallStream(peerState, stream) {
   updateCallUI();
 }
 
+// CALL_CONFIG_RETRY_MS is how long a fallback configuration is used before the
+// server is asked again. A failed fetch used to be cached for the lifetime of
+// the page, so one transient error left the browser without its canonical
+// identity — and therefore unable to start a federated call — until reload.
+const CALL_CONFIG_RETRY_MS = 15 * 1000;
+
+let callConfigProbe = null;
+
+// callConfigIsUsable reports whether the cached configuration came from the
+// server. A fallback is usable for a local call but carries no identity, so a
+// federated or group call must not be built on it.
+function callConfigIsUsable(config) {
+  return Boolean(config?.verified);
+}
+
+async function loadCallConfig({ force = false } = {}) {
+  const cached = state.callConfig;
+  const stale = cached && !cached.verified && Date.now() - cached.loadedAt >= CALL_CONFIG_RETRY_MS;
+  if (cached && !force && !stale) return cached;
+  // Concurrent callers share one request rather than each firing their own.
+  if (callConfigProbe) return callConfigProbe;
+  callConfigProbe = api("/api/calls/config")
+    .then((config) => {
+      const publicFallbackURLs = Array.isArray(config.public_fallback_urls) && config.public_fallback_urls.length
+        ? config.public_fallback_urls
+        : ["stun:stun.l.google.com:19302"];
+      // iceTransportPolicy is applied here rather than dropped: a "relay"
+      // policy is the only way to verify a TURN deployment, because with "all"
+      // the browser silently succeeds over a direct path and a broken relay
+      // stays invisible until a symmetric NAT hits it.
+      const rtcConfig = callRTCConfigurationFrom(config);
+      state.callIdentity = config.identity?.username
+        ? callIdentity(config.identity.instance, config.identity.username)
+        : null;
+      const resolved = {
+        verified: true,
+        loadedAt: Date.now(),
+        rtcConfig,
+        relayPolicy: rtcConfig.iceTransportPolicy,
+        publicFallbackURLs,
+        privateTurnURLs: rtcConfig.iceServers.flatMap((server) => urlsOfIceServer(server))
+          .filter((url) => /^turns?:/i.test(url) && !publicFallbackURLs.includes(url)),
+        privateTurnConfigured: Boolean(config.private_turn_configured),
+      };
+      state.callConfig = resolved;
+      return resolved;
+    })
+    .catch((error) => {
+      // A fallback keeps purely local calls working, but it is marked unverified
+      // and short-lived so the next attempt can recover without a reload.
+      console.warn("Configuration WebRTC indisponible, STUN par défaut utilisé", error?.message || error);
+      const fallback = {
+        verified: false,
+        loadedAt: Date.now(),
+        rtcConfig: { iceServers: [{ urls: "stun:stun.l.google.com:19302" }], iceTransportPolicy: "all" },
+        relayPolicy: "all",
+        publicFallbackURLs: ["stun:stun.l.google.com:19302"],
+        privateTurnURLs: [],
+        privateTurnConfigured: false,
+      };
+      state.callConfig = fallback;
+      return fallback;
+    })
+    .finally(() => {
+      callConfigProbe = null;
+    });
+  return callConfigProbe;
+}
+
 async function callRTCConfiguration() {
-  if (!state.callConfig) {
-    state.callConfig = api("/api/calls/config")
-      .then((config) => {
-        const iceServers = Array.isArray(config.ice_servers) && config.ice_servers.length
-          ? config.ice_servers
-          : [{ urls: "stun:stun.l.google.com:19302" }];
-        const publicFallbackURLs = Array.isArray(config.public_fallback_urls) && config.public_fallback_urls.length
-          ? config.public_fallback_urls
-          : ["stun:stun.l.google.com:19302"];
-        return {
-          rtcConfig: { iceServers },
-          publicFallbackURLs,
-          privateTurnURLs: iceServers.flatMap((server) => urlsOfIceServer(server))
-            .filter((url) => /^turns?:/i.test(url) && !publicFallbackURLs.includes(url)),
-          privateTurnConfigured: Boolean(config.private_turn_configured),
-        };
-      })
-      .catch((error) => {
-        console.warn("Configuration WebRTC indisponible, STUN par défaut utilisé", error);
-        return {
-          rtcConfig: { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] },
-          publicFallbackURLs: ["stun:stun.l.google.com:19302"],
-          privateTurnURLs: [],
-          privateTurnConfigured: false,
-        };
-      });
-  }
-  const config = await state.callConfig;
+  const config = await loadCallConfig();
   return config.rtcConfig;
+}
+
+// ensureCallIdentity forces a fresh attempt when a call genuinely needs the
+// canonical identity, so a single earlier failure does not disable calling for
+// the rest of the session.
+async function ensureCallIdentity() {
+  if (callNegotiationIdentityReady()) return true;
+  await loadCallConfig({ force: true }).catch(() => null);
+  return callNegotiationIdentityReady();
 }
 
 function urlsOfIceServer(server) {
@@ -5707,8 +6074,7 @@ function urlsOfIceServer(server) {
 }
 
 async function callNetworkConfig() {
-  if (!state.callConfig) await callRTCConfiguration();
-  return state.callConfig;
+  return loadCallConfig();
 }
 
 function syncCallRouteIndicator() {
@@ -5769,8 +6135,22 @@ async function selectedLocalCandidate(peer) {
   return stats.get(selectedPair.localCandidateId) || null;
 }
 
-function isCallNegotiationInitiator(userID) {
-  return Boolean(state.me?.id && userID && state.me.id < userID);
+// isCallNegotiationInitiator decides whether this browser is the side that
+// creates the offer for one peer.
+//
+// It never compares numeric user ids. Those are per-database and mean nothing
+// between instances: with A=1/B=2 on one server and A=7/B=3 on the other, the
+// old comparison made both browsers believe they were the initiator, or
+// neither. A private call follows its own direction — the caller offers once
+// the callee accepts — and a group call falls back to the canonical identities,
+// which both sides order identically.
+function isCallNegotiationInitiator(userID, call = state.call) {
+  if (!call) return false;
+  if (!isGroupCall(call)) return shouldOfferAfterAccept(call);
+  const remote = callPeerIdentity(userID, call);
+  const local = localCallIdentity();
+  if (!remote || !local) return false;
+  return shouldOfferInGroup(local, remote);
 }
 
 function callPeerIsConnected(peerState) {
@@ -5834,28 +6214,61 @@ async function restartPeerIce(peerState, userID) {
   peerState.needsIceRestart = false;
   peerState.iceRestarting = true;
   peerState.iceRestartAttempts += 1;
-  peerState.peer.restartIce?.();
-  const offer = await peerState.peer.createOffer({ iceRestart: true });
-  await peerState.peer.setLocalDescription(offer);
-  sendCallSignal("call_offer", {
-    call_id: state.call.id,
-    media: state.call.media,
-    target_user_id: userID,
-    sdp: { type: peerState.peer.localDescription.type, sdp: peerState.peer.localDescription.sdp },
-  });
+  await peerState.link.offer({ iceRestart: true });
   startPeerIceRestartTimeout(peerState, userID);
   toast("Connexion média instable. Reprise de l’appel en cours.", "error");
 }
 
+// resumePendingCallIceRestarts runs after the WebSocket comes back. It does not
+// replay anything that was buffered while the socket was down: those candidates
+// describe transport paths the browser has already given up on, and the offers
+// they belonged to may have been superseded. Instead each peer is asked to
+// confirm it is still in the call, and only the side entitled to offer
+// renegotiates.
 function resumePendingCallIceRestarts() {
   if (!state.call?.peers) return;
   for (const peerState of state.call.peers.values()) {
+    peerState.link?.dropPendingCandidates();
+    sendCallSignal("call_resync", {
+      call_id: state.call.id,
+      media: state.call.media,
+      target_user_id: peerState.userID,
+    });
     if (!peerState.needsIceRestart || !isCallNegotiationInitiator(peerState.userID)) continue;
     restartPeerIce(peerState, peerState.userID).catch((error) => {
       console.warn("Reprise ICE différée impossible", error);
       finishCallPeerConnectionFailure(peerState.userID);
     });
   }
+}
+
+// handleCallResync answers a peer that reconnected. The side allowed to offer
+// renegotiates with an ICE restart; the other side simply acknowledges, so the
+// two never offer at once. A resync for a call this browser no longer has ends
+// the peer's call instead of leaving it waiting for media that will not come.
+async function handleCallResync(event) {
+  // A resync only concerns the call it names. Matching on the peer alone would
+  // let a straggler from a previous call restart ICE on the current one.
+  const current = state.call?.id === event.call_id && sameID(state.call.conversationID, event.conversation_id)
+    ? state.call
+    : null;
+  const peerState = current?.peers?.get(event.user_id);
+  if (!peerState?.peer) {
+    sendCallSignal("call_hangup", {
+      conversation_id: event.conversation_id,
+      call_id: event.call_id,
+      media: event.media || "audio",
+      reason: "session_gone",
+      target_user_id: event.user_id,
+    });
+    return;
+  }
+  if (callPeerIsConnected(peerState) || !isCallNegotiationInitiator(event.user_id)) return;
+  peerState.needsIceRestart = true;
+  await restartPeerIce(peerState, event.user_id).catch((error) => {
+    console.warn("Renégociation après reconnexion impossible", error);
+    finishCallPeerConnectionFailure(event.user_id);
+  });
 }
 
 function finishCallPeerConnectionFailure(userID) {
@@ -5871,34 +6284,32 @@ function finishCallPeerConnectionFailure(userID) {
   }
 }
 
-async function addPendingIceCandidates(userID) {
-  const peerState = getCallPeer(userID);
-  if (!peerState?.peer || !peerState.pendingCandidates?.length) return;
-  const candidates = peerState.pendingCandidates.splice(0);
-  for (const candidate of candidates) {
-    await peerState.peer.addIceCandidate(new RTCIceCandidate(candidate));
-  }
-}
-
 async function beginOutgoingPeerOffer(userID) {
   clearCallAlerts();
   state.call.status = "connecting";
   updateCallUI();
-  const peer = await ensureCallPeer(userID);
-  const offer = await peer.createOffer();
-  await peer.setLocalDescription(offer);
-  sendCallSignal("call_offer", {
-    call_id: state.call.id,
-    media: state.call.media,
-    target_user_id: userID,
-    sdp: { type: peer.localDescription.type, sdp: peer.localDescription.sdp },
-  });
+  await ensureCallPeer(userID);
+  await getCallPeer(userID).link.offer();
 }
 
 async function maybeBeginOutgoingPeerOffer(userID) {
   if (!state.call || !userID || userID === state.me.id) return;
   if (state.call.peers?.get(userID)?.peer) return;
-  if (state.me.id > userID) return;
+  // Both identities must be known before the polite/impolite roles can be
+  // decided, so the configuration (which carries this browser's identity) and
+  // the peer's identity are resolved first.
+  await loadCallConfig().catch(() => {});
+  const peerIdentity = await resolveCallPeerIdentity(state.call.conversationID, userID).catch(() => null);
+  if (!state.call) return;
+  const conversation = callConversation();
+  if (callNeedsCanonicalIdentity(conversation) && (!callNegotiationIdentityReady() || !peerIdentity)) {
+    // Guessing the role here would let both browsers offer at once, or neither.
+    // Failing loudly is the only honest option.
+    toast(callCapabilityMessage("no_local_identity"), "error");
+    hangupCall("identity_unavailable");
+    return;
+  }
+  if (!isCallNegotiationInitiator(userID)) return;
   await beginOutgoingPeerOffer(userID);
 }
 
@@ -5909,25 +6320,26 @@ async function connectAcceptedCallPeers() {
   }
 }
 
+// acceptRemoteDescription applies an offer or an answer through the shared
+// negotiation link.
+//
+// Glare handling — the case where both peers offer at once, which happens on
+// every ICE restart and whenever two group members accept simultaneously — is
+// implemented once, in call-negotiation.js, and exercised by the peer-link
+// integration test. This function only supplies the surrounding call state.
 async function acceptRemoteOffer(userID, sdp) {
   clearCallAlerts();
   state.call.status = "connecting";
   updateCallUI();
-  const peer = await ensureCallPeer(userID);
+  await ensureCallPeer(userID);
   const peerState = getCallPeer(userID);
-  const recoveringIce = Boolean(peer.remoteDescription || peerState?.needsIceRestart || peerState?.iceRestarting || peerState?.iceRestartTimeout);
+  const recoveringIce = Boolean(
+    peerState.peer.remoteDescription || peerState.needsIceRestart || peerState.iceRestarting || peerState.iceRestartTimeout,
+  );
   if (recoveringIce) clearPeerIceRestartTimer(peerState);
-  await peer.setRemoteDescription(new RTCSessionDescription(sdp));
-  await addPendingIceCandidates(userID);
-  const answer = await peer.createAnswer();
-  await peer.setLocalDescription(answer);
-  sendCallSignal("call_answer", {
-    call_id: state.call.id,
-    media: state.call.media,
-    target_user_id: userID,
-    sdp: { type: peer.localDescription.type, sdp: peer.localDescription.sdp },
-  });
-  if (recoveringIce && peerState) {
+  const result = await peerState.link.acceptDescription(sdp);
+  if (!result.applied) return;
+  if (recoveringIce) {
     peerState.needsIceRestart = false;
     peerState.iceRestarting = true;
     startPeerIceRestartTimeout(peerState, userID);
@@ -5936,21 +6348,16 @@ async function acceptRemoteOffer(userID, sdp) {
 
 async function acceptRemoteAnswer(userID, sdp) {
   const peerState = getCallPeer(userID);
-  if (!peerState?.peer) return;
-  await peerState.peer.setRemoteDescription(new RTCSessionDescription(sdp));
-  await addPendingIceCandidates(userID);
+  if (!peerState?.link) return;
+  await peerState.link.acceptDescription(sdp);
   peerState.needsIceRestart = false;
 }
 
 async function handleRemoteIceCandidate(userID, candidate) {
   if (!candidate) return;
   const peerState = getCallPeer(userID);
-  if (!peerState?.peer || !peerState.peer.remoteDescription) {
-    peerState.pendingCandidates ||= [];
-    peerState.pendingCandidates.push(candidate);
-    return;
-  }
-  await peerState.peer.addIceCandidate(new RTCIceCandidate(candidate));
+  if (!peerState?.link) return;
+  await peerState.link.acceptCandidate(candidate);
 }
 
 function removeCallPeer(userID) {
@@ -5966,11 +6373,14 @@ async function handleCallSignalFailure(event) {
   const call = state.call;
   if (!call || call.id !== event.call_id || !sameID(call.conversationID, event.conversation_id)) return;
   if (["call_hangup", "call_reject"].includes(event.signal_type)) return;
+  // The failure names its target by canonical identity; the numeric id is only
+  // used to look up a display name on this instance.
   const targetName = await memberDisplayName(event.conversation_id, event.target_user_id, "un participant");
   if (state.call !== call) return;
+  const explanation = callFailureMessage(event.reason);
   if (isGroupCall(call)) {
-    removeCallPeer(event.target_user_id);
-    toast(`${targetName} est indisponible pour cet appel.`, "error");
+    if (event.target_user_id) removeCallPeer(event.target_user_id);
+    toast(`${targetName} : ${explanation}`, "error");
     return;
   }
   const history = call.status === "ringing"
@@ -5978,7 +6388,7 @@ async function handleCallSignalFailure(event) {
     : `${callHistoryLabel(call.media)} interrompu : signalisation indisponible.`;
   logCallHistory(call, history);
   await clearCallState(call.conversationID);
-  toast("Appel interrompu : le correspondant ne reçoit plus la signalisation.", "error");
+  toast(`Appel interrompu. ${explanation}`, "error");
 }
 
 async function handleCallSignal(event) {
@@ -5988,6 +6398,15 @@ async function handleCallSignal(event) {
   }
   if (event.user_id === state.me.id) return;
   if (event.target_user_id && event.target_user_id !== state.me.id) return;
+  // Drop duplicates, expired signals and offers older than one already applied
+  // before they reach a peer connection. Re-applying an offer tears down a
+  // working call, and a signal that outlived its window describes transport
+  // candidates that no longer exist.
+  const admission = callSignalLedger.accept(event);
+  if (!admission.ok) return;
+  const localIdentity = localCallIdentity();
+  if (event.target && localIdentity && !sameCallIdentity(event.target, localIdentity)) return;
+  if (event.sender?.username) rememberCallPeerIdentity(event.user_id, event.sender);
   const conversation = state.conversations.find((item) => sameID(item.id, event.conversation_id));
   if (!conversation || !["private", "group"].includes(conversation.type)) return;
   if (event.type === "call_invite") {
@@ -6014,8 +6433,10 @@ async function handleCallSignal(event) {
       callerID: event.user_id,
       callerName: conversation.type === "group" ? `${callerName} (${conversationTitle})` : callerName,
       peers: new Map(),
+      identities: new Map(),
       acceptedUserIDs: new Set([event.user_id]),
     };
+    rememberCallPeerIdentity(event.user_id, event.sender);
     startIncomingCallAlerts(state.call);
     showIncomingCallNotification(`${callLabel(state.call.media)} entrant`, `${callerName} vous appelle.`).catch(() => {});
     if (!sameID(state.current?.id, event.conversation_id)) {
@@ -6023,6 +6444,10 @@ async function handleCallSignal(event) {
     }
     updateCallUI();
     refreshConversationCallIndicators();
+    return;
+  }
+  if (event.type === "call_resync") {
+    await handleCallResync(event);
     return;
   }
   if (!state.call || state.call.id !== event.call_id || !sameID(state.call.conversationID, event.conversation_id)) return;
@@ -6053,11 +6478,14 @@ async function handleCallSignal(event) {
       }
     }
   } else if (event.type === "call_reject") {
-    if (state.call.direction === "outgoing" && !isGroupCall() && ["busy", "timeout", "media_error"].includes(event.reason)) {
+    if (state.call.direction === "outgoing" && !isGroupCall()
+      && ["busy", "timeout", "media_error", "identity_unavailable"].includes(event.reason)) {
       const text = event.reason === "busy"
         ? `${callHistoryLabel(state.call.media)} impossible : correspondant occupé.`
         : event.reason === "media_error"
           ? `${callHistoryLabel(state.call.media)} impossible : média indisponible.`
+        : event.reason === "identity_unavailable"
+          ? `${callHistoryLabel(state.call.media)} impossible : configuration d’appel indisponible.`
           : `${callHistoryLabel(state.call.media)} manqué.`;
       logCallHistory(state.call, text);
     }
@@ -6477,38 +6905,79 @@ async function togglePinnedMessage(message) {
   }
 }
 
-async function setPinnedPanelOpen(open) {
-  if (open && !state.current) return;
+function setPinnedPanelVisibility(open) {
   elements.pinnedPanel.hidden = !open;
   elements.chatWorkspace.classList.toggle("pinned-open", open);
   elements.pinnedWindowButton.setAttribute("aria-expanded", String(open));
   elements.pinnedWindowButton.title = t(open ? "Masquer vos messages épinglés" : "Afficher vos messages épinglés");
   elements.pinnedWindowButton.setAttribute("aria-label", elements.pinnedWindowButton.title);
-  if (!open) return;
-  await loadPinnedMessages();
 }
 
-async function loadPinnedMessages() {
-  if (!state.current || elements.pinnedPanel.hidden) return;
+async function setPinnedPanelOpen(open) {
+  if (!open) {
+    pinnedPanelLoadVersion += 1;
+    setPinnedPanelVisibility(false);
+    elements.pinnedMessages.removeAttribute("aria-busy");
+    if (pinnedPanelOpenTask) {
+      pinnedPanelOpenTask = null;
+      elements.pinnedWindowButton.disabled = !state.current;
+      elements.pinnedWindowButton.removeAttribute("aria-busy");
+    }
+    return;
+  }
+  if (!state.current || !elements.pinnedPanel.hidden) return;
+  if (pinnedPanelOpenTask) return pinnedPanelOpenTask;
+
+  const loadVersion = ++pinnedPanelLoadVersion;
+  elements.pinnedWindowButton.disabled = true;
+  elements.pinnedWindowButton.setAttribute("aria-busy", "true");
+  let openTask;
+  openTask = (async () => {
+    const loaded = await loadPinnedMessages({ allowHidden: true, renderLoading: false, throwOnError: true });
+    if (!loaded || loadVersion !== pinnedPanelLoadVersion || !state.current) return;
+    setPinnedPanelVisibility(true);
+  })()
+    .catch((error) => {
+      if (loadVersion !== pinnedPanelLoadVersion) return;
+      toast(frenchErrorMessage(error, "Impossible de charger les messages épinglés."), "error");
+    })
+    .finally(() => {
+      if (pinnedPanelOpenTask !== openTask) return;
+      pinnedPanelOpenTask = null;
+      elements.pinnedWindowButton.disabled = false;
+      elements.pinnedWindowButton.removeAttribute("aria-busy");
+    });
+  pinnedPanelOpenTask = openTask;
+  return openTask;
+}
+
+async function loadPinnedMessages({ allowHidden = false, renderLoading = true, throwOnError = false } = {}) {
+  if (!state.current || (!allowHidden && elements.pinnedPanel.hidden)) return false;
   const conversation = state.current;
-  const loading = document.createElement("p");
-  loading.className = "pinned-message-empty";
-  loading.textContent = t("Chargement…");
-  elements.pinnedMessages.replaceChildren(loading);
+  const isRelevant = () => sameID(state.current?.id, conversation.id)
+    && (allowHidden || !elements.pinnedPanel.hidden);
+  elements.pinnedMessages.setAttribute("aria-busy", "true");
+  if (renderLoading) {
+    const loading = document.createElement("p");
+    loading.className = "pinned-message-empty";
+    loading.textContent = t("Chargement…");
+    elements.pinnedMessages.replaceChildren(loading);
+  }
   try {
     const messages = await api(`/api/conversations/${conversation.id}/pinned-messages`);
-    if (!sameID(state.current?.id, conversation.id) || elements.pinnedPanel.hidden) return;
+    if (!isRelevant()) return false;
     if (!messages.length) {
       const empty = document.createElement("p");
       empty.className = "pinned-message-empty";
       empty.textContent = t("Vous n’avez épinglé aucun message dans cette conversation.");
       elements.pinnedMessages.replaceChildren(empty);
-      return;
+      return true;
     }
     const decrypted = await Promise.all(messages.map(async (message) => ({
       message: messageWithCurrentUserProfile(message),
       clear: await decryptMessageContent(message, await getMessageKey(message, conversation)),
     })));
+    if (!isRelevant()) return false;
     const fragment = document.createDocumentFragment();
     for (const { message, clear } of decrypted) {
       const card = document.createElement("article");
@@ -6544,12 +7013,17 @@ async function loadPinnedMessages() {
       fragment.append(card);
     }
     elements.pinnedMessages.replaceChildren(fragment);
+    return true;
   } catch (error) {
-    if (!sameID(state.current?.id, conversation.id) || elements.pinnedPanel.hidden) return;
+    if (!isRelevant()) return false;
+    if (throwOnError) throw error;
     const failure = document.createElement("p");
     failure.className = "pinned-message-empty";
     failure.textContent = frenchErrorMessage(error, "Impossible de charger les messages épinglés.");
     elements.pinnedMessages.replaceChildren(failure);
+    return false;
+  } finally {
+    if (isRelevant()) elements.pinnedMessages.removeAttribute("aria-busy");
   }
 }
 
@@ -7332,20 +7806,26 @@ function formatFileSize(bytes) {
 }
 
 async function openCalendar() {
-  showCurrentCalendarMonth();
-  elements.calendarStatus.textContent = t("Chargement des évènements…");
-  elements.calendarGrid.setAttribute("aria-busy", "true");
-  if (!elements.calendarDialog.open) elements.calendarDialog.showModal();
-  try {
-    state.calendarItems = await loadCalendarItems();
-    renderCalendarMonth();
-  } catch (error) {
-    state.calendarItems = [];
-    elements.calendarStatus.textContent = frenchErrorMessage(error, "Impossible de charger le calendrier.");
-    renderCalendarMonth(false);
-  } finally {
-    elements.calendarGrid.removeAttribute("aria-busy");
-  }
+  if (elements.calendarDialog.open) return;
+  if (calendarOpenTask) return calendarOpenTask;
+
+  elements.calendarButton.disabled = true;
+  elements.calendarButton.setAttribute("aria-busy", "true");
+  calendarOpenTask = (async () => {
+    const items = await loadCalendarItems();
+    state.calendarItems = items;
+    showCurrentCalendarMonth();
+    if (!elements.calendarDialog.open) elements.calendarDialog.showModal();
+  })()
+    .catch((error) => {
+      toast(frenchErrorMessage(error, "Impossible de charger le calendrier."), "error");
+    })
+    .finally(() => {
+      elements.calendarButton.disabled = false;
+      elements.calendarButton.removeAttribute("aria-busy");
+      calendarOpenTask = null;
+    });
+  return calendarOpenTask;
 }
 
 async function openCarnet() {

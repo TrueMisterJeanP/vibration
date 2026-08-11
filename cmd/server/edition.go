@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"net/http"
 	"time"
 
 	"chat-pwa-go/internal/auth"
@@ -11,17 +12,25 @@ import (
 	"chat-pwa-go/internal/ws"
 )
 
+type databaseMaintenance interface {
+	Middleware(http.Handler) http.Handler
+	RunShared(func()) bool
+}
+
 type editionRouteDeps struct {
-	DB                 *sql.DB
-	Hub                *ws.Hub
-	Auth               *auth.Handler
-	Federation         any
-	WebRTCDefaults     settings.WebRTCDefaults
-	SQLitePath         string
-	DatabaseConfigPath string
-	ActiveDatabase     database.ActiveConfig
-	ConfiguredDatabase database.ActiveConfig
-	RestartCommand     []string
+	DB                       *sql.DB
+	Hub                      *ws.Hub
+	Auth                     *auth.Handler
+	Federation               any
+	WebRTCDefaults           settings.WebRTCDefaults
+	SQLitePath               string
+	DatabaseConfigPath       string
+	ActiveDatabase           database.ActiveConfig
+	ConfiguredDatabase       database.ActiveConfig
+	RestartCommand           []string
+	DatabaseBackupDir        string
+	AllowDatabaseDestructive bool
+	DatabaseMaintenance      databaseMaintenance
 }
 
 type federationWorkerConfig struct {

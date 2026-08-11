@@ -14,24 +14,30 @@ import (
 )
 
 type Config struct {
-	Addr                          string
-	DatabaseDriver                string
-	DatabaseDSN                   string
-	DatabaseConfigPath            string
-	DatabasePath                  string
-	DatabasePool                  DatabasePool
-	DatabaseAllowSQLiteOverride   bool
-	DataDir                       string
-	AppSecret                     string
-	SecureCookies                 bool
-	VAPIDSubject                  string
-	DisableRegistration           bool
-	AuthRateLimitPerMinute        int
-	MetricsToken                  string
-	ClientOrigins                 []string
-	ServiceRestartCommand         []string
-	WebRTCICEServers              []ICEServer
-	WebRTCPublicFallbacks         []string
+	Addr                        string
+	DatabaseDriver              string
+	DatabaseDSN                 string
+	DatabaseConfigPath          string
+	DatabasePath                string
+	DatabasePool                DatabasePool
+	DatabaseAllowSQLiteOverride bool
+	DatabaseBackupDir           string
+	AllowDatabaseDestructive    bool
+	DataDir                     string
+	AppSecret                   string
+	SecureCookies               bool
+	VAPIDSubject                string
+	DisableRegistration         bool
+	AuthRateLimitPerMinute      int
+	MetricsToken                string
+	ClientOrigins               []string
+	ServiceRestartCommand       []string
+	WebRTCICEServers            []ICEServer
+	WebRTCPublicFallbacks       []string
+	// WebRTCRelayPolicy is "all" or "relay". Setting it to "relay" forces every
+	// call through TURN, which is how a TURN deployment is verified: the call
+	// cannot silently fall back to a direct path that hides a broken relay.
+	WebRTCRelayPolicy             string
 	SessionSameSite               string
 	FederationBaseURL             string
 	FederationOutboxBatch         int
@@ -171,6 +177,8 @@ func Load() (Config, error) {
 		DatabasePath:                  env("DATABASE_PATH", filepath.Join(dataDir, "chat.db")),
 		DatabasePool:                  pool,
 		DatabaseAllowSQLiteOverride:   os.Getenv("DATABASE_ALLOW_SQLITE_OVERRIDE") == "true",
+		DatabaseBackupDir:             env("DATABASE_BACKUP_DIR", filepath.Join(dataDir, "backups")),
+		AllowDatabaseDestructive:      os.Getenv("ALLOW_DATABASE_DESTRUCTIVE_ACTIONS") == "true",
 		DataDir:                       dataDir,
 		AppSecret:                     secret,
 		SecureCookies:                 os.Getenv("SECURE_COOKIES") == "true",
@@ -182,6 +190,7 @@ func Load() (Config, error) {
 		ServiceRestartCommand:         envFields("SERVICE_RESTART_COMMAND"),
 		WebRTCICEServers:              webRTCICEServers(),
 		WebRTCPublicFallbacks:         webRTCPublicFallbackURLs(),
+		WebRTCRelayPolicy:             strings.ToLower(strings.TrimSpace(env("WEBRTC_RELAY_POLICY", "all"))),
 		SessionSameSite:               strings.ToLower(env("SESSION_SAME_SITE", "lax")),
 		FederationBaseURL:             strings.TrimRight(env("FEDERATION_BASE_URL", ""), "/"),
 		FederationOutboxBatch:         envIntRange("FEDERATION_OUTBOX_BATCH", 20, 1, 1000),

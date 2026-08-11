@@ -75,7 +75,8 @@ export function websocketProtocols() {
 }
 
 export async function api(path, options = {}) {
-  const config = { credentials: "include", ...options };
+	const { responseType = "auto", ...requestOptions } = options;
+	const config = { credentials: "include", ...requestOptions };
   const token = getSessionToken();
   if (token) config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
   if (config.body && !(config.body instanceof FormData) && typeof config.body !== "string") {
@@ -89,13 +90,15 @@ export async function api(path, options = {}) {
   } catch {
     throw new Error("Serveur inaccessible");
   }
-  const contentType = response.headers.get("content-type") || "";
-  const data = contentType.includes("application/json") ? await response.json() : await response.text();
+	const contentType = response.headers.get("content-type") || "";
+	const data = response.ok && responseType === "blob"
+		? await response.blob()
+		: contentType.includes("application/json") ? await response.json() : await response.text();
   if (!response.ok) {
     const error = new Error(data?.error || `Erreur HTTP ${response.status}`);
     error.status = response.status;
     throw error;
   }
-  if (data?.session_token) setSessionToken(data.session_token);
+	if (responseType !== "blob" && data?.session_token) setSessionToken(data.session_token);
   return data;
 }

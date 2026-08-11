@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"chat-pwa-go/internal/auth"
+	"chat-pwa-go/internal/callsig"
 	database "chat-pwa-go/internal/db"
 	"github.com/gorilla/websocket"
 )
@@ -70,7 +71,7 @@ func TestHandleCallSignalRelaysPrivateConversationEvent(t *testing.T) {
 		ConversationID: 1,
 		CallID:         "call-123",
 		Media:          "audio",
-		SDP:            json.RawMessage(`{"type":"offer","sdp":"v=0"}`),
+		SDP:            &callsig.SessionDescription{Type: "offer", SDP: "v=0"},
 	})
 
 	select {
@@ -137,7 +138,7 @@ func TestHandleCallSignalTargetsGroupMember(t *testing.T) {
 		TargetUserID:   3,
 		CallID:         "call-targeted",
 		Media:          "video",
-		SDP:            json.RawMessage(`{"type":"offer","sdp":"v=0"}`),
+		SDP:            &callsig.SessionDescription{Type: "offer", SDP: "v=0"},
 	})
 
 	event := receiveCallEvent(t, target)
@@ -187,7 +188,7 @@ func TestHandleCallSignalRelaysICECandidate(t *testing.T) {
 		ConversationID: 1,
 		CallID:         "call-ice",
 		Media:          "audio",
-		Candidate:      json.RawMessage(`{"candidate":"candidate:1","sdpMid":"0","sdpMLineIndex":0}`),
+		Candidate:      &callsig.IceCandidate{Candidate: "candidate:1", SDPMid: sdpMid("0"), SDPMLineIndex: sdpIndex(0)},
 	})
 
 	event := receiveCallEvent(t, receiver)
@@ -240,7 +241,7 @@ func TestHandleCallSignalIgnoresInvalidPayloads(t *testing.T) {
 				ConversationID: 1,
 				CallID:         "call-large-sdp",
 				Media:          "audio",
-				SDP:            json.RawMessage(string(make([]byte, 96<<10+1))),
+				SDP:            &callsig.SessionDescription{Type: "offer", SDP: string(make([]byte, 96<<10+1))},
 			},
 		},
 	}
@@ -299,11 +300,13 @@ func TestHandleCallSignalReportsBackpressureToSender(t *testing.T) {
 		TargetUserID:   2,
 		CallID:         "call-backpressure",
 		Media:          "audio",
-		SDP:            json.RawMessage(`{"type":"offer","sdp":"v=0"}`),
+		SDP:            &callsig.SessionDescription{Type: "offer", SDP: "v=0"},
 	})
 
 	event := receiveCallEvent(t, sender)
-	if event["type"] != "call_signal_failed" || event["signal_type"] != "call_offer" || event["reason"] != "recipient_unavailable" {
+	// The reason distinguishes a saturated connection from an absent one: only
+	// the first is worth retrying, and the browser words them differently.
+	if event["type"] != "call_signal_failed" || event["signal_type"] != "call_offer" || event["reason"] != callsig.ReasonQueueFull {
 		t.Fatalf("unexpected failure event: %#v", event)
 	}
 	if event["target_user_id"].(float64) != 2 {
@@ -354,3 +357,7 @@ func callSignalTestDB(t *testing.T) *sql.DB {
 	}
 	return db
 }
+
+func sdpMid(value string) *string { return &value }
+
+func sdpIndex(value int) *int { return &value }

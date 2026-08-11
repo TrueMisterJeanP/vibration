@@ -11,8 +11,13 @@ assert.match(
 );
 assert.match(
   source,
-  /async function handleCallSignalFailure[\s\S]*?await clearCallState\(call\.conversationID\);[\s\S]*?signalisation/,
-  "a failed private call signal must terminate the unrecoverable call explicitly",
+  /async function handleCallSignalFailure[\s\S]*?await clearCallState\(call\.conversationID\);\s*\n\s*toast\(`Appel interrompu\. \$\{explanation\}`, "error"\);/,
+  "a failed private call signal must terminate the unrecoverable call and explain why",
+);
+assert.match(
+  source,
+  /async function handleCallSignalFailure[\s\S]*?const explanation = callFailureMessage\(event\.reason\);/,
+  "the reason reported by the server must drive the message shown to the caller",
 );
 
 console.log("call signal backpressure tests passed");

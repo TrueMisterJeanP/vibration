@@ -187,6 +187,8 @@ html.ios-pwa-splash-positioned #startup-splash svg { visibility: visible; }
 #ws-dot { width: .55rem; height: .55rem; border-radius: 50%; background: #ef6464; box-shadow: 0 0 0 3px rgb(239 100 100 / .12); }
 #ws-dot.online { background: var(--accent); box-shadow: 0 0 0 3px rgb(32 199 181 / .12); }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; padding: .5rem 1rem 1rem; }
+#conversation-lists { min-height: 0; display: flex; flex: 1; flex-direction: column; }
+.conversation-list-loading { display: grid; flex: 1; place-items: center; min-height: 0; padding: 2rem 1rem; color: var(--muted); text-align: center; }
 .conversation-item.personal-conversation-item { width: calc(100% - 1.2rem); margin: 0 .6rem .5rem; padding-right: .75rem; border: 1px solid rgb(32 199 181 / .2); }
 .personal-note-avatar { border-radius: .75rem; background: rgb(32 199 181 / .13); }
 .brand-logo-button.has-conversation-avatar.personal-note-avatar { border-radius: .75rem; background: rgb(32 199 181 / .13); }
@@ -787,6 +789,14 @@ fieldset { min-width: 0; border: 1px solid var(--line); border-radius: .8rem; }
 .webrtc-settings-form { margin-top: 1.4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
 .webrtc-settings-form .dialog-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .admin-db-status { min-height: 1.3rem; margin: 0; color: var(--muted); overflow-wrap: anywhere; }
+.database-maintenance-card { display: grid; gap: 1rem; margin-top: 1.4rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+.database-maintenance-card .admin-toolbar { margin-bottom: 0; }
+.database-backup-warning { margin: 0; color: var(--muted); font-size: .82rem; line-height: 1.5; }
+.database-danger-zone { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1.4rem; padding: 1rem; border: 1px solid #9f4754; border-radius: .8rem; background: rgb(159 71 84 / .09); }
+.database-danger-zone > div { display: grid; gap: .3rem; min-width: 0; }
+.database-danger-zone small { color: var(--muted); line-height: 1.45; }
+.database-destructive-dialog { width: min(92vw, 560px); }
+.database-destructive-dialog strong { overflow-wrap: anywhere; color: #ffc2ca; }
 .danger-button { background: #682d36; color: #ffe6e9; }
 .warning-button { background: #73551d; color: #fff0c8; }
 .badge { display: inline-block; width: fit-content; border: 1px solid var(--line); border-radius: 999px; padding: .15rem .45rem; font-size: .72rem; color: var(--muted); }
@@ -958,6 +968,7 @@ fieldset { min-width: 0; border: 1px solid var(--line); border-radius: .8rem; }
   .admin-row-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); justify-content: stretch; width: 100%; }
   .admin-row-actions.admin-message-actions { grid-template-columns: 1fr; }
   .admin-row-actions button { width: 100%; min-height: 2.4rem; white-space: normal; }
+  .database-danger-zone { align-items: stretch; flex-direction: column; }
   .admin-user-storage { width: 100%; }
   .admin-page .dialog-actions { grid-template-columns: 1fr; }
   .invitation-contact-grid { grid-template-columns: 1fr; }

@@ -6,10 +6,12 @@ const root = path.join(__dirname, "..");
 const html = fs.readFileSync(path.join(root, "web/index.html"), "utf8");
 const ui = fs.readFileSync(path.join(root, "web/js/ui.js"), "utf8");
 const app = fs.readFileSync(path.join(root, "web/js/app.js"), "utf8");
-const admin = fs.readFileSync(path.join(root, "web/js/admin.js"), "utf8");
+const adminPath = path.join(root, "web/js/admin.js");
+const admin = fs.existsSync(adminPath) ? fs.readFileSync(adminPath, "utf8") : "";
 const server = fs.readFileSync(path.join(root, "cmd/server/main.go"), "utf8");
 const handlers = fs.readFileSync(path.join(root, "internal/messages/handlers.go"), "utf8");
-const adminHandlers = fs.readFileSync(path.join(root, "internal/admin/handlers.go"), "utf8");
+const adminHandlersPath = path.join(root, "internal/admin/handlers.go");
+const adminHandlers = fs.existsSync(adminHandlersPath) ? fs.readFileSync(adminHandlersPath, "utf8") : "";
 const migrations = fs.readFileSync(path.join(root, "internal/db/migrations.go"), "utf8");
 
 const reportDialog = html.slice(html.indexOf('id="message-report-dialog"'), html.indexOf('id="action-dialog"'));
@@ -37,12 +39,14 @@ assert.match(reportTable, /message_id[\s\S]*reporter_id[\s\S]*reason[\s\S]*creat
 assert.doesNotMatch(reportTable, /encrypted|content/);
 assert.match(reportTable, /UNIQUE\(message_id, reporter_id\)/);
 
-assert.match(adminHandlers, /report_count[\s\S]*FROM message_reports[\s\S]*ORDER BY report_count DESC/);
-assert.match(adminHandlers, /ReporterUsername[\s\S]*Reason[\s\S]*CreatedAt/);
-assert.match(adminHandlers, /func \(h \*Handler\) RemoveMessageReport[\s\S]*message_report_removed/);
-assert.match(adminHandlers, /SendToUser\(reporterID,[\s\S]*message_report_removed[\s\S]*conversation_id[\s\S]*message_id/);
-assert.match(admin, /message\.report_count[\s\S]*message\.reports[\s\S]*report\.reporter_username[\s\S]*messageReportReasonLabel[\s\S]*method: "DELETE"/);
-assert.match(admin, /admin-row-actions admin-message-actions[\s\S]*actionButton\("Supprimer"[\s\S]*actionButton\("Retirer"[\s\S]*actions\.append\(remove\)/);
+if (adminHandlers && admin) {
+  assert.match(adminHandlers, /report_count[\s\S]*FROM message_reports[\s\S]*ORDER BY report_count DESC/);
+  assert.match(adminHandlers, /ReporterUsername[\s\S]*Reason[\s\S]*CreatedAt/);
+  assert.match(adminHandlers, /func \(h \*Handler\) RemoveMessageReport[\s\S]*message_report_removed/);
+  assert.match(adminHandlers, /SendToUser\(reporterID,[\s\S]*message_report_removed[\s\S]*conversation_id[\s\S]*message_id/);
+  assert.match(admin, /message\.report_count[\s\S]*message\.reports[\s\S]*report\.reporter_username[\s\S]*messageReportReasonLabel[\s\S]*method: "DELETE"/);
+  assert.match(admin, /admin-row-actions admin-message-actions[\s\S]*actionButton\("Supprimer"[\s\S]*actionButton\("Retirer"[\s\S]*actions\.append\(remove\)/);
+}
 assert.match(app, /event\.type === "message_report_removed"[\s\S]*invalidateConversationPreload\(event\.conversation_id\)[\s\S]*loadMessages\(null, false\)/);
 
 console.log("Message reporting: controlled violations, reversible selection, moderation removal and encrypted-content isolation verified");

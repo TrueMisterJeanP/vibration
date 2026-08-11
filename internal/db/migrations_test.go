@@ -333,6 +333,49 @@ func TestMigrateAddsConversationMemberFavoriteColumn(t *testing.T) {
 	}
 }
 
+func TestMigrateKeepsExistingFederationKeyWhenAddingConversationStateColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "partially-migrated-conversations.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = legacy.Exec(`CREATE TABLE conversations (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		type TEXT NOT NULL,
+		encrypted_title TEXT,
+		encrypted_description TEXT,
+		encrypted_avatar TEXT,
+		federation_key_id TEXT,
+		created_by INTEGER NOT NULL,
+		created_at TEXT NOT NULL
+	);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	database, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	for _, column := range []string{"federation_key_id", "current_key_epoch", "rotation_required"} {
+		var count int
+		if err := database.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name=?`, column).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("conversations.%s count=%d, want 1", column, count)
+		}
+	}
+	if err := Migrate(database); err != nil {
+		t.Fatalf("second migration: %v", err)
+	}
+}
+
 func TestMigratePreservesLegacyPinForItsOwner(t *testing.T) {
 	database, err := Open(filepath.Join(t.TempDir(), "legacy-pin.db"))
 	if err != nil {

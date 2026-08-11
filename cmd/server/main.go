@@ -6,11 +6,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"chat-pwa-go/internal/auth"
 	calendarfeed "chat-pwa-go/internal/calendar"
+	"chat-pwa-go/internal/callsig"
 	"chat-pwa-go/internal/config"
 	"chat-pwa-go/internal/contacts"
 	"chat-pwa-go/internal/conversations"
@@ -62,13 +64,16 @@ func main() {
 	messageHandler := &messages.Handler{DB: db, Hub: hub, Push: pushHandler, Federation: federationHandler}
 	calendarHandler := &calendarfeed.Handler{DB: db, AuthLimiter: auth.NewRateLimiter(cfg.AuthRateLimitPerMinute, time.Minute)}
 	fileHandler := &files.Handler{DB: db, Hub: hub, Push: pushHandler, Federation: federationHandler}
-	wsHandler := &ws.Handler{DB: db, Hub: hub, ClientOrigins: cfg.ClientOrigins, Federation: federationHandler}
-	webRTCDefaults := editionWebRTCDefaults(settings.WebRTCDefaults{ICEServers: cfg.WebRTCICEServers, PublicFallbackURLs: cfg.WebRTCPublicFallbacks})
+	wsHandler := &ws.Handler{DB: db, Hub: hub, ClientOrigins: cfg.ClientOrigins, Federation: federationHandler, LocalBaseURL: cfg.FederationBaseURL}
+	webRTCDefaults := editionWebRTCDefaults(settings.WebRTCDefaults{ICEServers: cfg.WebRTCICEServers, PublicFallbackURLs: cfg.WebRTCPublicFallbacks, RelayPolicy: cfg.WebRTCRelayPolicy})
+	databaseMaintenance := editionDatabaseMaintenance()
 	routeDeps := editionRouteDeps{
 		DB: db, Hub: hub, Auth: authHandler, Federation: federationHandler,
 		WebRTCDefaults: webRTCDefaults, SQLitePath: cfg.DatabasePath,
 		DatabaseConfigPath: cfg.DatabaseConfigPath, ActiveDatabase: activeDatabase,
 		ConfiguredDatabase: configuredDatabase, RestartCommand: cfg.ServiceRestartCommand,
+		DatabaseBackupDir: cfg.DatabaseBackupDir, AllowDatabaseDestructive: cfg.AllowDatabaseDestructive,
+		DatabaseMaintenance: databaseMaintenance,
 	}
 
 	mux := http.NewServeMux()
@@ -159,18 +164,50 @@ func main() {
 	mux.Handle("POST /api/push/subscribe", authHandler.Middleware(http.HandlerFunc(pushHandler.Subscribe)))
 	mux.Handle("POST /api/push/unsubscribe", authHandler.Middleware(http.HandlerFunc(pushHandler.Unsubscribe)))
 	mux.Handle("POST /api/push/test", authHandler.Middleware(http.HandlerFunc(pushHandler.Test)))
-	mux.Handle("GET /api/calls/config", authHandler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	mux.Handle("GET /api/calls/config", authHandler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callConfig, err := editionWebRTCConfig(db, webRTCDefaults)
 		if err != nil {
 			httpx.Error(w, http.StatusInternalServerError, "settings lookup failed")
 			return
 		}
+		// The browser needs its own canonical identity to decide, for each pair
+		// of participants, which side sends the offer. Deriving it here keeps
+		// the client from having to guess its instance's base URL.
+		var username string
+		_ = db.QueryRow(`SELECT username FROM users WHERE id=?`, auth.UserID(r)).Scan(&username)
+		identity := callsig.NewIdentity(cfg.FederationBaseURL, username)
 		httpx.JSON(w, http.StatusOK, map[string]any{
+			"identity": map[string]any{
+				"instance":  identity.Instance,
+				"username":  identity.Username,
+				"canonical": identity.Canonical(),
+			},
 			"ice_servers":             callConfig.ICEServers,
 			"public_fallback_urls":    callConfig.PublicFallbackURLs,
 			"relay_policy":            callConfig.RelayPolicy,
 			"private_turn_configured": callConfig.PrivateTURNConfigured,
 			"source":                  callConfig.Source,
+			"protocol":                callsig.Version,
+		})
+	})))
+	mux.Handle("GET /api/calls/capabilities", authHandler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conversationID, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("conversation_id")), 10, 64)
+		if err != nil || conversationID <= 0 {
+			httpx.Error(w, http.StatusBadRequest, "invalid conversation")
+			return
+		}
+		var members int
+		if db.QueryRow(`SELECT COUNT(*) FROM conversation_members WHERE conversation_id=? AND user_id=? AND role<>'pending'`,
+			conversationID, auth.UserID(r)).Scan(&members) != nil || members != 1 {
+			httpx.Error(w, http.StatusNotFound, "conversation not found")
+			return
+		}
+		supported, reason := editionCallCapability(federationHandler, conversationID)
+		httpx.JSON(w, http.StatusOK, map[string]any{
+			"conversation_id": conversationID,
+			"protocol":        callsig.Version,
+			"supported":       supported,
+			"reason":          reason,
 		})
 	})))
 	mux.Handle("GET /api/ws", authHandler.Middleware(wsHandler))
@@ -184,7 +221,7 @@ func main() {
 	mux.Handle("/", noCacheStatic(http.FileServer(http.Dir(webDir)), webDir))
 
 	policy := newOriginPolicy(cfg.ClientOrigins)
-	handler := securityHeaders(cors(originGuard(authHandler.TermsMiddleware(mux), policy), policy), cfg.SecureCookies)
+	handler := securityHeaders(cors(originGuard(authHandler.TermsMiddleware(databaseMaintenance.Middleware(mux)), policy), policy), cfg.SecureCookies)
 	server := &http.Server{
 		Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 90 * time.Second,

@@ -6,7 +6,7 @@ Application de messagerie web installable, responsive et chiffrée côté naviga
   <img src="docs/interface-community.png" alt="Interface de Vibration Community avec conversations, sondage, évènement, fichier partagé et messages épinglés" width="900">
 </p>
 
-<p align="center"><strong>Vibration Community 1.0.17</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
+<p align="center"><strong>Vibration Community 1.0.18</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
 
 ## Philosophie
 
@@ -30,7 +30,18 @@ Elle inclut :
 - **expérience web et mobile** : interface responsive en six langues, PWA, cache de l’interface, notifications Web Push et reconnexion automatique ;
 - **auto-hébergement** : serveur Go compact, base SQLite locale et aucun service d’analytique ou de télémétrie Vibration requis.
 
-## Nouveautés de Community 1.0.17
+## Nouveautés
+
+### Community 1.0.18
+
+- **Listes de discussions prêtes avant affichage** : avec un cache local, les conversations apparaissent immédiatement ; sans cache, la région reste en chargement jusqu’à la résolution complète des titres, avatars et aperçus, puis s’affiche en une seule fois.
+- **Calendrier complet dès l’ouverture** : les évènements sont chargés et déchiffrés avant l’apparition du calendrier, sans grille vide intermédiaire ni requêtes dupliquées en cas de double clic.
+- **Messages épinglés sans clignotement** : le panneau reste masqué jusqu’à ce que toutes les cartes soient déchiffrées et construites ; une ouverture annulée ne peut plus réapparaître après coup.
+- **Négociation WebRTC renforcée** : les offres concurrentes, le glare, les réponses simultanées et les redémarrages ICE sont sérialisés et couverts par des tests d’intégration de signalisation.
+- **Signalisation bornée** : les registres et reçus expirés sont évincés progressivement afin d’éviter une pointe CPU lorsque leurs plafonds sont atteints.
+- **Cache PWA renouvelé** : les ressources de l’interface sont versionnées ensemble pour éviter d’associer un ancien module d’appel à une nouvelle application.
+
+### Community 1.0.17
 
 - **Temps réel plus robuste** : les évènements persistants ne sont plus abandonnés silencieusement lorsqu’un client WebSocket est trop lent. La connexion demande alors une resynchronisation, tandis que la présence et la saisie restent prioritaires seulement lorsque la capacité le permet.
 - **Appels plus fiables sous charge** : la signalisation WebRTC dispose d’une file dédiée et l’interface avertit désormais explicitement l’utilisateur lorsqu’une offre, une réponse ou un candidat ICE n’a pas pu être transmis.

@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1b5260">
-  <meta name="vibration-build" content="calendar-toolbar-grid-v311">
+  <meta name="vibration-build" content="conversation-ready-v317">
   <style>
     :root { --avatar-bg: #1b5260; --avatar-fg: #a9fff4; background-color: #1b5260; }
     html[data-theme="light"] { --avatar-bg: #c9e7e4; --avatar-fg: #075e57; background-color: #c9e7e4; }
@@ -21,7 +21,7 @@
   <link rel="manifest" href="/manifest.json?v=desktop-titlebar-v252">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=calendar-toolbar-grid-v311">
+  <link rel="stylesheet" href="/css/style.css?v=conversation-ready-v317">
 </head>
 <body>
   <div class="desktop-titlebar-drag-region" data-tauri-drag-region aria-hidden="true"></div>
@@ -48,16 +48,19 @@
         <button id="contact-button" class="outline">+ Contact</button>
         <button id="group-button" class="outline">+ Groupe</button>
       </div>
-      <button id="personal-conversation-button" class="conversation-item personal-conversation-item" type="button" hidden>
-        <span class="avatar personal-note-avatar" aria-hidden="true">
-          <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6Z"></path><path d="M15 3v4h4"></path><path d="m9 16 6.7-6.7a1.4 1.4 0 0 1 2 2L11 18l-3 1Z"></path></svg>
-        </span>
-        <span>
-          <span class="conversation-title-row"><strong>Mes notes</strong><span id="personal-conversation-unread" class="unread-badge" hidden></span></span>
-          <small id="personal-conversation-preview" class="conversation-description">Messages et fichiers personnels</small>
-        </span>
-      </button>
-      <nav id="conversation-list" aria-label="Conversations"></nav>
+      <div id="conversation-list-loading" class="conversation-list-loading" role="status">Chargement des discussions…</div>
+      <div id="conversation-lists" aria-busy="true" hidden>
+        <button id="personal-conversation-button" class="conversation-item personal-conversation-item" type="button" hidden>
+          <span class="avatar personal-note-avatar" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6Z"></path><path d="M15 3v4h4"></path><path d="m9 16 6.7-6.7a1.4 1.4 0 0 1 2 2L11 18l-3 1Z"></path></svg>
+          </span>
+          <span>
+            <span class="conversation-title-row"><strong>Mes notes</strong><span id="personal-conversation-unread" class="unread-badge" hidden></span></span>
+            <small id="personal-conversation-preview" class="conversation-description">Messages et fichiers personnels</small>
+          </span>
+        </button>
+        <nav id="conversation-list" aria-label="Conversations"></nav>
+      </div>
     </aside>
     <section id="chat-panel">
       <header class="chat-header">
@@ -568,6 +571,6 @@
   <div id="toasts" aria-live="polite"></div>
   <script src="/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2"></script>
   <script src="/vendor/jsqr/jsQR.js?v=qr-scanner-v296"></script>
-  <script type="module" src="/js/app.js?v=calendar-toolbar-grid-v311"></script>
+  <script type="module" src="/js/app.js?v=conversation-ready-v317"></script>
 </body>
 </html>
