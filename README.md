@@ -30,6 +30,77 @@ Elle inclut :
 - **expérience web et mobile** : interface responsive en six langues, PWA, cache de l’interface, notifications Web Push et reconnexion automatique ;
 - **auto-hébergement** : serveur Go compact, base SQLite locale et aucun service d’analytique ou de télémétrie Vibration requis.
 
+## Comparatif Community et Enterprise
+
+L’édition Enterprise reprend toutes les fonctionnalités de Community et ajoute les outils d’administration, d’exploitation et de fédération destinés aux organisations.
+
+| Domaine | Fonctionnalité | Community | Enterprise |
+| --- | --- | --- | --- |
+| **Distribution** | Licence | GPL-3.0-or-later | GPL-3.0-or-later pour le code livré au client |
+| **Distribution** | Accès au code | Dépôt GitHub public | Code de la version livré au client |
+| **Distribution** | Auto-hébergement | ✅ Serveur Go autonome | ✅ Serveur Go avec modules d’exploitation |
+| **Distribution** | Application web responsive | ✅ Web et PWA | ✅ Web, PWA et interfaces Enterprise |
+| **Distribution** | Packaging desktop/mobile Tauri | — Non publié | ✅ Selon le déploiement |
+| **Distribution** | Support | Communauté et exploitation autonome | Support commercial et accompagnement |
+| **Messagerie** | Conversations privées et groupes | ✅ | ✅ |
+| **Messagerie** | Chiffrement des messages dans le navigateur | ✅ AES-GCM | ✅ AES-GCM |
+| **Messagerie** | Réponses, réactions, favoris et messages épinglés | ✅ | ✅ |
+| **Messagerie** | Messages éphémères | ✅ | ✅ |
+| **Messagerie** | Accusés envoyé, reçu et lu | ✅ | ✅ |
+| **Messagerie** | Présence et saisie en temps réel | ✅ | ✅ |
+| **Messagerie** | Messages vocaux chiffrés | ✅ | ✅ |
+| **Messagerie** | Signalements sans transmettre le contenu chiffré | ✅ Création et retrait par l’utilisateur | ✅ Avec traitement par la modération |
+| **Fichiers** | Fichiers, noms et types MIME chiffrés | ✅ Jusqu’à 25 Mo | ✅ Jusqu’à 25 Mo |
+| **Fichiers** | Dossier global et aperçus PDF/Office/médias | ✅ | ✅ |
+| **Fichiers** | Liens publics temporaires et révocables | ✅ Clé conservée dans le fragment de l’URL | ✅ Clé conservée dans le fragment de l’URL |
+| **Organisation** | Sondages chiffrés avec expiration | ✅ | ✅ |
+| **Organisation** | Évènements et calendrier global | ✅ | ✅ |
+| **Organisation** | Export iCal local | ✅ | ✅ |
+| **Contacts** | Carnet d’adresses et recherche des membres visibles | ✅ | ✅ |
+| **Contacts** | Profil invisible et code privé renouvelable | ✅ | ✅ |
+| **Sécurité** | Identité ECDH/ECDSA et empreintes persistantes | ✅ | ✅ |
+| **Sécurité** | Clés privées protégées par AES-GCM et Argon2id | ✅ | ✅ |
+| **Sécurité** | Signatures individuelles vérifiées avant déchiffrement | ✅ | ✅ |
+| **Sécurité** | Migration des anciennes enveloppes PBKDF2 | ✅ | ✅ |
+| **Sécurité** | Code personnel de récupération du compte | ✅ | ✅ |
+| **Multi-appareil** | Appareils de confiance | ✅ | ✅ |
+| **Multi-appareil** | Approbation par QR code ou code court | ✅ | ✅ |
+| **Multi-appareil** | Inventaire et révocation de ses propres sessions | ✅ | ✅ |
+| **Appels** | Appels audio/vidéo WebRTC dans une même instance | ✅ | ✅ |
+| **Appels** | Partage d’écran | ✅ Selon le navigateur | ✅ Selon le navigateur |
+| **Appels** | Tableau blanc partagé | ✅ | ✅ |
+| **Appels** | Serveurs ICE | STUN public de secours | STUN et Coturn privé configurables |
+| **Appels** | Appels audio/vidéo entre instances | — Non fédérés | ✅ `federated-calls-v1` entre instances approuvées |
+| **Appels** | Groupes fédérés | — | ✅ Plusieurs participants locaux et un participant distant |
+| **Expérience** | Interface en six langues | ✅ Français, anglais, espagnol, italien, portugais et allemand | ✅ Mêmes langues |
+| **Expérience** | Installation PWA et cache de l’interface | ✅ | ✅ |
+| **Expérience** | Notifications Web Push sans contenu clair | ✅ | ✅ |
+| **Expérience** | Reconnexion automatique après suspension mobile | ✅ | ✅ |
+| **Administration** | Inscriptions | Ouvertes lorsque l’instance est publique | Configurables |
+| **Administration** | Code d’activation et invitations | — | ✅ |
+| **Administration** | Conditions d’utilisation | ✅ Acceptation obligatoire | ✅ Texte et activation administrables |
+| **Administration** | Rôles administrateur et gestionnaire | — | ✅ |
+| **Administration** | Console d’administration et panneau gestionnaire | — | ✅ |
+| **Administration** | Promotion, rétrogradation, bannissement et débannissement | — | ✅ |
+| **Administration** | Révocation administrative des sessions | — | ✅ |
+| **Administration** | Modération par métadonnées sans accès au contenu clair | — | ✅ |
+| **Administration** | Journal d’audit des actions | — | ✅ |
+| **Administration** | Quotas de stockage des fichiers | — | ✅ Configurables |
+| **Administration** | Configuration et test WebRTC/Coturn | — | ✅ |
+| **Données** | Base SQLite locale | ✅ Seule base prise en charge | ✅ |
+| **Données** | MariaDB/MySQL et PostgreSQL | — | ✅ |
+| **Données** | Migration ou recopie de la base | — | ✅ |
+| **Données** | Sauvegarde, téléchargement et restauration depuis l’administration | — | ✅ |
+| **Données** | Remise à zéro protégée et redémarrage administré | — | ✅ |
+| **Fédération** | Connexion entre instances approuvées | — Non incluse | ✅ Confiance explicite entre administrateurs |
+| **Fédération** | Messages, fichiers, réactions, épingles et accusés | — | ✅ |
+| **Fédération** | Présence et saisie en temps réel | — | ✅ |
+| **Fédération** | Sondages et évènements | — | ✅ |
+| **Fédération** | Conversations privées | — | ✅ |
+| **Fédération** | Groupes | — | ✅ Limité actuellement à une instance distante |
+
+Le périmètre des appels et groupes fédérés est détaillé dans [Community et Enterprise](COMMUNITY_VS_ENTERPRISE.md). L’offre Enterprise est présentée sur [vibration-shop.appbox.fr](https://vibration-shop.appbox.fr).
+
 ## Nouveautés
 
 ### Community 1.0.18
@@ -231,7 +302,7 @@ Placer ensuite Vibration derrière un reverse proxy HTTPS, par exemple Nginx ou 
 - modération des messages chiffrés par métadonnées et journal d’audit des actions ;
 - code d’activation configurable ;
 - configuration Coturn/WebRTC ;
-- fédération privée ;
+- fédération privée entre instances approuvées, y compris pour les appels audio/vidéo via `federated-calls-v1` ; les appels privés sont pris en charge et les groupes fédérés peuvent réunir plusieurs participants locaux avec un participant distant ;
 - migration ou recopie vers MariaDB/MySQL ou PostgreSQL.
 
 ## Récupération de compte

@@ -11,20 +11,23 @@ d’administration et d’un accompagnement d’auto-hébergement.
 
 ## Résumé
 
+Le tableau comparatif complet des fonctionnalités est publié directement dans le [README](README.md#comparatif-community-et-enterprise). Les différences structurantes sont les suivantes :
+
 | Domaine | Community | Enterprise |
 | --- | --- | --- |
 | Licence | GPL-3.0-or-later | GPL-3.0-or-later pour le code livré au client |
-| Accès au code | export public GitHub | livré aux clients pour leur version |
-| Objectif principal | auditer et tester la philosophie et les fonctions centrales | déploiement de production et contrôle opérationnel |
-| Serveur | serveur Go | serveur Go avec modules supplémentaires |
-| Client web | web/PWA | web/PWA avec interfaces Enterprise |
-| Wrapper desktop/mobile | non publié | peut inclure le packaging Tauri/Android |
-| Base de données | SQLite uniquement | SQLite et options de déploiement sur base externe |
-| Inscription | inscriptions ouvertes | peut inclure activation et administration |
-| Console d’administration | non incluse | incluse |
-| Fédération | non incluse | disponible si configurée |
-| TURN/Coturn | STUN public de secours uniquement | configuration Coturn privée |
-| Support | communauté / autonome | support commercial et accompagnement de déploiement |
+| Accès au code | Export public GitHub | Code de la version livré au client |
+| Client | Web et PWA | Web, PWA et interfaces Enterprise ; packaging Tauri selon le déploiement |
+| Base de données | SQLite uniquement | SQLite, MariaDB/MySQL et PostgreSQL |
+| Inscriptions | Ouvertes lorsque l’instance est publique | Configurables avec code d’activation et invitations |
+| Administration | Non incluse | Console complète, panneau gestionnaire, rôles, modération et audit |
+| Appels dans une même instance | Audio/vidéo, partage d’écran et tableau blanc | Identique |
+| Appels entre instances | Non fédérés | `federated-calls-v1` entre instances approuvées |
+| Groupes fédérés | Non inclus | Plusieurs participants locaux et un participant distant |
+| Fédération des autres fonctions | Non incluse | Messages, fichiers, réactions, épingles, accusés, présence, saisie, sondages et évènements |
+| TURN/Coturn | STUN public de secours uniquement | Coturn privé configurable et testable |
+| Exploitation des données | Sauvegarde manuelle de SQLite | Migration, recopie, sauvegarde, restauration et remise à zéro protégée |
+| Support | Communauté et exploitation autonome | Support commercial et accompagnement de déploiement |
 
 ## Inclus dans Community
 
