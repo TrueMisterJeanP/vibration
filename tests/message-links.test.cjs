@@ -49,7 +49,9 @@ const moduleURL = `data:text/javascript;base64,${Buffer.from(source).toString("b
   assert.match(ui, /link\.rel = "noopener noreferrer"/);
   assert.match(ui, /plugin:opener\|open_url/);
   assert.match(ui, /sms\.href = token\.smsHref/);
-  assert.match(css, /\.message-link \{/);
+  assert.match(css, /\.message \.message-link:visited \{ color: #70e6c9/);
+  assert.match(css, /\.message \.message-link:visited \{[^}]*text-decoration: none/);
+  assert.match(css, /:root\[data-theme="light"\] \.message \.message-link:visited \{ color: #08786f/);
   const linkModuleVersion = ui.match(/message-links\.js\?v=([^"\s]+)/)?.[1];
   assert.ok(linkModuleVersion);
   assert.ok(worker.includes(`/js/message-links.js?v=${linkModuleVersion}`));

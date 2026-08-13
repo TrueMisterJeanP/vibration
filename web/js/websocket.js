@@ -1,4 +1,4 @@
-import { websocketProtocols, websocketURL } from "./api.js?v=personal-notes-theme-v343";
+import { websocketProtocols, websocketURL } from "./api.js?v=message-link-green-v344";
 
 export class ChatSocket extends EventTarget {
   constructor() {

@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=personal-notes-theme-v343";
+import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=message-link-green-v344";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -19,7 +19,7 @@ import {
   verifyMessagePayload,
   unwrapGroupKey,
   wrapGroupKey,
-} from "./crypto.js?v=personal-notes-theme-v343";
+} from "./crypto.js?v=message-link-green-v344";
 import {
   forgetRememberedIdentity,
 	forgetTrustedDeviceCredential,
@@ -40,8 +40,8 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=personal-notes-theme-v343";
-import { ChatSocket } from "./websocket.js?v=personal-notes-theme-v343";
+} from "./notifications.js?v=message-link-green-v344";
+import { ChatSocket } from "./websocket.js?v=message-link-green-v344";
 import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=message-links-v341";
 import { locale, t } from "./i18n.js?v=conversation-search-v326";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
@@ -71,7 +71,7 @@ import {
   sameCallIdentity,
   shouldOfferAfterAccept,
   shouldOfferInGroup,
-} from "./call-negotiation.js?v=personal-notes-theme-v343";
+} from "./call-negotiation.js?v=message-link-green-v344";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
 import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
@@ -100,7 +100,7 @@ const GLOBAL_FILES_PAGE_SIZE = 40;
 const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
 const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "personal-notes-theme-v343";
+const APP_BUILD = "message-link-green-v344";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
 const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;

@@ -1,4 +1,4 @@
-import { api } from "./api.js?v=personal-notes-theme-v343";
+import { api } from "./api.js?v=message-link-green-v344";
 import { locale, t } from "./i18n.js?v=conversation-search-v326";
 import { frenchErrorMessage, setBusy } from "./ui.js?v=message-links-v341";
 
