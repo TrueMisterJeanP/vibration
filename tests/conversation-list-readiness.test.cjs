@@ -40,7 +40,7 @@ assert.equal(context.elements.conversationLists.hidden, false);
 assert.equal(context.elements.conversationLists.attributes.has("aria-busy"), false);
 assert.equal(context.elements.conversationListLoading.hidden, true);
 
-const refreshStart = app.indexOf("async function refreshAll()");
+const refreshStart = app.indexOf("async function refreshAll(");
 const refreshEnd = app.indexOf("async function refreshConversationList()", refreshStart);
 const refreshAll = app.slice(refreshStart, refreshEnd);
 const firstCachedRender = refreshAll.indexOf("await renderConversations();");
@@ -50,8 +50,8 @@ assert.ok(firstCachedRender >= 0 && firstReveal > firstCachedRender && networkLo
 
 const networkLoadEnd = refreshAll.indexOf("]);", networkLoad);
 const networkRequests = refreshAll.slice(networkLoad, networkLoadEnd);
-assert.match(networkRequests, /api\("\/api\/contacts"\)/);
-assert.match(networkRequests, /api\("\/api\/conversations"\)/);
+assert.match(networkRequests, /request\("\/api\/contacts"\)/);
+assert.match(networkRequests, /request\("\/api\/conversations"\)/);
 assert.doesNotMatch(networkRequests, /carnet/, "le carnet ne doit pas retarder l’affichage des discussions");
 assert.match(refreshAll, /void refreshCarnetInBackground\(\);/);
 

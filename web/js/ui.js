@@ -1,4 +1,5 @@
-import { locale, localizeDocument, t } from "./i18n.js?v=conversation-search-v325";
+import { locale, localizeDocument, t } from "./i18n.js?v=conversation-search-v326";
+import { messageLinkTokens } from "./message-links.js?v=message-links-v341";
 
 localizeDocument();
 
@@ -99,6 +100,44 @@ export function materialFileIcon(kind = "file") {
     svg.append(path);
   }
   return svg;
+}
+
+function openMessageLinkWithSystemApplication(event) {
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (typeof invoke !== "function") return;
+  event.preventDefault();
+  invoke("plugin:opener|open_url", {
+    url: event.currentTarget.getAttribute("href"),
+    with: null,
+  }).catch((error) => console.error("Impossible d’ouvrir le lien avec l’application système", error));
+}
+
+export function appendMessageLinks(container, value) {
+  for (const token of messageLinkTokens(value)) {
+    if (token.type === "text") {
+      container.append(document.createTextNode(token.text));
+      continue;
+    }
+    const link = document.createElement("a");
+    link.className = `message-link message-${token.type}-link`;
+    link.textContent = token.text;
+    link.href = token.href;
+    if (token.type === "url") {
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+    }
+    link.addEventListener("click", openMessageLinkWithSystemApplication);
+    container.append(link);
+    if (token.type !== "phone") continue;
+    const sms = document.createElement("a");
+    sms.className = "message-link message-sms-link";
+    sms.textContent = t("SMS");
+    sms.href = token.smsHref;
+    sms.title = t("Envoyer un SMS à {phone}", { phone: token.text });
+    sms.setAttribute("aria-label", sms.title);
+    sms.addEventListener("click", openMessageLinkWithSystemApplication);
+    container.append(sms);
+  }
 }
 
 export function renderMessage(
@@ -257,7 +296,7 @@ export function renderMessage(
       shareIcon.append(path);
     }
     share.append(shareIcon);
-    share.addEventListener("click", () => onFileShare(message, clear));
+    share.addEventListener("click", () => onFileShare(message, clear, undefined, share));
     const size = document.createElement("small");
     size.textContent = `${Math.max(1, Math.ceil(message.file.size / 1024))} Ko`;
     const actions = document.createElement("span");
@@ -331,7 +370,7 @@ export function renderMessage(
     article.append(poll);
   } else {
     const body = document.createElement("p");
-    body.textContent = clear;
+    appendMessageLinks(body, clear);
     article.append(body);
   }
   const time = document.createElement("time");

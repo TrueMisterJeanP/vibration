@@ -12,7 +12,7 @@ const recovery = app.slice(app.indexOf("function startupAuthenticationFailed"), 
 const foreground = app.slice(app.indexOf("function handleAppFocus"), app.indexOf("function conversationCallState"));
 
 assert.match(app, /let appShellPrepared = false;[\s\S]*let appUIBound = false;[\s\S]*let bootAttempt = null;/);
-assert.match(boot, /if \(!state\.me\)[\s\S]*Promise\.all\(\[api\("\/api\/me"\)/);
+assert.match(boot, /if \(!state\.me\)[\s\S]*Promise\.all\(\[[\s\S]*api\("\/api\/me", \{ timeoutMS: BOOT_API_TIMEOUT_MS \}\)/);
 assert.match(boot, /if \(!appShellPrepared\)[\s\S]*appShellPrepared = true/);
 assert.match(boot, /if \(!appUIBound\)[\s\S]*bindUI\(\);[\s\S]*appUIBound = true/);
 assert.match(boot, /if \(!state\.socket \|\| state\.socket\.closed\) connectSocket\(\)/);
@@ -21,6 +21,7 @@ assert.match(recovery, /error\?\.status === 401 \|\| error\?\.status === 403/);
 assert.match(recovery, /bootRetryDelay = Math\.min\(bootRetryDelay \* 2, 15000\)/);
 assert.match(recovery, /if \(bootAttempt\) return bootAttempt/);
 assert.match(recovery, /scheduleBootRetry\(\)/);
+assert.match(app, /const BOOT_API_TIMEOUT_MS = 8000/);
 assert.match(app, /addEventListener\("online", retryIncompleteBoot\)/);
 assert.match(app, /addEventListener\("pageshow", retryIncompleteBoot\)/);
 assert.match(app, /addEventListener\("visibilitychange", retryIncompleteBoot\)/);
@@ -31,11 +32,11 @@ assert.match(app, /if \(dialog\?\.open\) dialog\.close\(\)/);
 assert.match(foreground, /Date\.now\(\) - appHiddenAt >= 3000/);
 assert.match(foreground, /refreshConversationListOnForeground\(\{ reconnectSocket: suspended \}\)/);
 assert.match(foreground, /if \(reconnectSocket\) state\.socket\?\.reconnect\(\)/);
-assert.match(notifications, /register\("\/sw\.js\?v=conversation-search-v325"\)/);
-assert.match(worker, /chat-pwa-go-v325/);
-assert.match(worker, /\/js\/app\.js\?v=conversation-search-v325/);
-assert.match(worker, /\/js\/notifications\.js\?v=conversation-search-v325/);
-assert.match(worker, /\/js\/websocket\.js\?v=ios-resume-v297/);
+assert.match(notifications, /register\("\/sw\.js\?v=personal-notes-theme-v343"\)/);
+assert.match(worker, /chat-pwa-go-v343/);
+assert.match(worker, /\/js\/app\.js\?v=personal-notes-theme-v343/);
+assert.match(worker, /\/js\/notifications\.js\?v=personal-notes-theme-v343/);
+assert.match(worker, /\/js\/websocket\.js\?v=personal-notes-theme-v343/);
 
 const executableWebSocketSource = websocketSource.replace(
   /^import[^\n]+\n/,

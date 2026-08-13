@@ -368,6 +368,7 @@ const rows = [
   ["Message d’invitation copié.", "Invitation message copied.", "Mensaje de invitación copiado.", "Messaggio d’invito copiato.", "Mensagem de convite copiada.", "Einladungsnachricht kopiert."],
   ["E-mail", "Email", "Correo electrónico", "E-mail", "E-mail", "E-Mail"],
   ["SMS", "SMS", "SMS", "SMS", "SMS", "SMS"],
+  ["Envoyer un SMS à {phone}", "Send an SMS to {phone}", "Enviar un SMS a {phone}", "Invia un SMS a {phone}", "Enviar um SMS para {phone}", "SMS an {phone} senden"],
   ["Signal", "Signal", "Signal", "Signal", "Signal", "Signal"],
   ["WhatsApp", "WhatsApp", "WhatsApp", "WhatsApp", "WhatsApp", "WhatsApp"],
   ["Autre messagerie", "Other messenger", "Otra mensajería", "Altra messaggistica", "Outra aplicação de mensagens", "Anderer Messenger"],

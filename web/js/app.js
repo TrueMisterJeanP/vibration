@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=ios17-pdf-v199";
+import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=personal-notes-theme-v343";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -19,7 +19,7 @@ import {
   verifyMessagePayload,
   unwrapGroupKey,
   wrapGroupKey,
-} from "./crypto.js?v=conversation-search-v325";
+} from "./crypto.js?v=personal-notes-theme-v343";
 import {
   forgetRememberedIdentity,
 	forgetTrustedDeviceCredential,
@@ -40,10 +40,10 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=conversation-search-v325";
-import { ChatSocket } from "./websocket.js?v=ios-resume-v297";
-import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=ios-resume-v297";
-import { locale, t } from "./i18n.js?v=conversation-search-v325";
+} from "./notifications.js?v=personal-notes-theme-v343";
+import { ChatSocket } from "./websocket.js?v=personal-notes-theme-v343";
+import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=message-links-v341";
+import { locale, t } from "./i18n.js?v=conversation-search-v326";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
 import { nonWhiteImageBounds } from "./file-preview-image.js?v=ios17-pdf-v199";
 import {
@@ -71,7 +71,7 @@ import {
   sameCallIdentity,
   shouldOfferAfterAccept,
   shouldOfferInGroup,
-} from "./call-negotiation.js?v=conversation-search-v325";
+} from "./call-negotiation.js?v=personal-notes-theme-v343";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
 import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
@@ -88,6 +88,7 @@ const CALL_INVITE_TIMEOUT_MS = 45000;
 const CALL_SIGNAL_LOSS_GRACE_MS = 15000;
 const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
 const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
+const BOOT_API_TIMEOUT_MS = 8000;
 const FILE_PREVIEW_PREFETCH_BUDGET_BYTES = 8 * 1024 * 1024;
 const BACKGROUND_CONVERSATION_PRELOAD_LIMIT = 6;
 const BACKGROUND_CONVERSATION_PRELOAD_CONCURRENCY = 2;
@@ -99,7 +100,7 @@ const GLOBAL_FILES_PAGE_SIZE = 40;
 const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
 const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "conversation-search-v325";
+const APP_BUILD = "personal-notes-theme-v343";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
 const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;
@@ -194,6 +195,8 @@ let carnetLoadVersion = 0;
 let calendarOpenTask = null;
 let pinnedPanelOpenTask = null;
 let pinnedPanelLoadVersion = 0;
+let fileShareOpenTask = null;
+let fileShareOpenVersion = 0;
 let appReady = false;
 let appShellPrepared = false;
 let appUIBound = false;
@@ -765,9 +768,9 @@ function defaultFileQuotas() {
   };
 }
 
-async function refreshFileQuotas() {
+async function refreshFileQuotas({ timeoutMS = 0 } = {}) {
   try {
-    state.fileQuotas = await api("/api/files/limits");
+    state.fileQuotas = await api("/api/files/limits", { timeoutMS });
   } catch {
     state.fileQuotas ||= defaultFileQuotas();
   }
@@ -779,18 +782,22 @@ async function boot() {
   sessionStorage.removeItem(ADMIN_RETURN_HISTORY_KEY);
   sessionStorage.removeItem(ADMIN_BOOTSTRAP_CACHE_KEY);
   if (!state.me) {
-    const [me, edition, terms] = await Promise.all([api("/api/me"), api("/api/edition"), api("/api/terms/status")]);
+    const [me, edition, terms] = await Promise.all([
+      api("/api/me", { timeoutMS: BOOT_API_TIMEOUT_MS }),
+      api("/api/edition", { timeoutMS: BOOT_API_TIMEOUT_MS }),
+      api("/api/terms/status", { timeoutMS: BOOT_API_TIMEOUT_MS }),
+    ]);
     if (!terms.accepted) {
       location.replace("/login.html?terms=required");
       return;
     }
     state.me = me;
     state.edition = edition;
-    await ensureTrustedDeviceEnrollment().catch((error) => {
+    await ensureTrustedDeviceEnrollment({ timeoutMS: BOOT_API_TIMEOUT_MS }).catch((error) => {
       if (error?.status !== 409) console.warn("Enregistrement de l’appareil de confiance impossible", error);
     });
     state.cache = await openConversationCache(getInstanceURL(), state.me);
-    await refreshFileQuotas();
+    await refreshFileQuotas({ timeoutMS: BOOT_API_TIMEOUT_MS });
   }
   if (!appShellPrepared) {
     elements.shell.hidden = false;
@@ -799,7 +806,7 @@ async function boot() {
     const adminLink = document.querySelector("#admin-link");
     const canOpenAdmin = state.edition.admin_panel && (state.me.is_admin || state.me.is_manager);
     adminLink.hidden = !canOpenAdmin;
-    adminLink.textContent = t(state.me.is_manager && !state.me.is_admin ? "Gestion" : "Administration");
+    adminLink.querySelector(".admin-link-label").textContent = t(state.me.is_manager && !state.me.is_admin ? "Gestion" : "Administration");
     adminLink.addEventListener("click", prepareAdminNavigation);
     if (canOpenAdmin) bindAdminPanelPreload(adminLink);
     appShellPrepared = true;
@@ -814,7 +821,7 @@ async function boot() {
     appIdentityTrusted = true;
   }
   if (!state.socket || state.socket.closed) connectSocket();
-  await refreshAll();
+  await refreshAll({ requestTimeoutMS: BOOT_API_TIMEOUT_MS });
   appReady = true;
   scheduleAdminPanelPreload();
   scheduleGlobalFilesPreload();
@@ -868,7 +875,7 @@ function startBoot() {
 }
 
 function retryIncompleteBoot() {
-  if (appReady || document.hidden) return;
+  if (appReady || bootAttempt || document.hidden) return;
   window.clearTimeout(bootRetryTimer);
   bootRetryTimer = 0;
   startBoot();
@@ -1234,6 +1241,11 @@ function bindUI() {
   elements.fileShareForm.addEventListener("submit", createFileShare);
   document.querySelector("#file-share-close").addEventListener("click", closeFileShareDialog);
   document.querySelector("#file-share-cancel").addEventListener("click", closeFileShareDialog);
+  elements.fileShareDialog.addEventListener("close", () => {
+    fileShareOpenVersion += 1;
+    state.pendingFileShare = null;
+    state.activeFileShareID = null;
+  });
   elements.fileShareCopy.addEventListener("click", copyFileShareLink);
   elements.fileShareRevoke.addEventListener("click", revokeFileShare);
   document.querySelector("#calendar-previous").addEventListener("click", () => changeCalendarMonth(-1));
@@ -2041,11 +2053,12 @@ function currentTrustedDeviceMetadata() {
   };
 }
 
-async function ensureTrustedDeviceEnrollment() {
+async function ensureTrustedDeviceEnrollment({ timeoutMS = 0 } = {}) {
   const credential = await trustedDeviceCredential(getInstanceURL());
   return api("/api/me/trusted-devices/enroll", {
     method: "POST",
     body: { ...credential, ...currentTrustedDeviceMetadata() },
+    timeoutMS,
   });
 }
 
@@ -2858,7 +2871,9 @@ function connectSocket() {
     if (detail) {
       clearCallSignalLossTimer();
       resumePendingCallIceRestarts();
-      if (appReady && state.conversations.length) {
+      if (!appReady) {
+        retryIncompleteBoot();
+      } else {
         refreshConversationList().catch(() => {});
         if (state.current) loadMessages(null, false).catch(() => {});
       }
@@ -3187,7 +3202,10 @@ function refreshCarnetInBackground() {
     });
 }
 
-async function refreshAll() {
+async function refreshAll({ requestTimeoutMS = 0 } = {}) {
+  const request = (path, options = {}) => api(path, requestTimeoutMS > 0
+    ? { ...options, timeoutMS: requestTimeoutMS }
+    : options);
   const cachedConversations = !state.conversations.length
     ? await state.cache?.getConversations()
     : null;
@@ -3201,12 +3219,12 @@ async function refreshAll() {
   void refreshCarnetInBackground();
   try {
     let [contacts, conversations] = await Promise.all([
-      api("/api/contacts"),
-      api("/api/conversations"),
+      request("/api/contacts"),
+      request("/api/conversations"),
     ]);
     if (!conversations.some((conversation) => conversation.is_personal)) {
-      await api("/api/conversations/personal", { method: "POST" });
-      conversations = await api("/api/conversations");
+      await request("/api/conversations/personal", { method: "POST" });
+      conversations = await request("/api/conversations");
     }
     state.contacts = contacts;
     state.conversations = conversations;
@@ -7807,7 +7825,7 @@ function createGlobalFileRow(item, dateFormatter) {
   share.innerHTML = '<svg class="file-share-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><path d="m8.6 10.7 6.8-4.4"></path><path d="m8.6 13.3 6.8 4.4"></path></svg>';
   share.addEventListener("click", () => {
     elements.globalFilesDialog.close();
-    openFileShareDialog(item.message, item.clear, item.conversation);
+    openFileShareDialog(item.message, item.clear, item.conversation, share);
   });
   const actions = document.createElement("div");
   actions.className = "global-file-actions";
@@ -8789,7 +8807,15 @@ async function toggleVoiceRecording() {
   }
 }
 
-function openFileShareDialog(message, clear, conversation = state.current) {
+async function openFileShareDialog(message, clear, conversation = state.current, trigger = null) {
+  if (!message?.file?.id || !conversation || elements.fileShareDialog.open) return;
+  if (
+    fileShareOpenTask
+    && sameID(state.pendingFileShare?.message?.file?.id, message.file.id)
+    && sameID(state.pendingFileShare?.conversation?.id, conversation.id)
+  ) return fileShareOpenTask;
+
+  const openVersion = ++fileShareOpenVersion;
   state.pendingFileShare = { message, clear, conversation };
   state.activeFileShareID = null;
   elements.fileShareName.textContent = clear.name;
@@ -8804,25 +8830,55 @@ function openFileShareDialog(message, clear, conversation = state.current) {
   elements.fileShareRevoke.disabled = false;
   elements.fileShareExisting.hidden = true;
   elements.fileShareExistingList.replaceChildren();
-  elements.fileShareDialog.showModal();
-  loadExistingFileShares(message, conversation);
+  if (trigger) {
+    trigger.disabled = true;
+    trigger.setAttribute("aria-busy", "true");
+  }
+
+  const isRelevant = () => openVersion === fileShareOpenVersion
+    && sameID(state.pendingFileShare?.message?.file?.id, message.file.id)
+    && sameID(state.pendingFileShare?.conversation?.id, conversation.id);
+  let openTask;
+  openTask = loadExistingFileShares(message, conversation, { isRelevant, throwOnError: true })
+    .then((loaded) => {
+      if (!loaded || !isRelevant()) return;
+      elements.fileShareDialog.showModal();
+    })
+    .catch((error) => {
+      if (!isRelevant()) return;
+      state.pendingFileShare = null;
+      toast(frenchErrorMessage(error, "Impossible de charger les liens de partage."), "error");
+    })
+    .finally(() => {
+      if (trigger) {
+        trigger.disabled = false;
+        trigger.removeAttribute("aria-busy");
+      }
+      if (fileShareOpenTask === openTask) fileShareOpenTask = null;
+    });
+  fileShareOpenTask = openTask;
+  return openTask;
 }
 
-async function loadExistingFileShares(message, conversation = state.current) {
+async function loadExistingFileShares(
+  message,
+  conversation = state.current,
+  { isRelevant = () => true, throwOnError = false } = {},
+) {
   const fileID = message?.file?.id;
-  if (!fileID || !conversation) return;
+  if (!fileID || !conversation) return false;
   try {
     const shares = await api(`/api/files/${fileID}/shares`);
-    elements.fileShareExistingList.replaceChildren();
+    if (!isRelevant()) return false;
     const active = shares.filter((share) => share.active);
-    updateCachedGlobalFileShareCount(fileID, active.length);
-    elements.fileShareExisting.hidden = active.length === 0;
     let conversationKey = null;
     if (active.some((share) => share.encrypted_link)) {
       try {
         conversationKey = await getMessageKey(message, conversation);
       } catch {}
     }
+    if (!isRelevant()) return false;
+    const fragment = document.createDocumentFragment();
     for (const share of active) {
       const row = document.createElement("div");
       row.className = "file-share-existing-row";
@@ -8867,15 +8923,26 @@ async function loadExistingFileShares(message, conversation = state.current) {
       });
       actions.append(revoke);
       row.append(details, actions);
-      elements.fileShareExistingList.append(row);
+      fragment.append(row);
     }
-  } catch {
-    elements.fileShareExisting.hidden = true;
+    if (!isRelevant()) return false;
+    updateCachedGlobalFileShareCount(fileID, active.length);
+    elements.fileShareExistingList.replaceChildren(fragment);
+    elements.fileShareExisting.hidden = active.length === 0;
+    return true;
+  } catch (error) {
+    if (isRelevant()) {
+      elements.fileShareExistingList.replaceChildren();
+      elements.fileShareExisting.hidden = true;
+    }
+    if (throwOnError) throw error;
+    return false;
   }
 }
 
 function closeFileShareDialog() {
-  elements.fileShareDialog.close();
+  fileShareOpenVersion += 1;
+  if (elements.fileShareDialog.open) elements.fileShareDialog.close();
   state.pendingFileShare = null;
   state.activeFileShareID = null;
 }

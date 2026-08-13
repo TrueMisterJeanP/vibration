@@ -89,6 +89,8 @@ assert.ok(
 assert.match(css, /\.chat-conversation-avatar\s*\{[^}]*background: var\(--avatar-bg\);[^}]*color: var\(--avatar-fg\);/);
 assert.match(css, /\.chat-conversation-avatar img\s*\{/);
 assert.match(css, /\.personal-note-avatar\s*\{[^}]*border-radius: \.75rem;[^}]*background: rgb\(32 199 181 \/ \.13\);/);
+assert.match(css, /\.conversation-item\.personal-conversation-item:not\(\.active\)\s*\{[^}]*background: #0d2c33;/);
+assert.match(css, /:root\[data-theme="light"\] \.conversation-item\.personal-conversation-item:not\(\.active\)\s*\{[^}]*background: #f8fdfc;/);
 assert.match(css, /\.brand-logo-button\.has-conversation-avatar\.personal-note-avatar\s*\{/);
 assert.match(css, /\.personal-note-avatar svg\s*\{/);
 assert.match(css, /--avatar-bg: #1b5260;[\s\S]*--avatar-fg: #a9fff4;/);

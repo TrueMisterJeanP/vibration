@@ -15,8 +15,8 @@ import {
   registerServiceWorker,
   requestNotificationPermissionOnSignIn,
 } from "./notifications.js?v=calendar-toolbar-grid-v311";
-import { frenchErrorMessage } from "./ui.js?v=ios-resume-v297";
-import { t, translateMultiline } from "./i18n.js?v=conversation-search-v325";
+import { frenchErrorMessage } from "./ui.js?v=message-links-v341";
+import { t, translateMultiline } from "./i18n.js?v=conversation-search-v326";
 
 const loginForm = document.querySelector("#login-form");
 const instanceForm = ensureInstanceForm();

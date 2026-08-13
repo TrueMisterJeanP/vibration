@@ -1,4 +1,4 @@
-import { base64ToBytes, decryptEnvelope, importShareKey } from "./crypto.js?v=conversation-search-v325";
+import { base64ToBytes, decryptEnvelope, importShareKey } from "./crypto.js?v=conversation-search-v326";
 import { locale, localizeDocument, t } from "./i18n.js";
 
 localizeDocument();

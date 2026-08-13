@@ -1,8 +1,8 @@
-const CACHE = "chat-pwa-go-v325";
+const CACHE = "chat-pwa-go-v343";
 const SHELL = [
-  "/", "/index.html", "/login.html", "/link-device.html", "/share.html", "/css/style.css?v=conversation-search-v325",
-  "/js/app.js?v=conversation-search-v325", "/js/call-negotiation.js?v=conversation-search-v325", "/js/api.js?v=ios17-pdf-v199", "/js/crypto.js?v=conversation-search-v325", "/js/websocket.js?v=ios-resume-v297", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=calendar-toolbar-grid-v311",
-  "/js/notifications.js?v=conversation-search-v325", "/js/device-vault.js?v=trusted-device-v300", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js?v=conversation-search-v325", "/js/ui.js?v=ios-resume-v297", "/js/share.js?v=conversation-search-v325", "/js/login.js?v=calendar-toolbar-grid-v311", "/js/link-device.js?v=ios-resume-v297", "/js/qr-scanner.js?v=qr-scanner-v296", "/manifest.json?v=desktop-titlebar-v252",
+  "/", "/index.html", "/login.html", "/link-device.html", "/share.html", "/css/style.css?v=personal-notes-theme-v343",
+  "/js/app.js?v=personal-notes-theme-v343", "/js/call-negotiation.js?v=personal-notes-theme-v343", "/js/api.js?v=personal-notes-theme-v343", "/js/crypto.js?v=personal-notes-theme-v343", "/js/websocket.js?v=personal-notes-theme-v343", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=calendar-toolbar-grid-v311",
+  "/js/notifications.js?v=personal-notes-theme-v343", "/js/device-vault.js?v=trusted-device-v300", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js?v=conversation-search-v326", "/js/ui.js?v=message-links-v341", "/js/message-links.js?v=message-links-v341", "/js/share.js?v=conversation-search-v326", "/js/login.js?v=calendar-toolbar-grid-v311", "/js/link-device.js?v=ios-resume-v297", "/js/qr-scanner.js?v=qr-scanner-v296", "/manifest.json?v=desktop-titlebar-v252",
   "/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2",
   "/vendor/jsqr/jsQR.js?v=qr-scanner-v296",
   "/js/pdf-preview-compat.js?v=ios17-pdf-v199",

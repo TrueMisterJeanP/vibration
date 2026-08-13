@@ -23,7 +23,7 @@ assert.match(server, /decodeMultipartEncryptedBody\(w, r, input, maxFileSize, "i
 assert.match(server, /application\/octet-stream[\s\S]*w\.Write\(share\.EncryptedData\)/);
 assert.match(share, /Accept: "application\/octet-stream"/);
 assert.match(share, /crypto\.subtle\.decrypt\([\s\S]*base64ToBytes\(fileIV\)/);
-assert.match(shareHTML, /\/js\/share\.js\?v=conversation-search-v325/);
-assert.match(worker, /\/js\/share\.js\?v=conversation-search-v325/);
+assert.match(shareHTML, /\/js\/share\.js\?v=conversation-search-v326/);
+assert.match(worker, /\/js\/share\.js\?v=conversation-search-v326/);
 
 console.log("File sharing: binary transfer, response recovery and copyable encrypted history wired");

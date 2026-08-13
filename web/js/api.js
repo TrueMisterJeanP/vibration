@@ -75,7 +75,7 @@ export function websocketProtocols() {
 }
 
 export async function api(path, options = {}) {
-	const { responseType = "auto", ...requestOptions } = options;
+	const { responseType = "auto", timeoutMS = 0, ...requestOptions } = options;
 	const config = { credentials: "include", ...requestOptions };
   const token = getSessionToken();
   if (token) config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
@@ -84,21 +84,49 @@ export async function api(path, options = {}) {
     config.body = JSON.stringify(config.body);
   }
   const url = apiURL(path);
+  const callerSignal = config.signal;
+  const timeout = Number(timeoutMS);
+  let abortController;
+  let abortListener;
+  let timeoutTimer = 0;
+  let timedOut = false;
+  if (Number.isFinite(timeout) && timeout > 0) {
+    abortController = new AbortController();
+    if (callerSignal?.aborted) {
+      abortController.abort();
+    } else if (callerSignal) {
+      abortListener = () => abortController.abort();
+      callerSignal.addEventListener("abort", abortListener, { once: true });
+    }
+    config.signal = abortController.signal;
+    timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      abortController.abort();
+    }, timeout);
+  }
   let response;
   try {
-    response = await fetch(url, config);
-  } catch {
-    throw new Error("Serveur inaccessible");
-  }
-	const contentType = response.headers.get("content-type") || "";
-	const data = response.ok && responseType === "blob"
-		? await response.blob()
-		: contentType.includes("application/json") ? await response.json() : await response.text();
-  if (!response.ok) {
-    const error = new Error(data?.error || `Erreur HTTP ${response.status}`);
-    error.status = response.status;
+    try {
+      response = await fetch(url, config);
+    } catch {
+      throw new Error("Serveur inaccessible");
+    }
+	  const contentType = response.headers.get("content-type") || "";
+	  const data = response.ok && responseType === "blob"
+		  ? await response.blob()
+		  : contentType.includes("application/json") ? await response.json() : await response.text();
+    if (!response.ok) {
+      const error = new Error(data?.error || `Erreur HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+	  if (responseType !== "blob" && data?.session_token) setSessionToken(data.session_token);
+    return data;
+  } catch (error) {
+    if (timedOut || error?.name === "AbortError") throw new Error("Serveur inaccessible");
     throw error;
+  } finally {
+    clearTimeout(timeoutTimer);
+    callerSignal?.removeEventListener?.("abort", abortListener);
   }
-	if (responseType !== "blob" && data?.session_token) setSessionToken(data.session_token);
-  return data;
 }

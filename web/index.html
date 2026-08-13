@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1b5260">
-  <meta name="vibration-build" content="conversation-search-v325">
+  <meta name="vibration-build" content="personal-notes-theme-v343">
   <style>
     :root { --avatar-bg: #1b5260; --avatar-fg: #a9fff4; background-color: #1b5260; }
     html[data-theme="light"] { --avatar-bg: #c9e7e4; --avatar-fg: #075e57; background-color: #c9e7e4; }
@@ -21,7 +21,7 @@
   <link rel="manifest" href="/manifest.json?v=desktop-titlebar-v252">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=conversation-search-v325">
+  <link rel="stylesheet" href="/css/style.css?v=personal-notes-theme-v343">
 </head>
 <body>
   <div class="desktop-titlebar-drag-region" data-tauri-drag-region aria-hidden="true"></div>
@@ -43,10 +43,19 @@
         <button id="logout-button" class="icon-button" title="Déconnexion" aria-label="Déconnexion"><svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="M16 17l5-5-5-5"></path><path d="M21 12H9"></path></svg></button>
       </header>
       <div class="connection-row"><span id="ws-dot"></span><span id="ws-label">Hors ligne</span></div>
-      <a id="admin-link" class="admin-link" href="/admin.html?from=chat" hidden>Administration</a>
+      <a id="admin-link" class="admin-link" href="/admin.html?from=chat" hidden>
+        <svg class="sidebar-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 19 6v5.5c0 4.5-2.9 7.6-7 9.5-4.1-1.9-7-5-7-9.5V6Z"></path><path d="m9 12 2 2 4-4"></path></svg>
+        <span class="admin-link-label">Administration</span>
+      </a>
       <div class="actions">
-        <button id="contact-button" class="outline">+ Contact</button>
-        <button id="group-button" class="outline">+ Groupe</button>
+        <button id="contact-button" class="outline" type="button">
+          <svg class="sidebar-action-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="8" r="3.5"></circle><path d="M3.5 20v-1.5a6.5 6.5 0 0 1 13 0V20M18 8v6M15 11h6"></path></svg>
+          <span>Contact</span>
+        </button>
+        <button id="group-button" class="outline" type="button">
+          <svg class="sidebar-action-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"></circle><circle cx="16.5" cy="9" r="2.5"></circle><path d="M3 20v-1.5A5.5 5.5 0 0 1 8.5 13h1A5.5 5.5 0 0 1 15 18.5V20M14 14.5a5 5 0 0 1 7 4.5v1"></path></svg>
+          <span>Groupe</span>
+        </button>
       </div>
       <div id="conversation-list-loading" class="conversation-list-loading" role="status">Chargement des discussions…</div>
       <div id="conversation-lists" aria-busy="true" hidden>
@@ -57,7 +66,7 @@
         </div>
         <button id="personal-conversation-button" class="conversation-item personal-conversation-item" type="button" hidden>
           <span class="avatar personal-note-avatar" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6Z"></path><path d="M15 3v4h4"></path><path d="m9 16 6.7-6.7a1.4 1.4 0 0 1 2 2L11 18l-3 1Z"></path></svg>
+            <svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="16" rx="2"></rect><path d="M8 3v5M12 3v5M16 3v5M8 11h8M8 14h8M8 17h8"></path></svg>
           </span>
           <span>
             <span class="conversation-title-row"><strong>Mes notes</strong><span id="personal-conversation-unread" class="unread-badge" hidden></span></span>
@@ -576,6 +585,6 @@
   <div id="toasts" aria-live="polite"></div>
   <script src="/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2"></script>
   <script src="/vendor/jsqr/jsQR.js?v=qr-scanner-v296"></script>
-  <script type="module" src="/js/app.js?v=conversation-search-v325"></script>
+  <script type="module" src="/js/app.js?v=personal-notes-theme-v343"></script>
 </body>
 </html>

@@ -13,6 +13,8 @@ assert.match(lists, /id="conversation-search"[^>]*type="search"[^>]*placeholder=
 assert.ok(lists.indexOf('id="conversation-search"') < lists.indexOf('id="personal-conversation-button"'));
 assert.ok(lists.indexOf('id="personal-conversation-button"') < lists.indexOf('id="conversation-list"'));
 assert.match(css, /\.conversation-search input\s*\{[^}]*border-radius:\s*\.7rem/);
+assert.match(css, /\.conversation-search input\s*\{[^}]*height:\s*2\.8rem/);
+assert.match(css, /\.conversation-search input::placeholder\s*\{[^}]*color:\s*rgb\(145 170 169 \/ \.72\)[^}]*font-weight:\s*400/);
 assert.match(css, /\.conversation-search-hidden\s*\{[^}]*display:\s*none\s*!important/);
 assert.match(app, /conversationSearch\.addEventListener\("input", applyConversationSearch\)/);
 assert.match(app, /row\.dataset\.conversationSearch = \[display\?\.title, display\?\.description, preview\]/);

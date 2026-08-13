@@ -6,7 +6,7 @@ Application de messagerie web installable, responsive et chiffrée côté naviga
   <img src="docs/interface-community.png" alt="Interface de Vibration Community avec conversations, sondage, évènement, fichier partagé et messages épinglés" width="900">
 </p>
 
-<p align="center"><strong>Vibration Community 1.0.19</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
+<p align="center"><strong>Vibration Community 1.0.21</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
 
 ## Philosophie
 
@@ -102,6 +102,19 @@ L’édition Enterprise reprend toutes les fonctionnalités de Community et ajou
 Le périmètre des appels et groupes fédérés est détaillé dans [Community et Enterprise](COMMUNITY_VS_ENTERPRISE.md). L’offre Enterprise est présentée sur [vibration-shop.appbox.fr](https://vibration-shop.appbox.fr).
 
 ## Nouveautés
+
+### Community 1.0.21
+
+- **Liens directement utilisables dans les messages** : les URL ouvrent le navigateur, les adresses e-mail le client mail et les numéros de téléphone proposent l’appel ou le SMS lorsque ces fonctions sont disponibles.
+- **Reprise automatique après un déploiement** : le chargement initial tolère une interruption brève du serveur et relance la récupération des discussions sans imposer un rechargement manuel de la page.
+- **Thème sombre harmonisé** : le bouton « Mes notes » conserve son léger fond vert en mode clair et bénéficie désormais d’une variante sombre assortie à la barre latérale.
+- **Cache PWA v343** : le navigateur et l’application installée reçoivent ensemble les scripts de liens, de reprise et les styles actualisés.
+
+### Community 1.0.20
+
+- **Recherche instantanée des discussions** : la barre latérale filtre localement les conversations, sans tenir compte des accents ni des majuscules.
+- **Aperçu de fichier plus explicite** : lorsqu’un format ne peut pas être prévisualisé, une carte lisible remplace l’ancien indicateur minimal.
+- **Cache PWA v325** : la recherche et ses ressources sont versionnées ensemble pour éviter les mélanges de versions après une mise à jour.
 
 ### Community 1.0.19
 

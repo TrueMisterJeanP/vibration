@@ -10,7 +10,7 @@ const css = fs.readFileSync(path.join(root, "web/css/style.css"), "utf8");
 
 assert.match(html, /id="profile-storage-progress"[^>]*max="1"[^>]*value="0"/);
 assert.match(html, /id="profile-storage-status"/);
-assert.match(app, /async function refreshFileQuotas\(\)[\s\S]*api\("\/api\/files\/limits"\)/);
+assert.match(app, /async function refreshFileQuotas\(\{ timeoutMS = 0 \} = \{\}\)[\s\S]*api\("\/api\/files\/limits", \{ timeoutMS \}\)/);
 assert.match(app, /function updateProfileStorage\(\)[\s\S]*profile-storage-progress/);
 assert.match(app, /progress\.classList\.toggle\("near-limit", percent >= 80/);
 assert.match(app, /progress\.classList\.toggle\("at-limit", percent >= 100/);

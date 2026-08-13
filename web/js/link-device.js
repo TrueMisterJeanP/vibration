@@ -1,6 +1,6 @@
-import { api } from "./api.js?v=ios17-pdf-v199";
-import { locale, t } from "./i18n.js?v=conversation-search-v325";
-import { frenchErrorMessage, setBusy } from "./ui.js?v=ios-resume-v297";
+import { api } from "./api.js?v=personal-notes-theme-v343";
+import { locale, t } from "./i18n.js?v=conversation-search-v326";
+import { frenchErrorMessage, setBusy } from "./ui.js?v=message-links-v341";
 
 const introduction = document.querySelector("#link-device-introduction");
 const summary = document.querySelector("#link-device-summary");
