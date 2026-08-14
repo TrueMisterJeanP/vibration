@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=sidebar-actions-above-search-v356";
+import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-23-v362";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -19,7 +19,7 @@ import {
   verifyMessagePayload,
   unwrapGroupKey,
   wrapGroupKey,
-} from "./crypto.js?v=sidebar-actions-above-search-v356";
+} from "./crypto.js?v=community-1-0-23-v362";
 import {
   forgetRememberedIdentity,
 	forgetTrustedDeviceCredential,
@@ -40,8 +40,8 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=sidebar-actions-above-search-v356";
-import { ChatSocket } from "./websocket.js?v=sidebar-actions-above-search-v356";
+} from "./notifications.js?v=community-1-0-23-v362";
+import { ChatSocket } from "./websocket.js?v=community-1-0-23-v362";
 import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=message-links-v341";
 import { locale, t } from "./i18n.js?v=conversation-search-v326";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
@@ -71,7 +71,7 @@ import {
   sameCallIdentity,
   shouldOfferAfterAccept,
   shouldOfferInGroup,
-} from "./call-negotiation.js?v=sidebar-actions-above-search-v356";
+} from "./call-negotiation.js?v=community-1-0-23-v362";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
 import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
@@ -100,7 +100,7 @@ const GLOBAL_FILES_PAGE_SIZE = 40;
 const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
 const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "sidebar-actions-above-search-v356";
+const APP_BUILD = "community-1-0-23-v362";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
 const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;
@@ -507,7 +507,7 @@ function appendGroupUserSearchResult(results, user, onInvite) {
 
 function normalizedPrivateDiscoveryCode(value) {
   const normalized = String(value || "").trim().toUpperCase().replace(/[\s-]+/g, "");
-  return /^VIB[A-Z2-7]{32}$/.test(normalized) ? normalized : "";
+  return /^(?:[A-Z2-7]{15}|VIB[A-Z2-7]{32})$/.test(normalized) ? normalized : "";
 }
 
 function isPrivateDiscoveryCode(value) {
@@ -1994,17 +1994,10 @@ function updateProfileDiscoveryControls({ keepStatus = false } = {}) {
 async function generateProfileDiscoveryCode(event) {
   const button = event.currentTarget;
   const status = document.querySelector("#profile-discovery-status");
-  const password = prompt(t("Mot de passe actuel :"));
-  if (password === null) return;
-  if (!password) {
-    status.textContent = t("Le mot de passe actuel est requis.");
-    return;
-  }
   setBusy(button, true, t("Génération…"));
   try {
     const result = await api("/api/me/discovery-code", {
       method: "POST",
-      body: { password },
     });
     state.me.has_discovery_code = true;
     const input = document.querySelector("#profile-discovery-code");
@@ -2014,9 +2007,7 @@ async function generateProfileDiscoveryCode(event) {
     input.focus();
     input.select();
   } catch (error) {
-    status.textContent = error.status === 401
-      ? t("Le mot de passe actuel est incorrect.")
-      : frenchErrorMessage(error);
+    status.textContent = frenchErrorMessage(error);
   } finally {
     setBusy(button, false);
     updateProfileDiscoveryControls({ keepStatus: true });
@@ -2917,7 +2908,7 @@ function warmAdminShell() {
   adminShellPreloaded = true;
   for (const [rel, href] of [
     ["prefetch", "/admin.html?from=chat"],
-    ["modulepreload", "/js/admin.js?v=file-quota-v321"],
+    ["modulepreload", "/js/admin.js?v=community-1-0-23-v362"],
   ]) {
     const link = document.createElement("link");
     link.rel = rel;

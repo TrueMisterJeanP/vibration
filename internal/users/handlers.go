@@ -254,26 +254,15 @@ func (h *Handler) writeSearchResults(w http.ResponseWriter, rows *sql.Rows) {
 }
 
 func (h *Handler) GenerateDiscoveryCode(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Password string `json:"password"`
-	}
-	if !httpx.Decode(w, r, &input) {
-		return
-	}
 	userID := auth.UserID(r)
-	var passwordHash string
 	var discoverable bool
-	if err := h.DB.QueryRow(`SELECT password_hash,is_discoverable FROM users WHERE id=? AND is_remote=0 AND is_banned=0`, userID).
-		Scan(&passwordHash, &discoverable); err != nil {
+	if err := h.DB.QueryRow(`SELECT is_discoverable FROM users WHERE id=? AND is_remote=0 AND is_banned=0`, userID).
+		Scan(&discoverable); err != nil {
 		httpx.Error(w, http.StatusNotFound, "user not found")
 		return
 	}
 	if discoverable {
 		httpx.Error(w, http.StatusConflict, "profile must be invisible")
-		return
-	}
-	if bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(input.Password)) != nil {
-		httpx.Error(w, http.StatusUnauthorized, "current password is incorrect")
 		return
 	}
 	code, codeHash, err := userdiscovery.GenerateCode()

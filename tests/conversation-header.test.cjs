@@ -6,6 +6,7 @@ const root = path.join(__dirname, "..");
 const html = fs.readFileSync(path.join(root, "web/index.html"), "utf8");
 const app = fs.readFileSync(path.join(root, "web/js/app.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "web/css/style.css"), "utf8");
+assert.match(css, /\.chat-conversation-identity\.conversation-info-trigger #chat-title\s*\{[^}]*color:\s*var\(--group-action\)/);
 
 const avatarPosition = html.indexOf('id="chat-avatar"');
 const titlePosition = html.indexOf('id="chat-title"');

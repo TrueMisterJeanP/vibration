@@ -10,33 +10,38 @@ import (
 	"strings"
 )
 
-const codePrefix = "VIB"
+const (
+	generatedCodeCharacters     = 15
+	legacyCodePrefix            = "VIB"
+	legacyCodePayloadCharacters = 32
+)
 
-// GenerateCode returns a 160-bit discovery secret and the SHA-256 fingerprint
+// GenerateCode returns a 75-bit discovery secret and the SHA-256 fingerprint
 // stored by the server. The clear-text code is returned only once.
 func GenerateCode() (string, string, error) {
-	raw := make([]byte, 20)
+	raw := make([]byte, 10)
 	if _, err := rand.Read(raw); err != nil {
 		return "", "", err
 	}
 	encoded := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw)
-	groups := make([]string, 0, len(encoded)/4)
-	for index := 0; index < len(encoded); index += 4 {
-		groups = append(groups, encoded[index:index+4])
-	}
-	code := codePrefix + "-" + strings.Join(groups, "-")
+	encoded = encoded[:generatedCodeCharacters]
+	code := encoded[:3] + "-" + encoded[3:7] + "-" + encoded[7:11] + "-" + encoded[11:15]
 	return code, HashCode(code), nil
 }
 
 // NormalizeCode accepts the displayed form as well as copies without spaces or
-// separators. An empty result means that the value is not a discovery code.
+// separators. Legacy 160-bit codes remain valid until their owner rotates them.
+// An empty result means that the value is not a discovery code.
 func NormalizeCode(value string) string {
 	normalized := strings.ToUpper(strings.TrimSpace(value))
 	normalized = strings.NewReplacer("-", "", " ", "", "\t", "", "\r", "", "\n", "").Replace(normalized)
-	if len(normalized) != len(codePrefix)+32 || !strings.HasPrefix(normalized, codePrefix) {
+	validLength := len(normalized) == generatedCodeCharacters
+	validLegacyLength := len(normalized) == len(legacyCodePrefix)+legacyCodePayloadCharacters &&
+		strings.HasPrefix(normalized, legacyCodePrefix)
+	if !validLength && !validLegacyLength {
 		return ""
 	}
-	for _, character := range normalized[len(codePrefix):] {
+	for _, character := range normalized {
 		if !strings.ContainsRune("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", character) {
 			return ""
 		}

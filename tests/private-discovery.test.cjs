@@ -24,17 +24,24 @@ assert.ok(
 assert.match(html, /class="profile-password-section"[\s\S]*id="profile-password-title">Modifier le mot de passe<[\s\S]*fieldset class="profile-password" aria-labelledby="profile-password-title"/);
 assert.match(css, /\.profile-password-section h4\s*\{[^}]*color: var\(--muted\);[^}]*font-size: \.9rem;[^}]*font-weight: 400;/);
 assert.match(html, /id="contact-search"[\s\S]*Nom d’utilisateur, rôle ou code privé|Nom d’utilisateur, rôle ou code privé[\s\S]*id="contact-search"/);
-assert.match(html, /id="group-user-search"[^>]*placeholder="alice ou VIB-…"/);
+assert.match(html, /id="group-user-search"[^>]*placeholder="K7M-S4WG-BYN5-WZNB"/);
 assert.match(css, /\.profile-visibility-toggle input\[type="checkbox"\]/);
 assert.match(css, /\.profile-discovery-code\[hidden\]\s*\{\s*display:\s*none/);
 
 assert.match(app, /function normalizedPrivateDiscoveryCode\(value\)/);
+assert.match(app, /\[A-Z2-7\]\{15\}/);
+assert.match(app, /VIB\[A-Z2-7\]\{32\}/);
 assert.match(app, /function searchInstanceUsers\(query, role = ""\)[\s\S]*api\("\/api\/users\/search",\s*\{[\s\S]*method:\s*"POST"[\s\S]*body:\s*role \? \{ query, role \} : \{ query \}/);
 assert.match(app, /body:\s*\{[\s\S]*user_id:\s*user\.id,[\s\S]*discovery_code:\s*isPrivateDiscoveryCode\(query\)/);
 assert.match(app, /discovery_codes:\s*discoveryCodes/);
 assert.match(app, /is_discoverable:\s*isDiscoverable/);
 assert.match(app, /api\("\/api\/me\/discovery-code",\s*\{[\s\S]*method:\s*"POST"/);
 assert.match(app, /il ne sera plus affiché après la fermeture du profil/);
+const discoveryGeneration = app.slice(
+  app.indexOf("async function generateProfileDiscoveryCode"),
+  app.indexOf("async function copyProfileDiscoveryCode"),
+);
+assert.doesNotMatch(discoveryGeneration, /prompt|password/i);
 
 assert.match(server, /POST \/api\/me\/discovery-code/);
 assert.match(server, /POST \/api\/users\/search/);
@@ -43,7 +50,8 @@ assert.match(users, /discovery_code_hash=\?,discovery_code_created_at=\?/);
 assert.match(contacts, /userdiscovery\.CanInitiate\(h\.DB, ownerID, input\.UserID, input\.DiscoveryCode\)/);
 assert.match(conversations, /DiscoveryCodes\s+map\[string\]string/);
 assert.match(conversations, /userdiscovery\.CanInitiate\((?:h\.DB|tx), ownerID/);
-assert.match(discovery, /raw := make\(\[\]byte, 20\)/);
+assert.match(discovery, /raw := make\(\[\]byte, 10\)/);
+assert.match(discovery, /generatedCodeCharacters\s*= 15/);
 assert.match(discovery, /sha256\.Sum256\(\[\]byte\(normalized\)\)/);
 assert.doesNotMatch(migrations, /discovery_code\s+TEXT/);
 assert.match(migrations, /discovery_code_hash TEXT/);

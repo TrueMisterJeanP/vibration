@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1b5260">
-  <meta name="vibration-build" content="sidebar-actions-above-search-v356">
+  <meta name="vibration-build" content="community-1-0-23-v362">
   <style>
     :root { --avatar-bg: #1b5260; --avatar-fg: #a9fff4; background-color: #1b5260; }
     html[data-theme="light"] { --avatar-bg: #c9e7e4; --avatar-fg: #075e57; background-color: #c9e7e4; }
@@ -21,7 +21,7 @@
   <link rel="manifest" href="/manifest.json?v=desktop-titlebar-v252">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=sidebar-actions-above-search-v356">
+  <link rel="stylesheet" href="/css/style.css?v=clickable-header-title-v359">
 </head>
 <body>
   <div class="desktop-titlebar-drag-region" data-tauri-drag-region aria-hidden="true"></div>
@@ -327,7 +327,7 @@
 
   <dialog id="contact-dialog"><form method="dialog" id="contact-form">
     <button class="dialog-close" value="cancel">×</button><h3>Ajouter un contact</h3>
-    <label>Nom d’utilisateur, rôle ou code privé<input id="contact-search" minlength="2" autocomplete="off" placeholder="alice, Administrateur, Gestionnaire ou VIB-…"></label>
+    <label>Nom d’utilisateur, rôle ou code privé<input id="contact-search" minlength="2" autocomplete="off" placeholder="K7M-S4WG-BYN5-WZNB"></label>
     <div id="contact-results" class="picker-list"></div>
   </form></dialog>
 
@@ -343,7 +343,7 @@
     </section>
     <label>Nom du groupe<input id="group-name" required maxlength="80"></label>
     <label>Description<textarea id="group-description" rows="3" maxlength="280" placeholder="Décrivez le groupe"></textarea></label>
-    <label>Ajouter un membre par identifiant ou code privé<input id="group-user-search" minlength="2" autocomplete="off" placeholder="alice ou VIB-…"></label>
+    <label>Ajouter un membre par identifiant ou code privé<input id="group-user-search" minlength="2" autocomplete="off" placeholder="K7M-S4WG-BYN5-WZNB"></label>
     <div id="group-user-results" class="picker-list"></div>
     <section class="conversation-info-members" aria-labelledby="group-members-title">
       <h4 id="group-members-title">
@@ -369,7 +369,7 @@
       </section>
       <label>Nouveau nom<input id="group-edit-name" required maxlength="80"></label>
       <label>Description<textarea id="group-edit-description" rows="3" maxlength="280"></textarea></label>
-      <label>Ajouter un membre par identifiant ou code privé<input id="group-edit-user-search" minlength="2" autocomplete="off" placeholder="alice ou VIB-…"></label>
+      <label>Ajouter un membre par identifiant ou code privé<input id="group-edit-user-search" minlength="2" autocomplete="off" placeholder="K7M-S4WG-BYN5-WZNB"></label>
       <div id="group-edit-user-results" class="picker-list"></div>
       <section class="conversation-info-members" aria-labelledby="group-edit-members-title">
         <h4 id="group-edit-members-title">
@@ -587,6 +587,6 @@
   <div id="toasts" aria-live="polite"></div>
   <script src="/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2"></script>
   <script src="/vendor/jsqr/jsQR.js?v=qr-scanner-v296"></script>
-  <script type="module" src="/js/app.js?v=sidebar-actions-above-search-v356"></script>
+  <script type="module" src="/js/app.js?v=community-1-0-23-v362"></script>
 </body>
 </html>

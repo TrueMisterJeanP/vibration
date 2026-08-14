@@ -42,7 +42,7 @@ func TestInvisibleProfileRequiresPrivateDiscoveryCode(t *testing.T) {
 		t.Fatalf("visible user missing from directory: %+v", users)
 	}
 
-	generated := discoveryRequest(t, mux, hidden, "/api/me/discovery-code", map[string]string{"password": "Password123!"})
+	generated := discoveryRequest(t, mux, hidden, "/api/me/discovery-code", nil)
 	if generated.Code != http.StatusOK {
 		t.Fatalf("generate status=%d body=%s", generated.Code, generated.Body.String())
 	}
@@ -52,7 +52,7 @@ func TestInvisibleProfileRequiresPrivateDiscoveryCode(t *testing.T) {
 	if err := json.Unmarshal(generated.Body.Bytes(), &codeResponse); err != nil {
 		t.Fatal(err)
 	}
-	if !regexp.MustCompile(`^VIB-(?:[A-Z2-7]{4}-){7}[A-Z2-7]{4}$`).MatchString(codeResponse.DiscoveryCode) {
+	if !regexp.MustCompile(`^[A-Z2-7]{3}(?:-[A-Z2-7]{4}){3}$`).MatchString(codeResponse.DiscoveryCode) {
 		t.Fatalf("unexpected discovery code format %q", codeResponse.DiscoveryCode)
 	}
 	var storedHash string
@@ -67,7 +67,7 @@ func TestInvisibleProfileRequiresPrivateDiscoveryCode(t *testing.T) {
 	}
 
 	previousCode := codeResponse.DiscoveryCode
-	rotated := discoveryRequest(t, mux, hidden, "/api/me/discovery-code", map[string]string{"password": "Password123!"})
+	rotated := discoveryRequest(t, mux, hidden, "/api/me/discovery-code", nil)
 	if rotated.Code != http.StatusOK {
 		t.Fatalf("rotate status=%d body=%s", rotated.Code, rotated.Body.String())
 	}
@@ -107,7 +107,7 @@ func TestInvisibleProfileRequiresPrivateDiscoveryCode(t *testing.T) {
 		t.Fatalf("known hidden contact should remain searchable: %+v", users)
 	}
 
-	visibleGeneration := discoveryRequest(t, mux, visible, "/api/me/discovery-code", map[string]string{"password": "Password123!"})
+	visibleGeneration := discoveryRequest(t, mux, visible, "/api/me/discovery-code", nil)
 	if visibleGeneration.Code != http.StatusConflict {
 		t.Fatalf("visible profile generated a private code: status=%d body=%s", visibleGeneration.Code, visibleGeneration.Body.String())
 	}

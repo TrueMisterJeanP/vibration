@@ -7,7 +7,7 @@ const html = fs.readFileSync(path.join(root, "web/index.html"), "utf8");
 const app = fs.readFileSync(path.join(root, "web/js/app.js"), "utf8");
 const users = fs.readFileSync(path.join(root, "internal/users/handlers.go"), "utf8");
 
-assert.match(html, /id="contact-search"[^>]*placeholder="alice, Administrateur, Gestionnaire ou VIB-…"/);
+assert.match(html, /id="contact-search"[^>]*placeholder="K7M-S4WG-BYN5-WZNB"/);
 assert.match(app, /function contactDirectoryRole\(query\)/);
 assert.match(app, /role: "administrator", labels: \["administrateur", t\("Administrateur"\)\]/);
 assert.match(app, /role: "manager", labels: \["gestionnaire", t\("Gestionnaire"\)\]/);

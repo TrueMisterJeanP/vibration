@@ -105,6 +105,7 @@ html.ios-pwa-splash-positioned #startup-splash svg { visibility: visible; }
 .menu-mark { position: absolute; right: .18rem; bottom: .08rem; display: grid; place-items: center; min-width: 1rem; height: 1rem; padding: 0 .12rem; border-radius: .3rem; background: #07333d; color: #ffffff; font-size: .68rem; line-height: 1; box-shadow: 0 1px 4px rgb(0 0 0 / .28); }
 .brand div, .chat-header div { display: grid; min-width: 0; }
 .chat-header strong, .chat-header small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-conversation-identity.conversation-info-trigger #chat-title { color: var(--group-action); }
 #chat-description:empty, #typing-label:empty { display: none; }
 #chat-description { color: var(--muted); font-size: .82rem; font-weight: 500; }
 .chat-conversation-avatar { display: grid; place-items: center; width: 2.6rem; height: 2.6rem; flex: 0 0 2.6rem; padding: 0; overflow: hidden; border: 1px solid rgb(255 255 255 / .1); border-radius: 50%; background: var(--avatar-bg); color: var(--avatar-fg); font-size: 1rem; font-weight: 800; }
@@ -116,6 +117,7 @@ html.ios-pwa-splash-positioned #startup-splash svg { visibility: visible; }
 .chat-conversation-identity.conversation-info-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: .25rem; }
 .brand strong { white-space: nowrap; }
 .profile-trigger { display: grid; min-width: 0; padding: .2rem; background: transparent; color: var(--text); text-align: left; }
+.profile-trigger strong { color: var(--group-action); }
 .profile-trigger:hover { color: var(--accent); filter: none; }
 .profile-trigger small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .brand.large { justify-content: center; margin-bottom: 1.5rem; }

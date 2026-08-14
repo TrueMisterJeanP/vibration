@@ -1,4 +1,4 @@
-import { websocketProtocols, websocketURL } from "./api.js?v=sidebar-actions-above-search-v356";
+import { websocketProtocols, websocketURL } from "./api.js?v=community-1-0-23-v362";
 
 export class ChatSocket extends EventTarget {
   constructor() {

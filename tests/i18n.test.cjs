@@ -71,6 +71,14 @@ async function load(language) {
     pt: ["Quotas de ficheiros", "Tamanho máximo de um ficheiro (MB)", "Quota máxima por utilizador (GB)", "Guardar quotas", "Ficheiro: 25 MB · Utilizador: 1 GB."],
     de: ["Dateikontingente", "Maximale Dateigröße (MB)", "Maximales Kontingent pro Benutzer (GB)", "Kontingente speichern", "Datei: 25 MB · Benutzer: 1 GB."],
   };
+  const expectedBackupDeletion = {
+    en: ["Permanently delete this backup?", "Backup deleted"],
+    fr: ["Supprimer définitivement cette sauvegarde ?", "Sauvegarde supprimée"],
+    es: ["¿Eliminar definitivamente esta copia de seguridad?", "Copia de seguridad eliminada"],
+    it: ["Eliminare definitivamente questo backup?", "Backup eliminato"],
+    pt: ["Eliminar definitivamente esta cópia de segurança?", "Cópia de segurança eliminada"],
+    de: ["Diese Sicherung dauerhaft löschen?", "Sicherung gelöscht"],
+  };
 
   for (const [language, label] of Object.entries(expected)) {
     const i18n = await load(`${language}-TEST`);
@@ -89,6 +97,10 @@ async function load(language) {
       i18n.t("Enregistrer les quotas"),
       i18n.t("Fichier : {file} · Utilisateur : {user}.", { file: i18n.t("{count} Mo", { count: 25 }), user: i18n.t("{count} Go", { count: 1 }) }),
     ], expectedQuotas[language]);
+    assert.deepEqual([
+      i18n.t("Supprimer définitivement cette sauvegarde ?"),
+      i18n.t("Sauvegarde supprimée"),
+    ], expectedBackupDeletion[language]);
     assert.deepEqual([
       i18n.t("Mes notes"),
       i18n.t("Messages et fichiers personnels"),

@@ -29,6 +29,7 @@ assert.match(css, /\.actions \.sidebar-action-icon\s*\{[^}]*width:\s*1\.7rem[^}]
 assert.match(css, /#message-input\s*\{[^}]*height:\s*44px[^}]*min-height:\s*44px/);
 assert.match(css, /--group-action:\s*#075e57/);
 assert.match(css, /\.actions #group-button\s*\{[^}]*background:\s*var\(--group-action\)[^}]*color:\s*#ffffff/);
+assert.match(css, /\.profile-trigger strong\s*\{[^}]*color:\s*var\(--group-action\)/);
 
 const revealStart = app.indexOf("function revealConversationLists()");
 const revealEnd = app.indexOf("function refreshCarnetInBackground()", revealStart);
