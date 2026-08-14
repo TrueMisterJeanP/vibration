@@ -28,6 +28,7 @@ assert.match(renderConversations, /const list = document\.createDocumentFragment
 assert.match(renderConversations, /const displays = await Promise\.all\(listedConversations\.map/);
 assert.match(renderConversations, /resolveConversationDisplay\(conversation, \{ freshMembers \}\)/);
 assert.match(renderConversations, /title\.textContent = display\?\.title/);
+assert.match(renderConversations, /avatar\.className = conversation\.type === "group" \? "avatar group-conversation-avatar" : "avatar"/);
 assert.doesNotMatch(renderConversations, /Conversation privée|Groupe chiffré|Conversation verrouillée/);
 assert.doesNotMatch(renderConversations, /subtitle\.textContent = t\(conversation\.type ===/);
 assert.match(renderConversations, /if \(renderKey === conversationListRenderKey\) return;/);

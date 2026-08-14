@@ -11,6 +11,7 @@
   --shadow: 0 20px 55px rgb(0 0 0 / .28);
   --avatar-bg: #1b5260;
   --avatar-fg: #a9fff4;
+  --group-action: #075e57;
   --tauri-titlebar-height: 0px;
   color-scheme: dark;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -188,9 +189,16 @@ html.ios-pwa-splash-positioned #startup-splash svg { visibility: visible; }
 .admin-link-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #ws-dot { width: .55rem; height: .55rem; border-radius: 50%; background: #ef6464; box-shadow: 0 0 0 3px rgb(239 100 100 / .12); }
 #ws-dot.online { background: var(--accent); box-shadow: 0 0 0 3px rgb(32 199 181 / .12); }
-.actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .6rem; padding: 0 .6rem .75rem; }
-.admin-link[hidden] + .actions { padding-top: .5rem; }
-.actions button { min-width: 0; min-height: 4.8rem; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .35rem; padding: .65rem .45rem; }
+.actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); flex: 0 0 auto; gap: .6rem; padding: 0 .6rem .75rem; }
+.actions button { min-width: 0; min-height: 4.1rem; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .2rem; padding: .4rem .65rem; }
+.actions #contact-button,
+.actions #group-button {
+  border: 0;
+  box-shadow: 0 .16rem .45rem rgb(3 47 44 / .12);
+}
+.actions #contact-button { background: #ffffff; color: var(--group-action); }
+.actions #group-button { background: var(--group-action); color: #ffffff; }
+.actions .sidebar-action-icon { width: 1.7rem; height: 1.7rem; }
 .sidebar-action-icon { width: 1.7rem; height: 1.7rem; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 #conversation-lists { min-height: 0; display: flex; flex: 1; flex-direction: column; }
 .conversation-list-loading { display: grid; flex: 1; place-items: center; min-height: 0; padding: 2rem 1rem; color: var(--muted); text-align: center; }
@@ -430,7 +438,7 @@ html.ios-pwa-splash-positioned #startup-splash svg { visibility: visible; }
 .voice-draft-status { color: var(--muted); font-size: .82rem; white-space: nowrap; }
 .voice-draft audio { width: 100%; min-width: 0; height: 34px; }
 .voice-draft button { width: 2rem; height: 2rem; padding: 0; border-radius: 50%; background: transparent; color: var(--text); font-size: 1.2rem; }
-#message-input { min-height: 44px; max-height: 140px; resize: vertical; }
+#message-input { height: 44px; min-height: 44px; max-height: 140px; resize: vertical; }
 .composer-tools { position: relative; display: flex; gap: .25rem; }
 .file-picker { display: grid; place-items: center; width: 44px; height: 44px; cursor: pointer; font-size: 1.35rem; }
 .composer-tool-button { width: 44px; height: 44px; padding: 0; background: transparent; color: var(--text); font-size: 1.35rem; }
@@ -612,7 +620,9 @@ dialog h3, dialog h4 { line-height: 1.25; }
 .picker-row.check input[type="checkbox"],
 .group-member-check input[type="checkbox"] { appearance: auto; width: 1.25rem; height: 1.25rem; margin: 0; padding: 0; accent-color: var(--accent); cursor: pointer; }
 fieldset { min-width: 0; border: 1px solid var(--line); border-radius: .8rem; }
-.profile-password { display: grid; gap: .8rem; }
+.profile-password-section { display: grid; gap: .4rem; }
+.profile-password-section h4 { margin: 0; color: var(--muted); font-size: .9rem; font-weight: 400; }
+.profile-password { display: grid; gap: .8rem; margin: 0; padding: .8rem; }
 .profile-discovery { display: grid; gap: .65rem; padding: .8rem; border: 1px solid rgb(32 199 181 / .24); border-radius: .8rem; background: rgb(32 199 181 / .06); }
 .profile-discovery h4 { margin: 0; }
 .profile-visibility-toggle { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: .7rem; cursor: pointer; }
@@ -636,6 +646,10 @@ fieldset { min-width: 0; border: 1px solid var(--line); border-radius: .8rem; }
 .conversation-info-hero strong { overflow-wrap: anywhere; font-size: 1.1rem; }
 .conversation-info-avatar { display: grid; place-items: center; width: 5.5rem; height: 5.5rem; overflow: hidden; border: 2px solid var(--line); border-radius: 50%; background: var(--avatar-bg); color: var(--avatar-fg); font-size: 1.7rem; font-weight: 800; }
 .conversation-info-avatar img { display: block; width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+.avatar.group-conversation-avatar,
+.chat-conversation-avatar.group-conversation-avatar,
+.brand-logo-button.has-conversation-avatar.group-conversation-avatar,
+.conversation-info-avatar.group-conversation-avatar { border: 2px solid var(--group-action); }
 .conversation-info-details { display: grid; gap: 0; margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: .9rem; }
 .conversation-info-details > div { display: grid; grid-template-columns: minmax(8rem, .7fr) minmax(0, 1.3fr); gap: .8rem; padding: .8rem .9rem; }
 .conversation-info-details > div + div { border-top: 1px solid var(--line); }

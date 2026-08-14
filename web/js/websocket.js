@@ -1,4 +1,4 @@
-import { websocketProtocols, websocketURL } from "./api.js?v=message-link-green-v344";
+import { websocketProtocols, websocketURL } from "./api.js?v=sidebar-actions-above-search-v356";
 
 export class ChatSocket extends EventTarget {
   constructor() {

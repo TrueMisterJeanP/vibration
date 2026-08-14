@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=message-link-green-v344";
+import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=sidebar-actions-above-search-v356";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -19,7 +19,7 @@ import {
   verifyMessagePayload,
   unwrapGroupKey,
   wrapGroupKey,
-} from "./crypto.js?v=message-link-green-v344";
+} from "./crypto.js?v=sidebar-actions-above-search-v356";
 import {
   forgetRememberedIdentity,
 	forgetTrustedDeviceCredential,
@@ -40,8 +40,8 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=message-link-green-v344";
-import { ChatSocket } from "./websocket.js?v=message-link-green-v344";
+} from "./notifications.js?v=sidebar-actions-above-search-v356";
+import { ChatSocket } from "./websocket.js?v=sidebar-actions-above-search-v356";
 import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=message-links-v341";
 import { locale, t } from "./i18n.js?v=conversation-search-v326";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
@@ -71,7 +71,7 @@ import {
   sameCallIdentity,
   shouldOfferAfterAccept,
   shouldOfferInGroup,
-} from "./call-negotiation.js?v=message-link-green-v344";
+} from "./call-negotiation.js?v=sidebar-actions-above-search-v356";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
 import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
@@ -100,7 +100,7 @@ const GLOBAL_FILES_PAGE_SIZE = 40;
 const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
 const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "message-link-green-v344";
+const APP_BUILD = "sidebar-actions-above-search-v356";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
 const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;
@@ -1081,7 +1081,16 @@ function bindUI() {
     event.preventDefault();
     document.querySelector("#profile-session-approve-code").click();
   });
-  document.querySelector("#conversation-info-close").onclick = () => elements.conversationInfoDialog.close();
+  document.querySelector("#conversation-info-close").onclick = (event) => {
+    const closedWithPointer = event.detail > 0;
+    elements.conversationInfoDialog.close();
+    if (!closedWithPointer) return;
+    requestAnimationFrame(() => {
+      if (document.activeElement === elements.chatAvatar || document.activeElement === elements.chatIdentity) {
+        document.activeElement.blur();
+      }
+    });
+  };
   elements.conversationInfoVerify.onclick = verifyCurrentConversationIdentity;
   elements.chatAvatar.onclick = () => {
     openCurrentConversationInfo().catch((error) => {
@@ -1459,6 +1468,7 @@ function renderMobileNavigationAvatar(display = null, conversation = null) {
   const showPersonalNote = Boolean(display && conversation?.is_personal);
   button.classList.toggle("has-conversation-avatar", Boolean(display));
   button.classList.toggle("personal-note-avatar", showPersonalNote);
+  button.classList.toggle("group-conversation-avatar", Boolean(display && conversation?.type === "group"));
   if (!display) {
     image.onerror = null;
     image.hidden = true;
@@ -1821,6 +1831,7 @@ async function openCurrentConversationInfo() {
   elements.conversationInfoMembersSection.hidden = !isGroup;
   elements.conversationInfoMembersCount.textContent = "0";
   elements.conversationInfoMembers.replaceChildren();
+  elements.conversationInfoAvatar.classList.toggle("group-conversation-avatar", isGroup);
   replaceAvatarContent(
     elements.conversationInfoAvatar,
     display.avatar,
@@ -1839,6 +1850,7 @@ function renderConversationHeader(conversation, display) {
   );
   elements.chatAvatar.hidden = false;
   elements.chatAvatar.classList.toggle("personal-note-avatar", Boolean(conversation.is_personal));
+  elements.chatAvatar.classList.toggle("group-conversation-avatar", conversation.type === "group");
   if (conversation.is_personal) {
     renderPersonalNoteIcon(elements.chatAvatar);
   } else {
@@ -3542,7 +3554,7 @@ async function renderConversations({ freshMembers = false } = {}) {
       callState?.incoming ? "call-incoming" : "",
     ].filter(Boolean).join(" ");
     const avatar = document.createElement("span");
-    avatar.className = "avatar";
+    avatar.className = conversation.type === "group" ? "avatar group-conversation-avatar" : "avatar";
     avatar.textContent = conversation.type === "group" ? "G" : "@";
     const copy = document.createElement("span");
     const titleRow = document.createElement("span");
@@ -3662,7 +3674,7 @@ function renderGroupInvitation(conversation, display = null) {
   row.className = "contact-request-row";
   row.dataset.conversationSearch = [display?.title, display?.description, t("Invitation de groupe")].filter(Boolean).join(" ");
   const avatar = document.createElement("span");
-  avatar.className = "avatar";
+  avatar.className = "avatar group-conversation-avatar";
   avatar.textContent = "G";
   const copy = document.createElement("span");
   const title = document.createElement("strong");

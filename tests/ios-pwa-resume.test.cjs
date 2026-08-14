@@ -32,11 +32,11 @@ assert.match(app, /if \(dialog\?\.open\) dialog\.close\(\)/);
 assert.match(foreground, /Date\.now\(\) - appHiddenAt >= 3000/);
 assert.match(foreground, /refreshConversationListOnForeground\(\{ reconnectSocket: suspended \}\)/);
 assert.match(foreground, /if \(reconnectSocket\) state\.socket\?\.reconnect\(\)/);
-assert.match(notifications, /register\("\/sw\.js\?v=message-link-green-v344"\)/);
-assert.match(worker, /chat-pwa-go-v344/);
-assert.match(worker, /\/js\/app\.js\?v=message-link-green-v344/);
-assert.match(worker, /\/js\/notifications\.js\?v=message-link-green-v344/);
-assert.match(worker, /\/js\/websocket\.js\?v=message-link-green-v344/);
+assert.match(notifications, /register\("\/sw\.js\?v=sidebar-actions-above-search-v356"\)/);
+assert.match(worker, /chat-pwa-go-v356/);
+assert.match(worker, /\/js\/app\.js\?v=sidebar-actions-above-search-v356/);
+assert.match(worker, /\/js\/notifications\.js\?v=sidebar-actions-above-search-v356/);
+assert.match(worker, /\/js\/websocket\.js\?v=sidebar-actions-above-search-v356/);
 
 const executableWebSocketSource = websocketSource.replace(
   /^import[^\n]+\n/,

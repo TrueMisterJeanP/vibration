@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1b5260">
-  <meta name="vibration-build" content="message-link-green-v344">
+  <meta name="vibration-build" content="sidebar-actions-above-search-v356">
   <style>
     :root { --avatar-bg: #1b5260; --avatar-fg: #a9fff4; background-color: #1b5260; }
     html[data-theme="light"] { --avatar-bg: #c9e7e4; --avatar-fg: #075e57; background-color: #c9e7e4; }
@@ -21,7 +21,7 @@
   <link rel="manifest" href="/manifest.json?v=desktop-titlebar-v252">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=message-link-green-v344">
+  <link rel="stylesheet" href="/css/style.css?v=sidebar-actions-above-search-v356">
 </head>
 <body>
   <div class="desktop-titlebar-drag-region" data-tauri-drag-region aria-hidden="true"></div>
@@ -47,18 +47,18 @@
         <svg class="sidebar-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 19 6v5.5c0 4.5-2.9 7.6-7 9.5-4.1-1.9-7-5-7-9.5V6Z"></path><path d="m9 12 2 2 4-4"></path></svg>
         <span class="admin-link-label">Administration</span>
       </a>
-      <div class="actions">
-        <button id="contact-button" class="outline" type="button">
-          <svg class="sidebar-action-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="8" r="3.5"></circle><path d="M3.5 20v-1.5a6.5 6.5 0 0 1 13 0V20M18 8v6M15 11h6"></path></svg>
-          <span>Contact</span>
-        </button>
-        <button id="group-button" class="outline" type="button">
-          <svg class="sidebar-action-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"></circle><circle cx="16.5" cy="9" r="2.5"></circle><path d="M3 20v-1.5A5.5 5.5 0 0 1 8.5 13h1A5.5 5.5 0 0 1 15 18.5V20M14 14.5a5 5 0 0 1 7 4.5v1"></path></svg>
-          <span>Groupe</span>
-        </button>
-      </div>
       <div id="conversation-list-loading" class="conversation-list-loading" role="status">Chargement des discussions…</div>
       <div id="conversation-lists" aria-busy="true" hidden>
+        <div class="actions" aria-label="Créer une discussion">
+          <button id="contact-button" class="outline" type="button">
+            <svg class="sidebar-action-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="8" r="3.5"></circle><path d="M3.5 20v-1.5a6.5 6.5 0 0 1 13 0V20M18 8v6M15 11h6"></path></svg>
+            <span>Contact</span>
+          </button>
+          <button id="group-button" class="outline" type="button">
+            <svg class="sidebar-action-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"></circle><circle cx="16.5" cy="9" r="2.5"></circle><path d="M3 20v-1.5A5.5 5.5 0 0 1 8.5 13h1A5.5 5.5 0 0 1 15 18.5V20M14 14.5a5 5 0 0 1 7 4.5v1"></path></svg>
+            <span>Groupe</span>
+          </button>
+        </div>
         <div class="conversation-search">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m16 16 5 5"></path></svg>
           <input id="conversation-search" type="search" autocomplete="off" autocapitalize="none" spellcheck="false"
@@ -402,6 +402,14 @@
       <label>Nom affiché<input id="profile-display-name" maxlength="80" required autocomplete="name"></label>
       <label>Description<textarea id="profile-description" rows="3" maxlength="280" placeholder="Quelques mots à propos de vous"></textarea></label>
       <label>Instance serveur<input id="profile-instance-url" type="url" required autocomplete="url"></label>
+      <section class="profile-password-section">
+        <h4 id="profile-password-title">Modifier le mot de passe</h4>
+        <fieldset class="profile-password" aria-labelledby="profile-password-title">
+          <label>Mot de passe actuel<input id="profile-current-password" type="password" autocomplete="current-password"><small>Requis pour modifier le nom d’utilisateur ou le mot de passe.</small></label>
+          <label>Nouveau mot de passe<input id="profile-new-password" type="password" minlength="8" maxlength="256" autocomplete="new-password"></label>
+          <label>Confirmer le nouveau mot de passe<input id="profile-confirm-password" type="password" minlength="8" maxlength="256" autocomplete="new-password"></label>
+        </fieldset>
+      </section>
       <section class="profile-discovery" aria-labelledby="profile-discovery-title">
         <h4 id="profile-discovery-title">Confidentialité du profil</h4>
         <label class="profile-visibility-toggle">
@@ -416,12 +424,6 @@
         </div>
         <small id="profile-discovery-status" aria-live="polite"></small>
       </section>
-      <fieldset class="profile-password">
-        <legend>Modifier le mot de passe</legend>
-        <label>Mot de passe actuel<input id="profile-current-password" type="password" autocomplete="current-password"><small>Requis pour modifier le nom d’utilisateur ou le mot de passe.</small></label>
-        <label>Nouveau mot de passe<input id="profile-new-password" type="password" minlength="8" maxlength="256" autocomplete="new-password"></label>
-        <label>Confirmer le nouveau mot de passe<input id="profile-confirm-password" type="password" minlength="8" maxlength="256" autocomplete="new-password"></label>
-      </fieldset>
       <p id="profile-error" class="error" role="alert"></p>
       <button id="profile-save" type="submit">Enregistrer le profil</button>
       <label class="profile-theme-label"><strong>Thème</strong><select id="profile-theme"><option value="auto">Automatique</option><option value="light">Clair</option><option value="dark">Sombre</option></select></label>
@@ -585,6 +587,6 @@
   <div id="toasts" aria-live="polite"></div>
   <script src="/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2"></script>
   <script src="/vendor/jsqr/jsQR.js?v=qr-scanner-v296"></script>
-  <script type="module" src="/js/app.js?v=message-link-green-v344"></script>
+  <script type="module" src="/js/app.js?v=sidebar-actions-above-search-v356"></script>
 </body>
 </html>

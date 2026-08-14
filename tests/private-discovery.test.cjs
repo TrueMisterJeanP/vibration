@@ -17,6 +17,12 @@ const federation = fs.existsSync(federationPath) ? fs.readFileSync(federationPat
 
 assert.match(html, /id="profile-invisible" type="checkbox"/);
 assert.match(html, /id="profile-discovery-generate"[\s\S]*id="profile-discovery-code"[\s\S]*id="profile-discovery-copy"/);
+assert.ok(
+  html.indexOf('class="profile-password-section"') < html.indexOf('class="profile-discovery"'),
+  "la confidentialité du profil doit suivre la modification du mot de passe",
+);
+assert.match(html, /class="profile-password-section"[\s\S]*id="profile-password-title">Modifier le mot de passe<[\s\S]*fieldset class="profile-password" aria-labelledby="profile-password-title"/);
+assert.match(css, /\.profile-password-section h4\s*\{[^}]*color: var\(--muted\);[^}]*font-size: \.9rem;[^}]*font-weight: 400;/);
 assert.match(html, /id="contact-search"[\s\S]*Nom d’utilisateur, rôle ou code privé|Nom d’utilisateur, rôle ou code privé[\s\S]*id="contact-search"/);
 assert.match(html, /id="group-user-search"[^>]*placeholder="alice ou VIB-…"/);
 assert.match(css, /\.profile-visibility-toggle input\[type="checkbox"\]/);

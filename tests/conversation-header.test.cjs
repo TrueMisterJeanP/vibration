@@ -50,6 +50,7 @@ assert.match(app, /function renderMobileNavigationAvatar\(display = null, conver
 assert.match(app, /renderMobileNavigationAvatar\(display, conversation\)/);
 assert.match(app, /button\.classList\.toggle\("has-conversation-avatar", Boolean\(display\)\)/);
 assert.match(app, /button\.classList\.toggle\("personal-note-avatar", showPersonalNote\)/);
+assert.match(app, /button\.classList\.toggle\("group-conversation-avatar", Boolean\(display && conversation\?\.type === "group"\)\)/);
 assert.match(app, /if \(showPersonalNote\) \{[\s\S]*renderPersonalNoteIcon\(initial\)/);
 assert.match(app, /mobileLayout\.addEventListener\("change", syncResponsiveLayout\)/);
 assert.match(app, /if \(state\.current\) \{[\s\S]*refreshCurrentConversationHeader\(state\.current\.id\)/);
@@ -96,6 +97,8 @@ assert.match(css, /\.personal-note-avatar svg\s*\{/);
 assert.match(css, /--avatar-bg: #1b5260;[\s\S]*--avatar-fg: #a9fff4;/);
 assert.match(css, /\.brand-logo-button\.has-conversation-avatar\s*\{[^}]*background: var\(--avatar-bg\);[^}]*color: var\(--avatar-fg\);/);
 assert.match(css, /\.avatar\s*\{[^}]*background: var\(--avatar-bg\);[^}]*color: var\(--avatar-fg\);/);
+assert.match(app, /elements\.chatAvatar\.classList\.toggle\("group-conversation-avatar", conversation\.type === "group"\)/);
+assert.match(css, /\.avatar\.group-conversation-avatar,[\s\S]*border: 2px solid var\(--group-action\);/);
 assert.match(css, /\.profile-avatar-preview\s*\{[^}]*background: var\(--avatar-bg\);/);
 assert.match(css, /\.group-avatar-preview-icon\s*\{[^}]*stroke: currentColor;/);
 assert.match(css, /\.call-banner-status\s*\{[^}]*display: inline-flex;[^}]*align-items: center;[^}]*justify-content: flex-start;[^}]*gap: \.45rem;/);

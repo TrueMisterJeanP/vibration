@@ -27,6 +27,7 @@ assert.match(app, /elements\.conversationInfoAddressRow\.hidden = isGroup/);
 assert.match(app, /elements\.conversationInfoFingerprintRow\.hidden = isGroup/);
 assert.match(app, /function renderConversationInfoMembers\(members\)/);
 assert.match(app, /elements\.conversationInfoMembersSection\.hidden = !isGroup/);
+assert.match(app, /elements\.conversationInfoAvatar\.classList\.toggle\("group-conversation-avatar", isGroup\)/);
 assert.match(app, /if \(isGroup\) renderConversationInfoMembers\(members\)/);
 assert.match(app, /member\.role === "owner"[\s\S]*t\("Propriétaire"\)/);
 assert.match(app, /member\.role === "pending"[\s\S]*t\("Invitation en attente"\)/);
@@ -38,6 +39,7 @@ assert.match(app, /conversation\.encrypted_description \? display\.description :
 assert.match(app, /setConversationInfoTrigger\(conversation\)/);
 assert.match(app, /elements\.chatAvatar\.onclick/);
 assert.match(app, /elements\.chatIdentity\.addEventListener\("keydown"/);
+assert.match(app, /const closedWithPointer = event\.detail > 0;[\s\S]*conversationInfoDialog\.close\(\);[\s\S]*requestAnimationFrame\(\(\) => \{[\s\S]*document\.activeElement\.blur\(\)/);
 
 const infoDialogLoader = app.slice(
   app.indexOf("async function openCurrentConversationInfo()"),

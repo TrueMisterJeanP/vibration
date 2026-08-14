@@ -16,6 +16,19 @@ assert.match(
 );
 assert.match(css, /#conversation-lists\s*\{[^}]*display:\s*flex[^}]*flex:\s*1[^}]*flex-direction:\s*column/);
 assert.match(css, /\.conversation-list-loading\s*\{[^}]*display:\s*grid[^}]*flex:\s*1/);
+assert.ok(
+  html.indexOf('id="contact-button"') < html.indexOf('id="conversation-search"') &&
+  html.indexOf('id="group-button"') < html.indexOf('id="conversation-search"'),
+  "les actions Contact et Groupe doivent précéder la recherche",
+);
+assert.doesNotMatch(html, /sidebar-footer/);
+assert.doesNotMatch(css, /\.sidebar-footer/);
+assert.match(css, /\.actions\s*\{[^}]*flex:\s*0 0 auto[^}]*padding:\s*0 \.6rem \.75rem/);
+assert.match(css, /\.actions button\s*\{[^}]*min-height:\s*4\.1rem[^}]*flex-direction:\s*column/);
+assert.match(css, /\.actions \.sidebar-action-icon\s*\{[^}]*width:\s*1\.7rem[^}]*height:\s*1\.7rem/);
+assert.match(css, /#message-input\s*\{[^}]*height:\s*44px[^}]*min-height:\s*44px/);
+assert.match(css, /--group-action:\s*#075e57/);
+assert.match(css, /\.actions #group-button\s*\{[^}]*background:\s*var\(--group-action\)[^}]*color:\s*#ffffff/);
 
 const revealStart = app.indexOf("function revealConversationLists()");
 const revealEnd = app.indexOf("function refreshCarnetInBackground()", revealStart);
