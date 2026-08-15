@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-23-v362";
+import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-24-v363";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -19,7 +19,7 @@ import {
   verifyMessagePayload,
   unwrapGroupKey,
   wrapGroupKey,
-} from "./crypto.js?v=community-1-0-23-v362";
+} from "./crypto.js?v=community-1-0-24-v363";
 import {
   forgetRememberedIdentity,
 	forgetTrustedDeviceCredential,
@@ -40,10 +40,10 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=community-1-0-23-v362";
-import { ChatSocket } from "./websocket.js?v=community-1-0-23-v362";
-import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=message-links-v341";
-import { locale, t } from "./i18n.js?v=conversation-search-v326";
+} from "./notifications.js?v=community-1-0-24-v363";
+import { ChatSocket } from "./websocket.js?v=community-1-0-24-v363";
+import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-24-v363";
+import { locale, t } from "./i18n.js?v=community-1-0-24-v363";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
 import { nonWhiteImageBounds } from "./file-preview-image.js?v=ios17-pdf-v199";
 import {
@@ -71,7 +71,7 @@ import {
   sameCallIdentity,
   shouldOfferAfterAccept,
   shouldOfferInGroup,
-} from "./call-negotiation.js?v=community-1-0-23-v362";
+} from "./call-negotiation.js?v=community-1-0-24-v363";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
 import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
@@ -100,7 +100,7 @@ const GLOBAL_FILES_PAGE_SIZE = 40;
 const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
 const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "community-1-0-23-v362";
+const APP_BUILD = "community-1-0-24-v363";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
 const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;
@@ -484,7 +484,7 @@ function actionDialog({
   });
 }
 
-function appendGroupUserSearchResult(results, user, onInvite) {
+function appendGroupUserSearchResult(results, user, onInvite, directoryRole = "") {
   const row = document.createElement("button");
   row.type = "button";
   row.className = "picker-row";
@@ -498,6 +498,12 @@ function appendGroupUserSearchResult(results, user, onInvite) {
   const username = document.createElement("small");
   username.textContent = `@${user.username}`;
   identity.append(displayName, description, username);
+  if (directoryRole) {
+    const roleBadge = document.createElement("small");
+    roleBadge.className = "contact-role-badge";
+    roleBadge.textContent = t(directoryRole === "administrator" ? "Administrateur" : "Gestionnaire");
+    identity.append(roleBadge);
+  }
   const action = document.createElement("span");
   action.textContent = t("Inviter");
   row.append(identity, action);
@@ -524,8 +530,8 @@ async function searchInstanceUsers(query, role = "") {
 function contactDirectoryRole(query) {
   const normalized = String(query || "").trim().toLocaleLowerCase(locale);
   const roles = [
-    { role: "administrator", labels: ["administrateur", t("Administrateur")] },
-    { role: "manager", labels: ["gestionnaire", t("Gestionnaire")] },
+    { role: "administrator", labels: ["administrateur", "administrateurs", t("Administrateur"), t("Administrateurs")] },
+    { role: "manager", labels: ["gestionnaire", "gestionnaires", t("Gestionnaire"), t("Gestionnaires")] },
   ];
   return roles.find(({ labels }) => labels.some((label) => normalized === label.toLocaleLowerCase(locale)))?.role || "";
 }
@@ -576,10 +582,12 @@ function groupEditDialog({ name, description, avatar, members }) {
   };
   const searchUsers = debounce(async () => {
     const query = userSearch.value.trim();
+    const directoryRole = contactDirectoryRole(query);
     userResults.replaceChildren();
     if (query.length < 2) return;
     try {
-      const users = await searchInstanceUsers(query);
+      const users = await searchInstanceUsers(query, directoryRole);
+      if (userSearch.value.trim() !== query) return;
       const currentIDs = new Set([state.me.id, ...selectedIDs]);
       for (const user of users.filter((item) => !sameID(item.id, state.me.id) && !currentIDs.has(Number(item.id)))) {
         appendGroupUserSearchResult(userResults, user, () => {
@@ -589,7 +597,7 @@ function groupEditDialog({ name, description, avatar, members }) {
           userSearch.value = "";
           userResults.replaceChildren();
           renderMembers();
-        });
+        }, directoryRole);
       }
       if (!userResults.children.length) {
         const empty = document.createElement("p");
@@ -2908,7 +2916,7 @@ function warmAdminShell() {
   adminShellPreloaded = true;
   for (const [rel, href] of [
     ["prefetch", "/admin.html?from=chat"],
-    ["modulepreload", "/js/admin.js?v=community-1-0-23-v362"],
+    ["modulepreload", "/js/admin.js?v=community-1-0-24-v363"],
   ]) {
     const link = document.createElement("link");
     link.rel = rel;
@@ -10318,11 +10326,12 @@ function renderNewGroupMembers() {
 async function searchNewGroupMembers(event) {
   const input = event.target;
   const query = input.value.trim();
+  const directoryRole = contactDirectoryRole(query);
   const results = document.querySelector("#group-user-results");
   results.replaceChildren();
   if (query.length < 2) return;
   try {
-    const users = await searchInstanceUsers(query);
+    const users = await searchInstanceUsers(query, directoryRole);
     if (input.value.trim() !== query) return;
     const listedIDs = new Set(groupInvitedUsers.keys());
     const availableUsers = users.filter((user) => !sameID(user.id, state.me.id) && !listedIDs.has(user.id));
@@ -10332,7 +10341,7 @@ async function searchNewGroupMembers(event) {
         input.value = "";
         results.replaceChildren();
         renderNewGroupMembers();
-      });
+      }, directoryRole);
     }
     if (!availableUsers.length) {
       const empty = document.createElement("p");

@@ -1,4 +1,4 @@
-import { locale, localizeDocument, t } from "./i18n.js?v=conversation-search-v326";
+import { locale, localizeDocument, t } from "./i18n.js?v=community-1-0-24-v363";
 import { messageLinkTokens } from "./message-links.js?v=message-links-v341";
 
 localizeDocument();

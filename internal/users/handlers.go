@@ -222,18 +222,26 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 		h.writeSearchResults(w, rows)
 		return
 	}
+	originalQuery := query
 	query = strings.ToLower(query)
-	if len(query) < 2 || len(query) > 32 {
+	if len([]rune(query)) < 2 || len([]rune(query)) > 80 {
 		httpx.JSON(w, http.StatusOK, []User{})
 		return
 	}
 	rows, err := h.DB.Query(`SELECT u.id,u.username,u.display_name,u.description,u.public_key,u.signing_public_key,u.signing_key_id,u.avatar FROM users u
-		WHERE u.id<>? AND u.is_remote=0 AND u.is_banned=0 AND u.username LIKE ?
+		WHERE u.id<>? AND u.is_remote=0 AND u.is_banned=0
+		AND (LOWER(u.username) LIKE ? OR LOWER(u.display_name) LIKE ? OR u.display_name LIKE ?)
 		AND (u.is_discoverable=1
 			OR EXISTS(SELECT 1 FROM contacts c WHERE (c.owner_id=? AND c.contact_user_id=u.id) OR (c.owner_id=u.id AND c.contact_user_id=?))
 			OR EXISTS(SELECT 1 FROM conversation_members mine JOIN conversation_members peer ON peer.conversation_id=mine.conversation_id
 				WHERE mine.user_id=? AND mine.role<>'pending' AND peer.user_id=u.id AND peer.role<>'pending'))
-		ORDER BY u.username LIMIT 20`, requesterID, query+"%", requesterID, requesterID, requesterID)
+		ORDER BY CASE
+			WHEN LOWER(u.username)=? THEN 0
+			WHEN LOWER(u.display_name)=? OR u.display_name=? THEN 1
+			WHEN LOWER(u.username) LIKE ? THEN 2
+			ELSE 3
+		END, u.username LIMIT 20`, requesterID, query+"%", "%"+query+"%", "%"+originalQuery+"%", requesterID, requesterID, requesterID,
+		query, query, originalQuery, query+"%")
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "search failed")
 		return

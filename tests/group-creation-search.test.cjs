@@ -13,16 +13,20 @@ const groupDialog = html.slice(
   html.indexOf('id="group-edit-dialog"'),
 );
 assert.match(groupDialog, /id="group-user-search"[\s\S]*id="group-user-results"[\s\S]*id="group-members-title"[\s\S]*id="group-members-count"[\s\S]*id="group-members" class="conversation-info-member-list"/);
+assert.match(groupDialog, /Ajouter un membre par nom d’utilisateur, nom affiché, rôle ou code privé/);
+assert.doesNotMatch(groupDialog.match(/<input id="group-user-search"[^>]*>/)?.[0] || "", /placeholder=/);
 
 const groupEditDialog = html.slice(
   html.indexOf('id="group-edit-dialog"'),
   html.indexOf('id="profile-dialog"'),
 );
 assert.match(groupEditDialog, /id="group-edit-user-search"[\s\S]*id="group-edit-user-results"[\s\S]*id="group-edit-members-title"[\s\S]*id="group-edit-members-count"[\s\S]*id="group-edit-members" class="conversation-info-member-list"/);
+assert.match(groupEditDialog, /Ajouter un membre par nom d’utilisateur, nom affiché, rôle ou code privé/);
+assert.doesNotMatch(groupEditDialog.match(/<input id="group-edit-user-search"[^>]*>/)?.[0] || "", /placeholder=/);
 
 assert.match(app, /const groupInvitedUsers = new Map\(\)/);
 assert.match(app, /#group-user-search"\)\.addEventListener\("input", debounce\(searchNewGroupMembers, 300\)\)/);
-assert.match(app, /async function searchNewGroupMembers\(event\)[\s\S]*searchInstanceUsers\(query\)/);
+assert.match(app, /async function searchNewGroupMembers\(event\)[\s\S]*contactDirectoryRole\(query\)[\s\S]*searchInstanceUsers\(query, directoryRole\)/);
 assert.match(app, /groupInvitedUsers\.set\(user\.id, userWithDiscoveryCode\(user, query\)\)/);
 assert.match(app, /renderSelectedGroupMembers\(list, \[state\.me, \.\.\.groupInvitedUsers\.values\(\)\]/);
 assert.match(app, /const count = document\.querySelector\("#group-members-count"\)[\s\S]*countElement: count/);
@@ -57,6 +61,8 @@ assert.match(editGroupDialogFunction, /const selectedMembers = \[\.\.\.selectedI
 assert.match(editGroupDialogFunction, /renderSelectedGroupMembers\(memberList, \[state\.me, \.\.\.selectedMembers\]/);
 assert.match(editGroupDialogFunction, /onRemove: \(userID\) => \{[\s\S]*selectedIDs\.delete\(userID\)[\s\S]*extraUsers\.delete\(userID\)[\s\S]*renderMembers\(\)/);
 assert.match(editGroupDialogFunction, /const currentIDs = new Set\(\[state\.me\.id, \.\.\.selectedIDs\]\)/);
+assert.match(editGroupDialogFunction, /contactDirectoryRole\(query\)[\s\S]*searchInstanceUsers\(query, directoryRole\)/);
+assert.match(editGroupDialogFunction, /appendGroupUserSearchResult\(userResults, user,[\s\S]*directoryRole\)/);
 
 const createGroupHandler = handler.slice(
   handler.indexOf("func (h *Handler) CreateGroup"),
@@ -64,6 +70,6 @@ const createGroupHandler = handler.slice(
 );
 assert.doesNotMatch(createGroupHandler, /hasAcceptedContact/);
 assert.match(createGroupHandler, /SELECT is_remote FROM users WHERE id=\? AND is_banned=0/);
-assert.match(fs.readFileSync(path.join(root, "internal/users/handlers.go"), "utf8"), /u\.is_remote=0 AND u\.is_banned=0 AND u\.username LIKE/);
+assert.match(fs.readFileSync(path.join(root, "internal/users/handlers.go"), "utf8"), /u\.is_remote=0 AND u\.is_banned=0[\s\S]*LOWER\(u\.username\) LIKE \? OR LOWER\(u\.display_name\) LIKE \?/);
 
 console.log("Group creation/editing: selected-member lists and searchable invitations verified");
