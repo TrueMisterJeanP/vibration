@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-24-v363";
+import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-25-v380";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -19,7 +19,7 @@ import {
   verifyMessagePayload,
   unwrapGroupKey,
   wrapGroupKey,
-} from "./crypto.js?v=community-1-0-24-v363";
+} from "./crypto.js?v=community-1-0-25-v380";
 import {
   forgetRememberedIdentity,
 	forgetTrustedDeviceCredential,
@@ -40,10 +40,10 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=community-1-0-24-v363";
-import { ChatSocket } from "./websocket.js?v=community-1-0-24-v363";
-import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-24-v363";
-import { locale, t } from "./i18n.js?v=community-1-0-24-v363";
+} from "./notifications.js?v=community-1-0-25-v380";
+import { ChatSocket } from "./websocket.js?v=community-1-0-25-v380";
+import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-25-v380";
+import { locale, t } from "./i18n.js?v=community-1-0-25-v380";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
 import { nonWhiteImageBounds } from "./file-preview-image.js?v=ios17-pdf-v199";
 import {
@@ -71,7 +71,7 @@ import {
   sameCallIdentity,
   shouldOfferAfterAccept,
   shouldOfferInGroup,
-} from "./call-negotiation.js?v=community-1-0-24-v363";
+} from "./call-negotiation.js?v=community-1-0-25-v380";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
 import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
@@ -100,7 +100,7 @@ const GLOBAL_FILES_PAGE_SIZE = 40;
 const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
 const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "community-1-0-24-v363";
+const APP_BUILD = "community-1-0-25-v380";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
 const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;
@@ -725,6 +725,67 @@ function clearConversationMessageExpirations(conversationID) {
   }
 }
 
+function createConversationExchangeState(conversation, empty = null) {
+  const exchangeKind = conversation?.is_personal
+    ? "notes"
+    : conversation?.type === "group"
+      ? "group"
+      : conversation?.type === "private"
+        ? "direct"
+        : null;
+  if (!exchangeKind) return empty;
+
+  const container = document.createElement("div");
+  container.className = `conversation-exchange-state ${exchangeKind}-exchange-state`;
+
+  const intro = document.createElement("div");
+  intro.className = "conversation-exchange-intro";
+
+  const icon = document.createElement("span");
+  icon.className = `conversation-exchange-icon ${exchangeKind}-exchange-icon`;
+  icon.setAttribute("aria-hidden", "true");
+  icon.innerHTML = exchangeKind === "group"
+    ? `<svg viewBox="0 0 120 120" focusable="false">
+        <g transform="translate(36 21) scale(.78)">
+          <path vector-effect="non-scaling-stroke" d="M22 56c0-20 17-35 38-35s38 15 38 35c0 8-3 15-8 21l2 20-20-9c-4 2-8 3-12 3-21 0-38-15-38-35Z"></path>
+          <circle cx="44" cy="56" r="3.5"></circle><circle cx="60" cy="56" r="3.5"></circle><circle cx="76" cy="56" r="3.5"></circle>
+        </g>
+        <g transform="translate(-7 13) scale(.88)">
+          <path vector-effect="non-scaling-stroke" d="M22 56c0-20 17-35 38-35s38 15 38 35c0 8-3 15-8 21l2 20-20-9c-4 2-8 3-12 3-21 0-38-15-38-35Z"></path>
+          <circle cx="44" cy="56" r="3.5"></circle><circle cx="60" cy="56" r="3.5"></circle><circle cx="76" cy="56" r="3.5"></circle>
+        </g>
+      </svg>`
+    : exchangeKind === "notes"
+      ? `<svg viewBox="0 0 120 120" focusable="false">
+          <rect x="24" y="27" width="72" height="76" rx="8"></rect>
+          <path d="M42 17v24M60 17v24M78 17v24M40 54h40M40 69h40M40 84h26"></path>
+        </svg>`
+      : `<svg viewBox="0 0 120 120" focusable="false">
+        <path d="M22 56c0-20 17-35 38-35s38 15 38 35c0 8-3 15-8 21l2 20-20-9c-4 2-8 3-12 3-21 0-38-15-38-35Z"></path>
+        <circle cx="44" cy="56" r="3.5"></circle>
+        <circle cx="60" cy="56" r="3.5"></circle>
+        <circle cx="76" cy="56" r="3.5"></circle>
+      </svg>`;
+
+  const exchangeLabels = {
+    direct: ["Échange direct", "de personne à personne"],
+    group: ["Échange de groupe", "communication entre plusieurs membres"],
+    notes: ["Mes notes", "documents, enregistrements et évènements personnels"],
+  }[exchangeKind];
+  const copy = document.createElement("span");
+  copy.className = "conversation-exchange-copy";
+  const title = document.createElement("strong");
+  title.textContent = t(exchangeLabels[0]);
+  const subtitle = document.createElement("span");
+  subtitle.textContent = t(exchangeLabels[1]);
+  copy.append(title, subtitle);
+
+  intro.append(icon, copy);
+  container.append(intro);
+  if (empty) container.append(empty);
+  return container;
+}
+
 async function expireRenderedMessage(conversationID, messageID) {
   invalidateConversationPreload(conversationID);
   forgetGlobalFileClearByMessageID(messageID);
@@ -742,7 +803,8 @@ async function expireRenderedMessage(conversationID, messageID) {
       const empty = document.createElement("div");
       empty.id = "empty-chat";
       empty.textContent = t("Aucun message. Écrivez le premier message chiffré.");
-      elements.messages.append(empty);
+      elements.messages.querySelector(".conversation-exchange-state")?.remove();
+      elements.messages.append(createConversationExchangeState(state.current, empty));
     }
   }
   try {
@@ -2916,7 +2978,7 @@ function warmAdminShell() {
   adminShellPreloaded = true;
   for (const [rel, href] of [
     ["prefetch", "/admin.html?from=chat"],
-    ["modulepreload", "/js/admin.js?v=community-1-0-24-v363"],
+    ["modulepreload", "/js/admin.js?v=community-1-0-25-v380"],
   ]) {
     const link = document.createElement("link");
     link.rel = rel;
@@ -3984,6 +4046,35 @@ async function repairRequiredGroupRotation(conversation) {
   return true;
 }
 
+function createNoConversationState() {
+  const container = document.createElement("div");
+  container.className = "no-conversation-state";
+
+  const intro = document.createElement("div");
+  intro.className = "conversation-exchange-intro no-conversation-intro";
+
+  const icon = document.createElement("span");
+  icon.className = "conversation-exchange-icon no-conversation-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.innerHTML = `<svg viewBox="0 0 120 120" focusable="false"><path d="M60 22 98 60 60 98 22 60Z"></path></svg>`;
+
+  const copy = document.createElement("span");
+  copy.className = "conversation-exchange-copy";
+  const title = document.createElement("strong");
+  title.textContent = "Vibration";
+  const subtitle = document.createElement("span");
+  subtitle.textContent = t("messagerie chiffrée, collaborative et souveraine");
+  copy.append(title, subtitle);
+  intro.append(icon, copy);
+
+  const empty = document.createElement("div");
+  empty.id = "empty-chat";
+  empty.textContent = t("Sélectionnez une conversation ou créez-en une nouvelle.");
+
+  container.append(intro, empty);
+  return container;
+}
+
 function closeCurrentConversation(conversationID) {
   if (!sameID(state.current?.id, conversationID)) return;
   closeReactionPicker();
@@ -4012,11 +4103,7 @@ function closeCurrentConversation(conversationID) {
   renderTypingIndicator(elements.typing, null);
   renderTypingIndicator(elements.threadTyping, null);
   elements.threadTyping.hidden = true;
-  elements.messages.replaceChildren();
-  const empty = document.createElement("div");
-  empty.id = "empty-chat";
-  empty.textContent = t("Sélectionnez une conversation ou créez-en une nouvelle.");
-  elements.messages.append(empty);
+  elements.messages.replaceChildren(createNoConversationState());
 }
 
 async function deleteConversation(conversation, button) {
@@ -4417,7 +4504,7 @@ async function selectConversation(conversation, targetMessageID = null) {
     const empty = document.createElement("div");
     empty.id = "empty-chat";
     empty.textContent = t("Aucun message. Écrivez le premier message chiffré.");
-    elements.messages.replaceChildren(empty);
+    elements.messages.replaceChildren(createConversationExchangeState(conversation, empty));
   }
   renderTypingIndicator(elements.typing, null);
   renderTypingIndicator(elements.threadTyping, null);
@@ -6716,7 +6803,7 @@ async function renderMessages(messages, conversation, preparedDecrypted = null) 
     const empty = document.createElement("div");
     empty.id = "empty-chat";
     empty.textContent = t("Aucun message. Écrivez le premier message chiffré.");
-    elements.messages.replaceChildren(empty);
+    elements.messages.replaceChildren(createConversationExchangeState(conversation, empty));
     return;
   }
   const decrypted = preparedDecrypted || await Promise.all(messages.map(async (message) => {
@@ -6758,6 +6845,8 @@ async function renderMessages(messages, conversation, preparedDecrypted = null) 
       api(`/api/messages/${message.id}/read`, { method: "POST", body: {} }).catch(() => {});
     }
   }
+  const conversationExchangeState = createConversationExchangeState(conversation);
+  if (conversationExchangeState) fragment.append(conversationExchangeState);
   elements.messages.replaceChildren(fragment);
   for (const [message, preview, key] of previews) scheduleFilePreview(message, preview, key);
 }
@@ -9193,7 +9282,8 @@ async function deleteMessage(message, row) {
       const empty = document.createElement("div");
       empty.id = "empty-chat";
       empty.textContent = t("Aucun message. Écrivez le premier message chiffré.");
-      elements.messages.append(empty);
+      elements.messages.querySelector(".conversation-exchange-state")?.remove();
+      elements.messages.append(createConversationExchangeState(state.current, empty));
     }
     toast("Message supprimé.", "success");
     await refreshAll();

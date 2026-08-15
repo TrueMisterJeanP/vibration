@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1b5260">
-  <meta name="vibration-build" content="community-1-0-24-v363">
+  <meta name="vibration-build" content="community-1-0-25-v380">
   <style>
     :root { --avatar-bg: #1b5260; --avatar-fg: #a9fff4; background-color: #1b5260; }
     html[data-theme="light"] { --avatar-bg: #c9e7e4; --avatar-fg: #075e57; background-color: #c9e7e4; }
@@ -16,12 +16,12 @@
     #startup-splash svg { position: absolute; top: var(--startup-symbol-y, 0); left: var(--startup-symbol-x, calc((100vw - 120px) / 2)); display: block; width: 120px; height: 120px; visibility: hidden; fill: none; stroke: var(--avatar-fg); stroke-width: 1.25; stroke-linejoin: miter; animation: none; transition: none; }
     html.ios-pwa-splash-positioned #startup-splash svg { visibility: visible; }
   </style>
-  <script src="/js/theme.js?v=calendar-toolbar-grid-v311"></script>
+  <script src="/js/theme.js?v=group-clean-overlap-v380"></script>
   <title>Vibration</title>
   <link rel="manifest" href="/manifest.json?v=desktop-titlebar-v252">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=clickable-header-title-v359">
+  <link rel="stylesheet" href="/css/style.css?v=group-clean-overlap-v380">
 </head>
 <body>
   <div class="desktop-titlebar-drag-region" data-tauri-drag-region aria-hidden="true"></div>
@@ -95,7 +95,20 @@
         </div>
       </header>
       <div id="chat-workspace">
-        <div id="message-list"><div id="empty-chat">Ajoutez un contact ou créez un groupe pour commencer.</div></div>
+        <div id="message-list">
+          <div class="no-conversation-state">
+            <div class="conversation-exchange-intro no-conversation-intro">
+              <span class="conversation-exchange-icon no-conversation-icon" aria-hidden="true">
+                <svg viewBox="0 0 120 120" focusable="false"><path d="M60 22 98 60 60 98 22 60Z"></path></svg>
+              </span>
+              <span class="conversation-exchange-copy">
+                <strong>Vibration</strong>
+                <span>messagerie chiffrée, collaborative et souveraine</span>
+              </span>
+            </div>
+            <div id="empty-chat">Sélectionnez une conversation ou créez-en une nouvelle.</div>
+          </div>
+        </div>
         <aside id="pinned-panel" aria-labelledby="pinned-panel-title" hidden>
           <header>
             <div><strong id="pinned-panel-title">Messages épinglés</strong><small>Votre sélection personnelle</small></div>
@@ -327,7 +340,7 @@
 
   <dialog id="contact-dialog"><form method="dialog" id="contact-form">
     <button class="dialog-close" value="cancel">×</button><h3>Ajouter un contact</h3>
-    <label>Nom d’utilisateur, nom affiché, rôle ou code privé<input id="contact-search" minlength="2" autocomplete="off"></label>
+    <label>Nom d’utilisateur, nom affiché, rôle ou code privé<input id="contact-search" minlength="2" autocomplete="off" placeholder="Contact, rôle, code privé"></label>
     <div id="contact-results" class="picker-list"></div>
   </form></dialog>
 
@@ -343,7 +356,7 @@
     </section>
     <label>Nom du groupe<input id="group-name" required maxlength="80"></label>
     <label>Description<textarea id="group-description" rows="3" maxlength="280" placeholder="Décrivez le groupe"></textarea></label>
-    <label>Ajouter un membre par nom d’utilisateur, nom affiché, rôle ou code privé<input id="group-user-search" minlength="2" autocomplete="off"></label>
+    <label>Ajouter un membre par nom d’utilisateur, nom affiché, rôle ou code privé<input id="group-user-search" minlength="2" autocomplete="off" placeholder="Contact, rôle, code privé"></label>
     <div id="group-user-results" class="picker-list"></div>
     <section class="conversation-info-members" aria-labelledby="group-members-title">
       <h4 id="group-members-title">
@@ -369,7 +382,7 @@
       </section>
       <label>Nouveau nom<input id="group-edit-name" required maxlength="80"></label>
       <label>Description<textarea id="group-edit-description" rows="3" maxlength="280"></textarea></label>
-      <label>Ajouter un membre par nom d’utilisateur, nom affiché, rôle ou code privé<input id="group-edit-user-search" minlength="2" autocomplete="off"></label>
+      <label>Ajouter un membre par nom d’utilisateur, nom affiché, rôle ou code privé<input id="group-edit-user-search" minlength="2" autocomplete="off" placeholder="Contact, rôle, code privé"></label>
       <div id="group-edit-user-results" class="picker-list"></div>
       <section class="conversation-info-members" aria-labelledby="group-edit-members-title">
         <h4 id="group-edit-members-title">
@@ -587,6 +600,6 @@
   <div id="toasts" aria-live="polite"></div>
   <script src="/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2"></script>
   <script src="/vendor/jsqr/jsQR.js?v=qr-scanner-v296"></script>
-  <script type="module" src="/js/app.js?v=community-1-0-24-v363"></script>
+  <script type="module" src="/js/app.js?v=community-1-0-25-v380"></script>
 </body>
 </html>

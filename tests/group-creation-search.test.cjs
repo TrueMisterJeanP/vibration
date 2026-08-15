@@ -14,7 +14,7 @@ const groupDialog = html.slice(
 );
 assert.match(groupDialog, /id="group-user-search"[\s\S]*id="group-user-results"[\s\S]*id="group-members-title"[\s\S]*id="group-members-count"[\s\S]*id="group-members" class="conversation-info-member-list"/);
 assert.match(groupDialog, /Ajouter un membre par nom d’utilisateur, nom affiché, rôle ou code privé/);
-assert.doesNotMatch(groupDialog.match(/<input id="group-user-search"[^>]*>/)?.[0] || "", /placeholder=/);
+assert.match(groupDialog.match(/<input id="group-user-search"[^>]*>/)?.[0] || "", /placeholder="Contact, rôle, code privé"/);
 
 const groupEditDialog = html.slice(
   html.indexOf('id="group-edit-dialog"'),
@@ -22,7 +22,7 @@ const groupEditDialog = html.slice(
 );
 assert.match(groupEditDialog, /id="group-edit-user-search"[\s\S]*id="group-edit-user-results"[\s\S]*id="group-edit-members-title"[\s\S]*id="group-edit-members-count"[\s\S]*id="group-edit-members" class="conversation-info-member-list"/);
 assert.match(groupEditDialog, /Ajouter un membre par nom d’utilisateur, nom affiché, rôle ou code privé/);
-assert.doesNotMatch(groupEditDialog.match(/<input id="group-edit-user-search"[^>]*>/)?.[0] || "", /placeholder=/);
+assert.match(groupEditDialog.match(/<input id="group-edit-user-search"[^>]*>/)?.[0] || "", /placeholder="Contact, rôle, code privé"/);
 
 assert.match(app, /const groupInvitedUsers = new Map\(\)/);
 assert.match(app, /#group-user-search"\)\.addEventListener\("input", debounce\(searchNewGroupMembers, 300\)\)/);

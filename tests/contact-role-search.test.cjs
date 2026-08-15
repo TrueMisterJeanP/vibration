@@ -7,7 +7,7 @@ const html = fs.readFileSync(path.join(root, "web/index.html"), "utf8");
 const app = fs.readFileSync(path.join(root, "web/js/app.js"), "utf8");
 const users = fs.readFileSync(path.join(root, "internal/users/handlers.go"), "utf8");
 
-assert.doesNotMatch(html.match(/<input id="contact-search"[^>]*>/)?.[0] || "", /placeholder=/);
+assert.match(html.match(/<input id="contact-search"[^>]*>/)?.[0] || "", /placeholder="Contact, rôle, code privé"/);
 assert.match(html, /Nom d’utilisateur, nom affiché, rôle ou code privé[\s\S]*id="contact-search"/);
 assert.match(app, /function contactDirectoryRole\(query\)/);
 assert.match(app, /role: "administrator", labels: \["administrateur", "administrateurs", t\("Administrateur"\), t\("Administrateurs"\)\]/);

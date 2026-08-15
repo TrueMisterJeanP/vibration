@@ -6,7 +6,7 @@ Application de messagerie web installable, responsive et chiffrée côté naviga
   <img src="docs/interface-community.png" alt="Interface fictive de Vibration Community avec discussions de démonstration, sondage, fichier et messages épinglés" width="900">
 </p>
 
-<p align="center"><strong>Vibration Community 1.0.24</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
+<p align="center"><strong>Vibration Community 1.0.25</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
 
 ## Philosophie
 
@@ -102,6 +102,14 @@ L’édition Enterprise reprend toutes les fonctionnalités de Community et ajou
 Le périmètre des appels et groupes fédérés est détaillé dans [Community et Enterprise](COMMUNITY_VS_ENTERPRISE.md). L’offre Enterprise est présentée sur [vibration-shop.appbox.fr](https://vibration-shop.appbox.fr).
 
 ## Nouveautés
+
+### Community 1.0.25
+
+- **Repères visuels dans les conversations** : les échanges directs, les groupes et Mes notes disposent maintenant d’une présentation illustrée propre à leur usage, conservée au-dessus des messages.
+- **Accueil Vibration enrichi** : lorsqu’aucune discussion n’est affichée, l’identité Vibration et sa vocation de messagerie chiffrée, collaborative et souveraine accompagnent l’invitation à sélectionner une conversation.
+- **Groupes immédiatement reconnaissables** : leur illustration utilise deux bulles de discussion superposées, assorties au fond et aux couleurs de l’interface.
+- **Interface traduite dans les six langues** : tous les nouveaux titres et sous-titres sont disponibles en français, anglais, espagnol, italien, portugais et allemand.
+- **Cache PWA v380** : les styles, scripts et traductions de cette version sont renouvelés ensemble pour garantir leur déploiement immédiat.
 
 ### Community 1.0.24
 

@@ -21,6 +21,33 @@ const mobileSelection = app.slice(
 
 assert.match(selectConversation, /elements\.messages\.replaceChildren\(loading\)/);
 assert.match(selectConversation, /loading\.textContent = t\("Chargement…"\)/);
+assert.match(app, /function createConversationExchangeState\(conversation, empty = null\)/);
+assert.match(app, /conversation\?\.is_personal[\s\S]*\? "notes"/);
+assert.match(app, /conversation\?\.type === "group"/);
+assert.match(app, /notes: \["Mes notes", "documents, enregistrements et évènements personnels"\]/);
+assert.match(app, /<rect x="24" y="27" width="72" height="76" rx="8">/);
+assert.match(app, /translate\(36 21\) scale\(\.78\)[\s\S]*translate\(-7 13\) scale\(\.88\)/);
+assert.equal((app.match(/<circle cx="44" cy="56" r="3\.5"><\/circle>/g) || []).length, 3);
+assert.equal(
+  (app.match(/createConversationExchangeState\((?:state\.current|conversation)(?:, empty)?\)/g) || []).length,
+  5,
+  "le schéma adapté doit être conservé dans les discussions privées et de groupe, vides ou alimentées",
+);
+assert.match(css, /\.conversation-exchange-state > #empty-chat/);
+assert.match(css, /\.conversation-exchange-intro/);
+assert.match(css, /\.conversation-exchange-icon\.group-exchange-icon svg/);
+assert.doesNotMatch(app, /group-bubble-overlap-mask/);
+assert.doesNotMatch(css, /\.group-exchange-icon\s*\{[^}]*background:/);
+assert.match(css, /\.conversation-exchange-icon\s*\{[^}]*radial-gradient\(circle, rgb\(32 199 181 \/ \.16\)/);
+assert.match(css, /\.group-exchange-icon svg[^}]*fill:\s*var\(--group-bubble-surface\)[^}]*stroke:\s*currentColor/);
+assert.match(css, /--group-bubble-surface:\s*#e3f2f1/);
+assert.match(app, /document\.querySelector\("#empty-chat"\)\?\.remove\(\);[\s\S]*elements\.messages\.prepend\(fragment\)/);
+assert.match(app, /function createNoConversationState\(\)/);
+assert.match(app, /M60 22 98 60 60 98 22 60Z/);
+assert.match(app, /messagerie chiffrée, collaborative et souveraine/);
+assert.match(app, /elements\.messages\.replaceChildren\(createNoConversationState\(\)\)/);
+assert.match(css, /\.no-conversation-state > #empty-chat/);
+assert.match(css, /\.conversation-exchange-icon\.no-conversation-icon svg/);
 assert.match(app, /let conversationSelectionVersion = 0;/);
 assert.ok(
   selectConversation.indexOf('elements.shell.classList.remove("sidebar-open")') < selectConversation.indexOf("await getMembers"),
