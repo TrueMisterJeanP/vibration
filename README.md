@@ -3,7 +3,7 @@
 Application de messagerie web installable, responsive et chiffrée côté navigateur. Le serveur Go assure l’authentification, le routage REST/WebSocket, la persistance SQLite et les notifications Web Push, sans jamais déchiffrer les messages, noms de groupes ou fichiers.
 
 <p align="center">
-  <img src="docs/interface-community.png" alt="Interface fictive de Vibration Community avec discussions de démonstration, sondage, fichier et messages épinglés" width="900">
+  <img src="docs/interface-community-v1.0.26.png" alt="Interface fictive de Vibration Community avec discussions de démonstration, sondage, fichier et messages épinglés" width="900">
 </p>
 
 <p align="center"><strong>Vibration Community 1.0.26</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
