@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-25-v380";
+import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-26-v383";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -19,7 +19,7 @@ import {
   verifyMessagePayload,
   unwrapGroupKey,
   wrapGroupKey,
-} from "./crypto.js?v=community-1-0-25-v380";
+} from "./crypto.js?v=community-1-0-26-v383";
 import {
   forgetRememberedIdentity,
 	forgetTrustedDeviceCredential,
@@ -40,10 +40,10 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=community-1-0-25-v380";
-import { ChatSocket } from "./websocket.js?v=community-1-0-25-v380";
-import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-25-v380";
-import { locale, t } from "./i18n.js?v=community-1-0-25-v380";
+} from "./notifications.js?v=community-1-0-26-v383";
+import { ChatSocket } from "./websocket.js?v=community-1-0-26-v383";
+import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-26-v383";
+import { locale, t } from "./i18n.js?v=community-1-0-26-v383";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
 import { nonWhiteImageBounds } from "./file-preview-image.js?v=ios17-pdf-v199";
 import {
@@ -71,7 +71,7 @@ import {
   sameCallIdentity,
   shouldOfferAfterAccept,
   shouldOfferInGroup,
-} from "./call-negotiation.js?v=community-1-0-25-v380";
+} from "./call-negotiation.js?v=community-1-0-26-v383";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
 import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
@@ -100,7 +100,7 @@ const GLOBAL_FILES_PAGE_SIZE = 40;
 const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
 const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "community-1-0-25-v380";
+const APP_BUILD = "community-1-0-26-v383";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
 const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;
@@ -2978,7 +2978,7 @@ function warmAdminShell() {
   adminShellPreloaded = true;
   for (const [rel, href] of [
     ["prefetch", "/admin.html?from=chat"],
-    ["modulepreload", "/js/admin.js?v=community-1-0-25-v380"],
+    ["modulepreload", "/js/admin.js?v=community-1-0-26-v383"],
   ]) {
     const link = document.createElement("link");
     link.rel = rel;
@@ -9105,7 +9105,12 @@ async function createFileShare(event) {
     elements.fileShareCreateActions.hidden = true;
     elements.fileShareExpiration.disabled = true;
     state.activeFileShareID = share.id;
-    loadExistingFileShares(message, conversation);
+    elements.fileShareExisting.hidden = true;
+    elements.fileShareExistingList.replaceChildren();
+    updateCachedGlobalFileShareCount(
+      message.file.id,
+      Number(message.file.active_share_count || 0) + 1,
+    );
     toast("Lien de partage sécurisé créé.", "success");
   } catch (error) {
     elements.fileShareError.textContent = frenchErrorMessage(error, "Impossible de créer le lien de partage.");
@@ -9158,7 +9163,8 @@ async function revokeFileShare() {
     if (state.pendingFileShare?.message?.file?.id) {
       const fileID = state.pendingFileShare.message.file.id;
       updateCachedGlobalFileShareCount(fileID, Number(state.pendingFileShare.message.file.active_share_count || 1) - 1);
-      loadExistingFileShares(state.pendingFileShare.message, state.pendingFileShare.conversation);
+      elements.fileShareExisting.hidden = true;
+      elements.fileShareExistingList.replaceChildren();
     }
   } catch (error) {
     elements.fileShareError.textContent = frenchErrorMessage(error, "Impossible de désactiver le lien.");

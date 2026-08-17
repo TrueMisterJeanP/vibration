@@ -8,6 +8,14 @@ const share = fs.readFileSync(path.join(root, "web/js/share.js"), "utf8");
 const shareHTML = fs.readFileSync(path.join(root, "web/share.html"), "utf8");
 const worker = fs.readFileSync(path.join(root, "web/sw.js"), "utf8");
 const server = fs.readFileSync(path.join(root, "internal/files/shares.go"), "utf8");
+const createShare = app.slice(
+  app.indexOf("async function createFileShare("),
+  app.indexOf("async function copyFileShareLink("),
+);
+const revokeShare = app.slice(
+  app.indexOf("async function revokeFileShare("),
+  app.indexOf("async function downloadFile("),
+);
 
 assert.match(app, /async function createFileShare[\s\S]*encryptFileBytes\(shareKey, file\.data\)/);
 assert.match(app, /upload\.append\("metadata", JSON\.stringify\(metadata\)\)/);
@@ -16,6 +24,10 @@ assert.match(app, /const recovered = await api\(`\/api\/file-shares\/\$\{shareTo
 assert.match(app, /const encryptedLink = await encryptEnvelope\(conversationKey, publicURL\.toString\(\)\)/);
 assert.match(app, /encrypted_link: encryptedLink/);
 assert.match(app, /async function loadExistingFileShares[\s\S]*decryptEnvelope\(conversationKey, share\.encrypted_link\)[\s\S]*copyTextToClipboard\(link\)/);
+assert.match(createShare, /fileShareExisting\.hidden = true;[\s\S]*fileShareExistingList\.replaceChildren\(\)/);
+assert.doesNotMatch(createShare, /loadExistingFileShares\(/);
+assert.match(revokeShare, /fileShareExisting\.hidden = true;[\s\S]*fileShareExistingList\.replaceChildren\(\)/);
+assert.doesNotMatch(revokeShare, /loadExistingFileShares\(/);
 assert.match(server, /func \(h \*Handler\) CreateShare[\s\S]*extendFileTransferDeadlines\(w, r, r\.ContentLength\)/);
 assert.match(server, /INSERT INTO file_shares\(file_id,created_by,token_hash,encrypted_link/);
 assert.match(server, /SELECT id,encrypted_link,expires_at/);

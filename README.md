@@ -6,7 +6,7 @@ Application de messagerie web installable, responsive et chiffrée côté naviga
   <img src="docs/interface-community.png" alt="Interface fictive de Vibration Community avec discussions de démonstration, sondage, fichier et messages épinglés" width="900">
 </p>
 
-<p align="center"><strong>Vibration Community 1.0.25</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
+<p align="center"><strong>Vibration Community 1.0.26</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
 
 ## Philosophie
 
@@ -102,6 +102,13 @@ L’édition Enterprise reprend toutes les fonctionnalités de Community et ajou
 Le périmètre des appels et groupes fédérés est détaillé dans [Community et Enterprise](COMMUNITY_VS_ENTERPRISE.md). L’offre Enterprise est présentée sur [vibration-shop.appbox.fr](https://vibration-shop.appbox.fr).
 
 ## Nouveautés
+
+### Community 1.0.26
+
+- **Partage de fichiers plus lisible** : après la création d’un lien sécurisé, la fenêtre se concentre sur les actions « Copier le lien » et « Désactiver le lien » sans répéter ce nouveau lien dans « Vos liens précédents ».
+- **Historique conservé dans le Dossier** : les liens de partage déjà actifs restent consultables et révocables lors de l’ouverture d’un document depuis le Dossier.
+- **Compteur de partages synchronisé** : la création et la désactivation du lien mettent immédiatement à jour l’état du document dans le Dossier.
+- **Cache PWA v383** : les scripts et métadonnées de cette version sont renouvelés ensemble pour garantir son déploiement immédiat.
 
 ### Community 1.0.25
 
