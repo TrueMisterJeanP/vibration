@@ -19,8 +19,8 @@ assert.match(app, /function retryIncompleteBoot\(\) \{\s*if \(appReady \|\| boot
 assert.match(refreshAll, /const request = \(path, options = \{\}\) => api\(path, requestTimeoutMS > 0/);
 assert.match(refreshAll, /request\("\/api\/contacts"\)/);
 assert.match(refreshAll, /request\("\/api\/conversations"\)/);
-assert.match(worker, /chat-pwa-go-v383/);
-assert.match(worker, /\/js\/api\.js\?v=community-1-0-26-v383/);
+assert.match(worker, /chat-pwa-go-v396/);
+assert.match(worker, /\/js\/api\.js\?v=community-1-0-27-v396/);
 
 (async () => {
   const originals = new Map(["window", "location", "localStorage", "fetch"].map((name) => [

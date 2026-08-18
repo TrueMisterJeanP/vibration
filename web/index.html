@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1b5260">
-  <meta name="vibration-build" content="community-1-0-26-v383">
+  <meta name="vibration-build" content="community-1-0-27-v396">
   <style>
     :root { --avatar-bg: #1b5260; --avatar-fg: #a9fff4; background-color: #1b5260; }
     html[data-theme="light"] { --avatar-bg: #c9e7e4; --avatar-fg: #075e57; background-color: #c9e7e4; }
@@ -16,15 +16,15 @@
     #startup-splash svg { position: absolute; top: var(--startup-symbol-y, 0); left: var(--startup-symbol-x, calc((100vw - 120px) / 2)); display: block; width: 120px; height: 120px; visibility: hidden; fill: none; stroke: var(--avatar-fg); stroke-width: 1.25; stroke-linejoin: miter; animation: none; transition: none; }
     html.ios-pwa-splash-positioned #startup-splash svg { visibility: visible; }
   </style>
-  <script src="/js/theme.js?v=group-clean-overlap-v383"></script>
+  <script src="/js/theme.js?v=group-clean-overlap-v396"></script>
   <title>Vibration</title>
   <link rel="manifest" href="/manifest.json?v=desktop-titlebar-v252">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=group-clean-overlap-v383">
+  <link rel="stylesheet" href="/css/style.css?v=group-clean-overlap-v396">
 </head>
 <body>
-  <div class="desktop-titlebar-drag-region" data-tauri-drag-region aria-hidden="true"></div>
+  <div class="desktop-titlebar-drag-region" data-tauri-drag-region aria-hidden="true" data-title="Vibration"></div>
   <div id="startup-splash" role="status" aria-label="Chargement de Vibration">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 20 12 12 20 4 12Z"></path></svg>
   </div>
@@ -34,19 +34,15 @@
         <div class="brand">
           <button id="close-sidebar-logo" class="brand-logo-button sidebar-navigation-button" type="button"
             title="Ouvrir mon profil" aria-label="Ouvrir mon profil" aria-haspopup="dialog" aria-controls="profile-dialog">
-            <img class="header-avatar" alt="" hidden><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4.5 21a7.5 7.5 0 0 1 15 0"></path></svg><span class="menu-mark" aria-hidden="true" hidden></span>
+            <img class="header-avatar" alt="" hidden><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4.5 21a7.5 7.5 0 0 1 15 0"></path></svg><span class="menu-mark" aria-hidden="true" hidden></span><span id="ws-dot"></span>
           </button>
           <button id="profile-button" class="profile-trigger" type="button" title="Ouvrir mon profil">
-            <strong>Vibration</strong><small id="identity-label">Chargement…</small>
+            <strong id="display-name-label">Vibration</strong>
+            <small class="profile-identity"><span id="identity-label">Chargement…</span><span class="connection-inline"> · <span id="ws-label">Hors ligne</span></span></small>
           </button>
         </div>
         <button id="logout-button" class="icon-button" title="Déconnexion" aria-label="Déconnexion"><svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="M16 17l5-5-5-5"></path><path d="M21 12H9"></path></svg></button>
       </header>
-      <div class="connection-row"><span id="ws-dot"></span><span id="ws-label">Hors ligne</span></div>
-      <a id="admin-link" class="admin-link" href="/admin.html?from=chat" hidden>
-        <svg class="sidebar-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 19 6v5.5c0 4.5-2.9 7.6-7 9.5-4.1-1.9-7-5-7-9.5V6Z"></path><path d="m9 12 2 2 4-4"></path></svg>
-        <span class="admin-link-label">Administration</span>
-      </a>
       <div id="conversation-list-loading" class="conversation-list-loading" role="status">Chargement des discussions…</div>
       <div id="conversation-lists" aria-busy="true" hidden>
         <div class="actions" aria-label="Créer une discussion">
@@ -63,18 +59,26 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m16 16 5 5"></path></svg>
           <input id="conversation-search" type="search" autocomplete="off" autocapitalize="none" spellcheck="false"
             placeholder="Rechercher une discussion" aria-label="Rechercher une discussion">
+          <kbd class="conversation-search-shortcut" aria-hidden="true">⌘K</kbd>
         </div>
+        <p id="personal-conversation-heading" class="conversation-section-heading" hidden>Épinglées</p>
         <button id="personal-conversation-button" class="conversation-item personal-conversation-item" type="button" hidden>
           <span class="avatar personal-note-avatar" aria-hidden="true">
             <svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="16" rx="2"></rect><path d="M8 3v5M12 3v5M16 3v5M8 11h8M8 14h8M8 17h8"></path></svg>
           </span>
           <span>
-            <span class="conversation-title-row"><strong>Mes notes</strong><span id="personal-conversation-unread" class="unread-badge" hidden></span></span>
+            <span class="conversation-title-row"><strong>Mes notes</strong><time id="personal-conversation-time" class="conversation-time"></time><span id="personal-conversation-unread" class="unread-badge" hidden></span></span>
             <small id="personal-conversation-preview" class="conversation-description">Messages et fichiers personnels</small>
           </span>
         </button>
+        <p class="conversation-section-heading">Discussions</p>
         <nav id="conversation-list" aria-label="Conversations"></nav>
       </div>
+      <a id="admin-link" class="admin-link" href="/admin.html?from=chat" hidden>
+        <svg class="sidebar-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 19 6v5.5c0 4.5-2.9 7.6-7 9.5-4.1-1.9-7-5-7-9.5V6Z"></path><path d="m9 12 2 2 4-4"></path></svg>
+        <span class="admin-link-label">Administration</span>
+        <span class="admin-link-chevron" aria-hidden="true">›</span>
+      </a>
     </aside>
     <section id="chat-panel">
       <header class="chat-header">
@@ -97,16 +101,18 @@
       <div id="chat-workspace">
         <div id="message-list">
           <div class="no-conversation-state">
-            <div class="conversation-exchange-intro no-conversation-intro">
-              <span class="conversation-exchange-icon no-conversation-icon" aria-hidden="true">
-                <svg viewBox="0 0 120 120" focusable="false"><path d="M60 22 98 60 60 98 22 60Z"></path></svg>
-              </span>
-              <span class="conversation-exchange-copy">
-                <strong>Vibration</strong>
-                <span>messagerie chiffrée, collaborative et souveraine</span>
-              </span>
+            <span class="conversation-exchange-icon no-conversation-icon" aria-hidden="true">
+              <svg viewBox="0 0 120 120" focusable="false"><path d="M60 22 98 60 60 98 22 60Z"></path></svg>
+            </span>
+            <div class="no-conversation-copy">
+              <strong>Aucune conversation ouverte</strong>
+              <div id="empty-chat">Sélectionnez une discussion à gauche ou démarrez-en une nouvelle.</div>
             </div>
-            <div id="empty-chat">Sélectionnez une conversation ou créez-en une nouvelle.</div>
+            <div class="no-conversation-actions" aria-label="Démarrer une conversation">
+              <button type="button" data-empty-action="contact"><span aria-hidden="true">＋</span> Nouvelle discussion</button>
+              <button class="outline" type="button" data-empty-action="group">Créer un groupe</button>
+              <button class="outline" type="button" data-empty-action="notes">Ouvrir mes notes</button>
+            </div>
           </div>
         </div>
         <aside id="pinned-panel" aria-labelledby="pinned-panel-title" hidden>
@@ -172,7 +178,8 @@
           <audio id="voice-draft-audio" controls preload="auto"></audio>
           <button id="voice-draft-clear" type="button" aria-label="Supprimer le message vocal">×</button>
         </div>
-        <div class="composer-tools">
+        <div class="composer-box">
+          <div class="composer-tools">
           <label class="file-picker" title="Envoyer un fichier" aria-label="Envoyer un fichier"><svg class="composer-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m20.5 11.5-8.9 8.9a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.9-2.8l8.5-8.5"></path></svg><input id="file-input" type="file" hidden></label>
           <button id="emoji-button" class="composer-tool-button" type="button" title="Ajouter un emoji"
             aria-label="Ajouter un emoji" aria-expanded="false" aria-controls="emoji-picker" disabled><svg class="composer-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><circle cx="9" cy="9" r="1" class="icon-dot"></circle><circle cx="15" cy="9" r="1" class="icon-dot"></circle></svg></button>
@@ -182,10 +189,15 @@
             aria-label="Créer un sondage" disabled><svg class="composer-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10h4v10M10 20V4h4v16M16 20v-7h4v7M3 20h18"></path></svg></button>
           <button id="event-button" class="composer-tool-button" type="button" title="Créer un évènement"
             aria-label="Créer un évènement" disabled><svg class="composer-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v16H3ZM7 3v4M17 3v4M3 10h18"></path><path d="m8 15 2 2 5-5"></path></svg></button>
-          <div id="emoji-picker" role="dialog" aria-label="Choisir un emoji" hidden></div>
+            <div id="emoji-picker" role="dialog" aria-label="Choisir un emoji" hidden></div>
+          </div>
+          <textarea id="message-input" rows="1" maxlength="200000" placeholder="Message chiffré…" disabled></textarea>
+          <button id="send-button" type="submit" disabled>Envoyer</button>
         </div>
-        <textarea id="message-input" rows="1" maxlength="200000" placeholder="Message chiffré…" disabled></textarea>
-        <button id="send-button" type="submit" disabled>Envoyer</button>
+        <div class="composer-security">
+          <span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg> Chiffrement de bout en bout actif</span>
+          <span class="composer-shortcuts" aria-hidden="true">↵ envoyer · ⇧↵ nouvelle ligne</span>
+        </div>
       </form>
     </section>
   </main>
@@ -340,7 +352,7 @@
 
   <dialog id="contact-dialog"><form method="dialog" id="contact-form">
     <button class="dialog-close" value="cancel">×</button><h3>Ajouter un contact</h3>
-    <label>Nom d’utilisateur, nom affiché, rôle ou code privé<input id="contact-search" minlength="2" autocomplete="off" placeholder="Contact, rôle, code privé"></label>
+    <label>Nom d’utilisateur, nom affiché, rôle ou code privé<input id="contact-search" minlength="2" autocomplete="off" placeholder="ex. karine, administrateur ou KYV-U4CA-F735-3KMB"></label>
     <div id="contact-results" class="picker-list"></div>
   </form></dialog>
 
@@ -356,7 +368,7 @@
     </section>
     <label>Nom du groupe<input id="group-name" required maxlength="80"></label>
     <label>Description<textarea id="group-description" rows="3" maxlength="280" placeholder="Décrivez le groupe"></textarea></label>
-    <label>Ajouter un membre par nom d’utilisateur, nom affiché, rôle ou code privé<input id="group-user-search" minlength="2" autocomplete="off" placeholder="Contact, rôle, code privé"></label>
+    <label>Ajouter un membre par nom d’utilisateur, nom affiché, rôle ou code privé<input id="group-user-search" minlength="2" autocomplete="off" placeholder="ex. karine, administrateur ou KYV-U4CA-F735-3KMB"></label>
     <div id="group-user-results" class="picker-list"></div>
     <section class="conversation-info-members" aria-labelledby="group-members-title">
       <h4 id="group-members-title">
@@ -382,7 +394,7 @@
       </section>
       <label>Nouveau nom<input id="group-edit-name" required maxlength="80"></label>
       <label>Description<textarea id="group-edit-description" rows="3" maxlength="280"></textarea></label>
-      <label>Ajouter un membre par nom d’utilisateur, nom affiché, rôle ou code privé<input id="group-edit-user-search" minlength="2" autocomplete="off" placeholder="Contact, rôle, code privé"></label>
+      <label>Ajouter un membre par nom d’utilisateur, nom affiché, rôle ou code privé<input id="group-edit-user-search" minlength="2" autocomplete="off" placeholder="ex. karine, administrateur ou KYV-U4CA-F735-3KMB"></label>
       <div id="group-edit-user-results" class="picker-list"></div>
       <section class="conversation-info-members" aria-labelledby="group-edit-members-title">
         <h4 id="group-edit-members-title">
@@ -600,6 +612,6 @@
   <div id="toasts" aria-live="polite"></div>
   <script src="/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2"></script>
   <script src="/vendor/jsqr/jsQR.js?v=qr-scanner-v296"></script>
-  <script type="module" src="/js/app.js?v=community-1-0-26-v383"></script>
+  <script type="module" src="/js/app.js?v=community-1-0-27-v396"></script>
 </body>
 </html>

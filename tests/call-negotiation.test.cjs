@@ -415,6 +415,11 @@ async function loadModule() {
     /callSignalLedger\.endCall\(\{ conversationID: call\.conversationID, sender: identity, callID: call\.id \}\)/,
     "local teardown must keep the tombstone rather than forgetting the call",
   );
+  assert.match(
+    app,
+    /elements\.callScreenShareButton\.hidden = !controlsVisible \|\| state\.call\.media !== "video"/,
+    "screen sharing must only be offered during video calls",
+  );
 
   console.log("call negotiation tests passed");
 })().catch((error) => {

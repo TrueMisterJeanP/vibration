@@ -5,12 +5,34 @@ const vm = require("node:vm");
 
 const root = path.resolve(__dirname, "..");
 const app = fs.readFileSync(path.join(root, "web/js/app.js"), "utf8");
+const css = fs.readFileSync(path.join(root, "web/css/style.css"), "utf8");
 const start = app.indexOf("async function openFileShareDialog(");
 const end = app.indexOf("async function loadExistingFileShares(", start);
 
 assert.ok(start >= 0 && end > start, "l’ouverture du formulaire de partage doit rester testable isolément");
 assert.match(app, /let fileShareOpenTask = null;/);
 assert.match(app, /let fileShareOpenVersion = 0;/);
+assert.match(
+  css,
+  /\.file-share-button\s*\{[^}]*width:\s*2\.75rem;[^}]*min-width:\s*2\.75rem;[^}]*height:\s*2\.75rem;[^}]*min-height:\s*2\.75rem;[^}]*aspect-ratio:\s*1;[^}]*border-radius:\s*50%;/,
+  "les boutons de partage et d’annulation doivent rester parfaitement circulaires",
+);
+
+const globalFileRowStart = app.indexOf("function createGlobalFileRow(");
+const globalFileRowEnd = app.indexOf("async function openGlobalFile(", globalFileRowStart);
+const globalFileRow = app.slice(globalFileRowStart, globalFileRowEnd);
+assert.match(
+  globalFileRow,
+  /global-file-share[\s\S]*openFileShareDialog\(item\.message, item\.clear, item\.conversation, share\)/,
+  "le Dossier doit ouvrir le formulaire de partage",
+);
+assert.match(globalFileRow, /file-share-button global-file-share/);
+assert.match(globalFileRow, /file-share-button global-file-unshare/);
+assert.doesNotMatch(
+  globalFileRow,
+  /globalFilesDialog\.close\(\)/,
+  "le formulaire de partage doit laisser le Dossier ouvert en arrière-plan",
+);
 
 function deferred() {
   let resolve;

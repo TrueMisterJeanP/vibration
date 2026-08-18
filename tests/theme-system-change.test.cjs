@@ -4,6 +4,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const themeSource = fs.readFileSync(path.join(__dirname, "../web/js/theme.js"), "utf8");
+const themeCSS = fs.readFileSync(path.join(__dirname, "../web/css/style.css"), "utf8");
 
 function startTheme({ savedTheme = null, legacyMediaQuery = false } = {}) {
   let systemIsLight = false;
@@ -129,5 +130,13 @@ const legacy = startTheme({ legacyMediaQuery: true });
 legacy.setSystemTheme("light");
 legacy.signalSystemChange();
 assert.equal(legacy.documentElement.dataset.theme, "light", "l’ancienne API MediaQueryList de Safari doit rester prise en charge");
+
+assert.match(themeCSS, /:root\s*\{[\s\S]*--reference-sidebar:\s*#0d2631;[\s\S]*--reference-chat:\s*#071b24;/);
+assert.match(themeCSS, /:root\[data-theme="light"\]\s*\{[\s\S]*--reference-sidebar:\s*#f8f9fa;[\s\S]*--reference-chat:\s*#ffffff;/);
+assert.match(themeCSS, /--reference-contact:\s*#173b47;[\s\S]*:root\[data-theme="light"\][\s\S]*--reference-contact:\s*#ffffff;/);
+assert.match(themeCSS, /#sidebar,[\s\S]*background:\s*var\(--reference-sidebar\);/);
+assert.match(themeCSS, /#chat-panel,[\s\S]*background-color:\s*var\(--reference-chat\);/);
+assert.match(themeCSS, /\.actions #contact-button,[^}]*background:\s*var\(--reference-contact\);/);
+assert.match(themeCSS, /\.auth-page,[\s\S]*\.admin-page\s*\{[^}]*background:\s*var\(--bg\);/);
 
 console.log("Theme: automatic appearance follows iPadOS changes and PWA resume events");

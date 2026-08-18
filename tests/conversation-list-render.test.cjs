@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const app = fs.readFileSync(path.join(__dirname, "../web/js/app.js"), "utf8");
+const css = fs.readFileSync(path.join(__dirname, "../web/css/style.css"), "utf8");
 const renderConversations = app.slice(
   app.indexOf("async function renderConversations"),
   app.indexOf("function renderGroupInvitation"),
@@ -36,5 +37,18 @@ assert.doesNotMatch(renderConversations, /\btitle\.textContent = t\(conversation
 assert.doesNotMatch(renderConversations, /elements\.conversations\.append\(/);
 assert.match(renderConversations, /elements\.conversations\.replaceChildren\(list\);/);
 assert.match(renderConversations, /if \(!isCurrentRender\(\)\) return;/);
+assert.match(css, /\.conversation-row \.conversation-title-row\s*\{[^}]*padding-right:\s*4\.75rem;/);
+assert.match(
+  css,
+  /\.conversation-row \.conversation-time\s*\{[^}]*position:\s*absolute;[^}]*top:\s*\.45rem;[^}]*right:\s*\.55rem;[^}]*width:\s*4\.25rem;[^}]*text-align:\s*right;/,
+  "la date doit rester alignée à droite au-dessus du menu de la discussion",
+);
+assert.match(css, /\.personal-conversation-item > span:nth-child\(2\)\s*\{[^}]*flex:\s*1 1 auto;[^}]*max-width:\s*none;/);
+assert.match(css, /\.personal-conversation-item \.conversation-title-row\s*\{[^}]*padding-right:\s*4\.75rem;/);
+assert.match(
+  css,
+  /#personal-conversation-time\s*\{[^}]*position:\s*absolute;[^}]*top:\s*\.45rem;[^}]*right:\s*\.65rem;[^}]*width:\s*4\.25rem;[^}]*text-align:\s*right;/,
+  "l’horodatage des notes personnelles doit rester aligné à droite comme les autres discussions",
+);
 
 console.log("Conversation list rendering: concurrent startup renders cannot duplicate the list");

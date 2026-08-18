@@ -6,7 +6,7 @@ const root = path.join(__dirname, "..");
 const html = fs.readFileSync(path.join(root, "web/index.html"), "utf8");
 const app = fs.readFileSync(path.join(root, "web/js/app.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "web/css/style.css"), "utf8");
-assert.match(css, /\.chat-conversation-identity\.conversation-info-trigger #chat-title\s*\{[^}]*color:\s*var\(--group-action\)/);
+assert.match(css, /\.chat-conversation-identity\.conversation-info-trigger #chat-title\s*\{[^}]*color:\s*var\(--text\)/);
 
 const avatarPosition = html.indexOf('id="chat-avatar"');
 const titlePosition = html.indexOf('id="chat-title"');
@@ -106,5 +106,7 @@ assert.match(css, /\.call-banner-status\s*\{[^}]*display: inline-flex;[^}]*align
 assert.match(app, /function renderGroupAvatarPreview\(container, avatar\)/);
 assert.match(css, /:root\[data-theme="light"\]\s*\{ --avatar-bg: #c9e7e4; --avatar-fg: #075e57; \}/);
 assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.chat-conversation-avatar \{ display: none; \}/);
+assert.match(css, /\.composer-box:focus-within\s*\{[^}]*border-color:\s*var\(--line\);[^}]*box-shadow:\s*none;/);
+assert.match(css, /#message-input:focus,[\s\S]*#message-input:focus-visible\s*\{[^}]*outline:\s*none;[^}]*box-shadow:\s*none;/);
 
 console.log("Conversation header: avatar, name and description wiring verified");

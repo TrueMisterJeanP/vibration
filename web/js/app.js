@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-26-v383";
+import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-27-v396";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -19,7 +19,7 @@ import {
   verifyMessagePayload,
   unwrapGroupKey,
   wrapGroupKey,
-} from "./crypto.js?v=community-1-0-26-v383";
+} from "./crypto.js?v=community-1-0-27-v396";
 import {
   forgetRememberedIdentity,
 	forgetTrustedDeviceCredential,
@@ -40,10 +40,10 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=community-1-0-26-v383";
-import { ChatSocket } from "./websocket.js?v=community-1-0-26-v383";
-import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-26-v383";
-import { locale, t } from "./i18n.js?v=community-1-0-26-v383";
+} from "./notifications.js?v=community-1-0-27-v396";
+import { ChatSocket } from "./websocket.js?v=community-1-0-27-v396";
+import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-27-v396";
+import { locale, t } from "./i18n.js?v=community-1-0-27-v396";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
 import { nonWhiteImageBounds } from "./file-preview-image.js?v=ios17-pdf-v199";
 import {
@@ -71,7 +71,7 @@ import {
   sameCallIdentity,
   shouldOfferAfterAccept,
   shouldOfferInGroup,
-} from "./call-negotiation.js?v=community-1-0-26-v383";
+} from "./call-negotiation.js?v=community-1-0-27-v396";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
 import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
@@ -100,7 +100,7 @@ const GLOBAL_FILES_PAGE_SIZE = 40;
 const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
 const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "community-1-0-26-v383";
+const APP_BUILD = "community-1-0-27-v396";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
 const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;
@@ -225,8 +225,10 @@ const elements = {
   conversationListLoading: document.querySelector("#conversation-list-loading"),
   conversationSearch: document.querySelector("#conversation-search"),
   conversations: document.querySelector("#conversation-list"),
+  personalConversationHeading: document.querySelector("#personal-conversation-heading"),
   personalConversationButton: document.querySelector("#personal-conversation-button"),
   personalConversationPreview: document.querySelector("#personal-conversation-preview"),
+  personalConversationTime: document.querySelector("#personal-conversation-time"),
   personalConversationUnread: document.querySelector("#personal-conversation-unread"),
   messages: document.querySelector("#message-list"),
   chatWorkspace: document.querySelector("#chat-workspace"),
@@ -745,32 +747,23 @@ function createConversationExchangeState(conversation, empty = null) {
   icon.className = `conversation-exchange-icon ${exchangeKind}-exchange-icon`;
   icon.setAttribute("aria-hidden", "true");
   icon.innerHTML = exchangeKind === "group"
-    ? `<svg viewBox="0 0 120 120" focusable="false">
-        <g transform="translate(36 21) scale(.78)">
-          <path vector-effect="non-scaling-stroke" d="M22 56c0-20 17-35 38-35s38 15 38 35c0 8-3 15-8 21l2 20-20-9c-4 2-8 3-12 3-21 0-38-15-38-35Z"></path>
-          <circle cx="44" cy="56" r="3.5"></circle><circle cx="60" cy="56" r="3.5"></circle><circle cx="76" cy="56" r="3.5"></circle>
-        </g>
-        <g transform="translate(-7 13) scale(.88)">
-          <path vector-effect="non-scaling-stroke" d="M22 56c0-20 17-35 38-35s38 15 38 35c0 8-3 15-8 21l2 20-20-9c-4 2-8 3-12 3-21 0-38-15-38-35Z"></path>
-          <circle cx="44" cy="56" r="3.5"></circle><circle cx="60" cy="56" r="3.5"></circle><circle cx="76" cy="56" r="3.5"></circle>
-        </g>
+    ? `<svg viewBox="0 0 24 24" focusable="false">
+        <path d="M9 5h9a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-4l-4 3v-3H9a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"></path>
+        <path d="M7 9H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2v3l4-3h4a2 2 0 0 0 2-2v-2"></path>
       </svg>`
     : exchangeKind === "notes"
-      ? `<svg viewBox="0 0 120 120" focusable="false">
-          <rect x="24" y="27" width="72" height="76" rx="8"></rect>
-          <path d="M42 17v24M60 17v24M78 17v24M40 54h40M40 69h40M40 84h26"></path>
+      ? `<svg viewBox="0 0 24 24" focusable="false">
+          <rect x="5.5" y="4.5" width="13" height="16" rx="2"></rect>
+          <path d="M8.5 2.5v4M12 2.5v4M15.5 2.5v4M8.5 10h7M8.5 13.5h7M8.5 17h5"></path>
         </svg>`
-      : `<svg viewBox="0 0 120 120" focusable="false">
-        <path d="M22 56c0-20 17-35 38-35s38 15 38 35c0 8-3 15-8 21l2 20-20-9c-4 2-8 3-12 3-21 0-38-15-38-35Z"></path>
-        <circle cx="44" cy="56" r="3.5"></circle>
-        <circle cx="60" cy="56" r="3.5"></circle>
-        <circle cx="76" cy="56" r="3.5"></circle>
+      : `<svg viewBox="0 0 24 24" focusable="false">
+        <path d="M6 5h12a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-6l-5 4v-4H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"></path>
       </svg>`;
 
   const exchangeLabels = {
-    direct: ["Échange direct", "de personne à personne"],
-    group: ["Échange de groupe", "communication entre plusieurs membres"],
-    notes: ["Mes notes", "documents, enregistrements et évènements personnels"],
+    direct: ["Échange direct", "Conversation chiffrée entre deux personnes"],
+    group: ["Échange de groupe", "Conversation chiffrée entre plusieurs membres"],
+    notes: ["Mes notes", "Documents, enregistrements et évènements personnels"],
   }[exchangeKind];
   const copy = document.createElement("span");
   copy.className = "conversation-exchange-copy";
@@ -1218,6 +1211,12 @@ function bindUI() {
   document.querySelector("#group-button").onclick = () => {
     openGroupDialog().catch((error) => toast(frenchErrorMessage(error, "Impossible d’ouvrir la création de groupe."), "error"));
   };
+  elements.messages.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-empty-action]")?.dataset.emptyAction;
+    if (action === "contact") document.querySelector("#contact-button").click();
+    if (action === "group") document.querySelector("#group-button").click();
+    if (action === "notes") elements.personalConversationButton.click();
+  });
   elements.personalConversationButton.onclick = () => {
     const conversation = state.conversations.find((item) => item.is_personal);
     if (conversation) {
@@ -1364,6 +1363,12 @@ function bindUI() {
   bindExpirationDialog();
   elements.input.addEventListener("input", sendTyping);
   elements.conversationSearch.addEventListener("input", applyConversationSearch);
+  document.addEventListener("keydown", (event) => {
+    if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "k") return;
+    event.preventDefault();
+    elements.conversationSearch.focus();
+    elements.conversationSearch.select();
+  });
   document.querySelector("#contact-search").addEventListener("input", debounce(searchContacts, 300));
   document.querySelector("#group-user-search").addEventListener("input", debounce(searchNewGroupMembers, 300));
   document.querySelector("#group-form").addEventListener("submit", createGroup);
@@ -1507,10 +1512,15 @@ async function refreshRememberedKeyStatus() {
 }
 
 function updateIdentityLabel() {
-  const identity = state.me.display_name
-    ? `${state.me.display_name} · @${state.me.username}`
-    : `@${state.me.username}`;
-  document.querySelector("#identity-label").textContent = identity;
+  document.querySelector("#display-name-label").textContent = state.me.display_name || t("Vibration");
+  document.querySelector("#identity-label").textContent = `@${state.me.username}`;
+  document.querySelector("#close-sidebar-logo").dataset.initials = (state.me.display_name || state.me.username || "V")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
   for (const button of document.querySelectorAll(".brand-logo-button:not(#open-sidebar-logo)")) {
     const image = button.querySelector(".header-avatar");
     const mark = button.querySelector(".brand-mark");
@@ -2978,7 +2988,7 @@ function warmAdminShell() {
   adminShellPreloaded = true;
   for (const [rel, href] of [
     ["prefetch", "/admin.html?from=chat"],
-    ["modulepreload", "/js/admin.js?v=community-1-0-26-v383"],
+    ["modulepreload", "/js/admin.js?v=community-1-0-27-v396"],
   ]) {
     const link = document.createElement("link");
     link.rel = rel;
@@ -3425,6 +3435,27 @@ function normalizedConversationSearch(value) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
+function formatConversationTimestamp(value) {
+  const date = new Date(value || "");
+  if (!Number.isFinite(date.getTime())) return "";
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const dayDifference = Math.round((startOfToday - startOfDate) / 86400000);
+  if (dayDifference === 0) {
+    return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(date);
+  }
+  if (dayDifference === 1) return t("Hier");
+  if (dayDifference > 1 && dayDifference < 7) {
+    return new Intl.DateTimeFormat(locale, { weekday: "short" }).format(date).replace(/\.$/, "");
+  }
+  return new Intl.DateTimeFormat(locale, {
+    day: "2-digit",
+    month: date.getFullYear() === now.getFullYear() ? "short" : "2-digit",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "2-digit" }),
+  }).format(date);
+}
+
 function conversationMatchesSearch(searchText, query) {
   const normalizedQuery = normalizedConversationSearch(query);
   return !normalizedQuery || normalizedConversationSearch(searchText).includes(normalizedQuery);
@@ -3465,6 +3496,7 @@ async function renderPersonalConversation(isCurrentRender = () => true) {
   if (!conversation) {
     if (isCurrentRender()) {
       elements.personalConversationButton.hidden = true;
+      elements.personalConversationHeading.hidden = true;
       delete elements.personalConversationButton.dataset.conversationSearch;
     }
     return;
@@ -3485,6 +3517,7 @@ async function renderPersonalConversation(isCurrentRender = () => true) {
     avatar: null,
     customAvatar: null,
   });
+  elements.personalConversationHeading.hidden = false;
   elements.personalConversationButton.hidden = false;
   elements.personalConversationButton.classList.toggle("active", sameID(conversationListActiveID(), conversation.id));
   elements.personalConversationUnread.hidden = unreadCount === 0;
@@ -3494,6 +3527,9 @@ async function renderPersonalConversation(isCurrentRender = () => true) {
     { count: unreadCount },
   ));
   elements.personalConversationPreview.textContent = preview;
+  elements.personalConversationTime.textContent = formatConversationTimestamp(
+    conversation.last_message_at || conversation.created_at,
+  );
   elements.personalConversationButton.dataset.conversationSearch = [
     t("Mes notes"),
     t("Messages et fichiers personnels"),
@@ -3568,6 +3604,7 @@ async function renderConversations({ freshMembers = false } = {}) {
       conversation.role,
       conversation.unread_count,
       conversation.favorite_at,
+      conversation.last_message_at,
       display?.title || "",
       display?.avatar || "",
       display?.securityBlocked || false,
@@ -3632,6 +3669,10 @@ async function renderConversations({ freshMembers = false } = {}) {
     unread.hidden = !conversation.unread_count;
     unread.textContent = conversation.unread_count > 99 ? "99+" : String(conversation.unread_count || "");
     unread.setAttribute("aria-label", `${conversation.unread_count || 0} message${conversation.unread_count > 1 ? "s" : ""} non lu${conversation.unread_count > 1 ? "s" : ""}`);
+    const timestamp = document.createElement("time");
+    timestamp.className = "conversation-time";
+    timestamp.dateTime = conversation.last_message_at || conversation.created_at || "";
+    timestamp.textContent = formatConversationTimestamp(timestamp.dateTime);
     const callBadge = document.createElement("span");
     callBadge.className = "call-conversation-badge";
     callBadge.hidden = !callState;
@@ -3661,7 +3702,7 @@ async function renderConversations({ freshMembers = false } = {}) {
     favoriteIndicator.hidden = !conversation.favorite_at;
     favoriteIndicator.title = t("Favori");
     favoriteIndicator.setAttribute("aria-label", favoriteIndicator.title);
-    titleRow.append(title, favoriteIndicator, callBadge, unread);
+    titleRow.append(title, favoriteIndicator, callBadge, timestamp, unread);
     copy.append(titleRow, subtitle);
     button.append(avatar, copy);
     button.onclick = () => {
@@ -4049,29 +4090,43 @@ async function repairRequiredGroupRotation(conversation) {
 function createNoConversationState() {
   const container = document.createElement("div");
   container.className = "no-conversation-state";
-
-  const intro = document.createElement("div");
-  intro.className = "conversation-exchange-intro no-conversation-intro";
+  container.dataset.productDescription = t("messagerie chiffrée, collaborative et souveraine");
 
   const icon = document.createElement("span");
   icon.className = "conversation-exchange-icon no-conversation-icon";
   icon.setAttribute("aria-hidden", "true");
   icon.innerHTML = `<svg viewBox="0 0 120 120" focusable="false"><path d="M60 22 98 60 60 98 22 60Z"></path></svg>`;
 
-  const copy = document.createElement("span");
-  copy.className = "conversation-exchange-copy";
+  const copy = document.createElement("div");
+  copy.className = "no-conversation-copy";
   const title = document.createElement("strong");
-  title.textContent = "Vibration";
-  const subtitle = document.createElement("span");
-  subtitle.textContent = t("messagerie chiffrée, collaborative et souveraine");
-  copy.append(title, subtitle);
-  intro.append(icon, copy);
+  title.textContent = t("Aucune conversation ouverte");
 
   const empty = document.createElement("div");
   empty.id = "empty-chat";
-  empty.textContent = t("Sélectionnez une conversation ou créez-en une nouvelle.");
+  empty.textContent = t("Sélectionnez une discussion à gauche ou démarrez-en une nouvelle.");
+  copy.append(title, empty);
 
-  container.append(intro, empty);
+  const actions = document.createElement("div");
+  actions.className = "no-conversation-actions";
+  actions.setAttribute("aria-label", t("Démarrer une conversation"));
+  const contact = document.createElement("button");
+  contact.type = "button";
+  contact.dataset.emptyAction = "contact";
+  contact.innerHTML = `<span aria-hidden="true">＋</span> ${t("Nouvelle discussion")}`;
+  const group = document.createElement("button");
+  group.type = "button";
+  group.className = "outline";
+  group.dataset.emptyAction = "group";
+  group.textContent = t("Créer un groupe");
+  const notes = document.createElement("button");
+  notes.type = "button";
+  notes.className = "outline";
+  notes.dataset.emptyAction = "notes";
+  notes.textContent = t("Ouvrir mes notes");
+  actions.append(contact, group, notes);
+
+  container.append(icon, copy, actions);
   return container;
 }
 
@@ -5411,7 +5466,7 @@ function updateCallUI() {
   elements.callCameraButton.hidden = !controlsVisible || state.call.media !== "video";
   elements.callFullscreenButton.hidden = !controlsVisible || state.call.media !== "video";
   elements.callSwitchCameraButton.hidden = !controlsVisible || state.call.media !== "video" || state.call.screenSharing;
-  elements.callScreenShareButton.hidden = !controlsVisible;
+  elements.callScreenShareButton.hidden = !controlsVisible || state.call.media !== "video";
   elements.callWhiteboardButton.hidden = !controlsVisible || state.call.media !== "video" || !currentConversation;
   elements.callVideoStage.classList.toggle("screen-sharing", Boolean(state.call.screenSharing));
   updateWhiteboardVisibility();
@@ -7924,7 +7979,6 @@ function createGlobalFileRow(item, dateFormatter) {
   share.setAttribute("aria-label", share.title);
   share.innerHTML = '<svg class="file-share-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><path d="m8.6 10.7 6.8-4.4"></path><path d="m8.6 13.3 6.8 4.4"></path></svg>';
   share.addEventListener("click", () => {
-    elements.globalFilesDialog.close();
     openFileShareDialog(item.message, item.clear, item.conversation, share);
   });
   const actions = document.createElement("div");

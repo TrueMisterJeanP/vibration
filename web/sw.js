@@ -1,8 +1,8 @@
-const CACHE = "chat-pwa-go-v383";
+const CACHE = "chat-pwa-go-v396";
 const SHELL = [
-  "/", "/index.html", "/login.html", "/link-device.html", "/share.html", "/css/style.css?v=group-clean-overlap-v383",
-  "/js/app.js?v=community-1-0-26-v383", "/js/call-negotiation.js?v=community-1-0-26-v383", "/js/api.js?v=community-1-0-26-v383", "/js/crypto.js?v=community-1-0-26-v383", "/js/websocket.js?v=community-1-0-26-v383", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=group-clean-overlap-v383",
-  "/js/notifications.js?v=community-1-0-26-v383", "/js/device-vault.js?v=trusted-device-v300", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js?v=community-1-0-26-v383", "/js/ui.js?v=community-1-0-26-v383", "/js/message-links.js?v=message-links-v341", "/js/share.js?v=conversation-search-v326", "/js/login.js?v=community-1-0-26-v383", "/js/link-device.js?v=community-1-0-26-v383", "/js/qr-scanner.js?v=qr-scanner-v296", "/manifest.json?v=desktop-titlebar-v252",
+  "/", "/index.html", "/login.html", "/link-device.html", "/share.html", "/css/style.css?v=group-clean-overlap-v396",
+  "/js/app.js?v=community-1-0-27-v396", "/js/call-negotiation.js?v=community-1-0-27-v396", "/js/api.js?v=community-1-0-27-v396", "/js/crypto.js?v=community-1-0-27-v396", "/js/websocket.js?v=community-1-0-27-v396", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=group-clean-overlap-v396",
+  "/js/notifications.js?v=community-1-0-27-v396", "/js/device-vault.js?v=trusted-device-v300", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js?v=community-1-0-27-v396", "/js/ui.js?v=community-1-0-27-v396", "/js/message-links.js?v=message-links-v341", "/js/share.js?v=conversation-search-v326", "/js/login.js?v=community-1-0-27-v396", "/js/link-device.js?v=community-1-0-27-v396", "/js/qr-scanner.js?v=qr-scanner-v296", "/manifest.json?v=desktop-titlebar-v252",
   "/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2",
   "/vendor/jsqr/jsQR.js?v=qr-scanner-v296",
   "/js/pdf-preview-compat.js?v=ios17-pdf-v199",
@@ -22,7 +22,7 @@ const SHELL = [
   "/vendor/html2canvas/html2canvas.min.js?v=office-faithful-preview-v265",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/person.svg", "/icons/group.svg",
 ];
-const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=community-1-0-26-v383", "/js/i18n.js?v=community-1-0-26-v383"];
+const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=community-1-0-27-v396", "/js/i18n.js?v=community-1-0-27-v396"];
 const STARTUP_CACHE_PATHS = new Set(["/", "/index.html", "/css/style.css", "/js/theme.js"]);
 const ADMIN_CACHE_PATHS = new Set(["/admin.html", "/js/admin.js", "/js/api.js", "/js/ui.js", "/js/i18n.js"]);
 

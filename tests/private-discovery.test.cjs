@@ -24,9 +24,9 @@ assert.ok(
 assert.match(html, /class="profile-password-section"[\s\S]*id="profile-password-title">Modifier le mot de passe<[\s\S]*fieldset class="profile-password" aria-labelledby="profile-password-title"/);
 assert.match(css, /\.profile-password-section h4\s*\{[^}]*color: var\(--muted\);[^}]*font-size: \.9rem;[^}]*font-weight: 400;/);
 assert.match(html, /id="contact-search"[\s\S]*Nom d’utilisateur, nom affiché, rôle ou code privé|Nom d’utilisateur, nom affiché, rôle ou code privé[\s\S]*id="contact-search"/);
-assert.match(html.match(/<input id="contact-search"[^>]*>/)?.[0] || "", /placeholder="Contact, rôle, code privé"/);
-assert.match(html.match(/<input id="group-user-search"[^>]*>/)?.[0] || "", /placeholder="Contact, rôle, code privé"/);
-assert.match(html.match(/<input id="group-edit-user-search"[^>]*>/)?.[0] || "", /placeholder="Contact, rôle, code privé"/);
+assert.match(html.match(/<input id="contact-search"[^>]*>/)?.[0] || "", /placeholder="ex\. karine, administrateur ou KYV-U4CA-F735-3KMB"/);
+assert.match(html.match(/<input id="group-user-search"[^>]*>/)?.[0] || "", /placeholder="ex\. karine, administrateur ou KYV-U4CA-F735-3KMB"/);
+assert.match(html.match(/<input id="group-edit-user-search"[^>]*>/)?.[0] || "", /placeholder="ex\. karine, administrateur ou KYV-U4CA-F735-3KMB"/);
 assert.match(css, /\.profile-visibility-toggle input\[type="checkbox"\]/);
 assert.match(css, /\.profile-discovery-code\[hidden\]\s*\{\s*display:\s*none/);
 

@@ -24,10 +24,12 @@ assert.match(selectConversation, /loading\.textContent = t\("Chargement…"\)/);
 assert.match(app, /function createConversationExchangeState\(conversation, empty = null\)/);
 assert.match(app, /conversation\?\.is_personal[\s\S]*\? "notes"/);
 assert.match(app, /conversation\?\.type === "group"/);
-assert.match(app, /notes: \["Mes notes", "documents, enregistrements et évènements personnels"\]/);
-assert.match(app, /<rect x="24" y="27" width="72" height="76" rx="8">/);
-assert.match(app, /translate\(36 21\) scale\(\.78\)[\s\S]*translate\(-7 13\) scale\(\.88\)/);
-assert.equal((app.match(/<circle cx="44" cy="56" r="3\.5"><\/circle>/g) || []).length, 3);
+assert.match(app, /direct: \["Échange direct", "Conversation chiffrée entre deux personnes"\]/);
+assert.match(app, /group: \["Échange de groupe", "Conversation chiffrée entre plusieurs membres"\]/);
+assert.match(app, /notes: \["Mes notes", "Documents, enregistrements et évènements personnels"\]/);
+assert.match(app, /<rect x="5\.5" y="4\.5" width="13" height="16" rx="2">/);
+assert.match(app, /M9 5h9a2 2 0 0 1 2 2v6[\s\S]*M7 9H6a2 2/);
+assert.match(app, /M6 5h12a2 2 0 0 1 2 2v7[\s\S]*l-5 4v-4H6/);
 assert.equal(
   (app.match(/createConversationExchangeState\((?:state\.current|conversation)(?:, empty)?\)/g) || []).length,
   5,
@@ -38,8 +40,10 @@ assert.match(css, /\.conversation-exchange-intro/);
 assert.match(css, /\.conversation-exchange-icon\.group-exchange-icon svg/);
 assert.doesNotMatch(app, /group-bubble-overlap-mask/);
 assert.doesNotMatch(css, /\.group-exchange-icon\s*\{[^}]*background:/);
-assert.match(css, /\.conversation-exchange-icon\s*\{[^}]*radial-gradient\(circle, rgb\(32 199 181 \/ \.16\)/);
-assert.match(css, /\.group-exchange-icon svg[^}]*fill:\s*var\(--group-bubble-surface\)[^}]*stroke:\s*currentColor/);
+assert.match(css, /\.conversation-exchange-intro\s*\{[^}]*display:\s*grid;[^}]*justify-items:\s*center;[^}]*text-align:\s*center;/);
+assert.match(css, /\.conversation-exchange-icon\s*\{[^}]*width:\s*3\.65rem;[^}]*border-radius:\s*\.85rem;[^}]*linear-gradient\(145deg, #1b9276, #106b57\);[^}]*color:\s*#ffffff;/);
+assert.match(css, /\.group-exchange-icon svg[^}]*fill:\s*none;[^}]*stroke:\s*currentColor[^}]*stroke-width:\s*1\.8/);
+assert.match(css, /\.conversation-exchange-copy\s*\{[^}]*justify-items:\s*center;[^}]*text-align:\s*center;/);
 assert.match(css, /--group-bubble-surface:\s*#e3f2f1/);
 assert.match(app, /document\.querySelector\("#empty-chat"\)\?\.remove\(\);[\s\S]*elements\.messages\.prepend\(fragment\)/);
 assert.match(app, /function createNoConversationState\(\)/);
