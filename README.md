@@ -32,7 +32,7 @@ Elle inclut :
 
 ## Comparatif Community et Enterprise
 
-L’édition Enterprise reprend toutes les fonctionnalités de Community et ajoute les outils d’administration, d’exploitation et de fédération destinés aux organisations.
+L’édition Enterprise reprend toutes les fonctionnalités de Community et ajoute les outils d’administration, d’exploitation et de fédération destinés aux organisations. Elle permet notamment de protéger l’accès aux menus **Administration** et **Gestion** par adresse IP : toutes les IP, uniquement les IP locales, ou une liste précise d’adresses et de réseaux peuvent être autorisés.
 
 | Domaine | Fonctionnalité | Community | Enterprise |
 | --- | --- | --- | --- |
@@ -81,6 +81,7 @@ L’édition Enterprise reprend toutes les fonctionnalités de Community et ajou
 | **Administration** | Conditions d’utilisation | ✅ Acceptation obligatoire | ✅ Texte et activation administrables |
 | **Administration** | Rôles administrateur et gestionnaire | — | ✅ |
 | **Administration** | Console d’administration et panneau gestionnaire | — | ✅ |
+| **Administration** | Protection de l’accès Administration et Gestion par IP | — | ✅ Toutes les IP, IP locales ou liste IPv4/IPv6 |
 | **Administration** | Promotion, rétrogradation, bannissement et débannissement | — | ✅ |
 | **Administration** | Révocation administrative des sessions | — | ✅ |
 | **Administration** | Modération par métadonnées sans accès au contenu clair | — | ✅ |
@@ -108,6 +109,7 @@ Le périmètre des appels et groupes fédérés est détaillé dans [Community e
 - **Ouverture des conversations sans scintillement** : la liste des messages n’apparaît qu’une fois les messages, pièces jointes et aperçus nécessaires chargés ; aucun état vide ni libellé de chargement intermédiaire ne s’affiche.
 - **Actions visuelles épurées** : les fonds ovales ou circulaires superflus ont été retirés des actions de message, des réactions et des boutons de fermeture dans les thèmes clair et sombre.
 - **Écran de démarrage mobile corrigé** : le motif Vibration retrouve sa forme simple et sa couleur adaptée, notamment blanche en thème sombre.
+- **Sécurité Enterprise par IP** : l’accès aux menus Administration et Gestion peut autoriser toutes les IP, uniquement les IP locales, ou une liste précise d’adresses et de réseaux IPv4/IPv6.
 - **Aperçu Community anonymisé** : l’illustration du projet reprend la nouvelle interface avec un profil et des conversations entièrement fictifs.
 - **Cache PWA v412** : les scripts, styles et traductions sont renouvelés ensemble pour garantir le déploiement immédiat de cette version.
 
