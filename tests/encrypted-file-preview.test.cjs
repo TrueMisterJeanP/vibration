@@ -21,7 +21,7 @@ assert.match(app, /preview\?\.size > 0 && preview\.size <= FILE_PREVIEW_MAX_BYTE
 assert.match(app, /message\.file\.has_preview !== true[\s\S]*renderTemporaryOfficeThumbnail\(container\)/);
 assert.match(app, /encrypted_preview_data: preview\?\.data \|\| ""/);
 assert.match(app, /preview_iv: preview\?\.iv \|\| ""/);
-assert.match(app, /from "\.\/crypto\.js\?v=community-1-0-27-v396"/);
+assert.match(app, /from "\.\/crypto\.js\?v=community-1-0-28-v412"/);
 assert.match(app, /async function encryptFileBytes\(key, bytes\)/);
 assert.match(app, /encryptFileBytes\(key, data\)/);
 

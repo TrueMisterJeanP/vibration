@@ -4,6 +4,7 @@ const path = require("node:path");
 
 const root = path.join(__dirname, "..");
 const html = fs.readFileSync(path.join(root, "web/login.html"), "utf8");
+const logo = fs.readFileSync(path.join(root, "web/icons/vibration.svg"), "utf8");
 const login = fs.readFileSync(path.join(root, "web/js/login.js"), "utf8");
 const i18n = fs.readFileSync(path.join(root, "web/js/i18n.js"), "utf8");
 
@@ -13,6 +14,12 @@ const registerForm = html.slice(registerFormStart, registerFormEnd);
 const passwordPosition = registerForm.indexOf('name="password"');
 const confirmationPosition = registerForm.indexOf('name="password_confirm"');
 
+assert.match(html, /<img class="brand-app-icon" src="\/icons\/vibration\.svg" alt="">/);
+assert.doesNotMatch(html, /<span>◈<\/span>/);
+assert.match(logo, /linearGradient id="vibration-green"/);
+assert.match(logo, /<rect width="128" height="128" rx="28" fill="url\(#vibration-green\)"\/>/);
+assert.doesNotMatch(logo, /<rect x="4" y="4"/);
+assert.match(logo, /M64 42 86 64 64 86 42 64Z/);
 assert.ok(registerFormStart >= 0, "the registration form must exist");
 assert.ok(passwordPosition >= 0, "the sign-in password field must exist");
 assert.ok(confirmationPosition > passwordPosition, "password confirmation must follow the sign-in password");

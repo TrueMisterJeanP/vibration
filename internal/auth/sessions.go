@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"chat-pwa-go/internal/adminaccess"
 	"chat-pwa-go/internal/httpx"
 )
 
@@ -244,6 +245,9 @@ func (h *Handler) AdminMiddleware(next http.Handler) http.Handler {
 			httpx.Error(w, http.StatusForbidden, "administrator access required")
 			return
 		}
+		if !h.allowAdministrationRequest(w, r) {
+			return
+		}
 		next.ServeHTTP(w, r)
 	}))
 }
@@ -254,6 +258,29 @@ func (h *Handler) AdminAccessMiddleware(next http.Handler) http.Handler {
 			httpx.Error(w, http.StatusForbidden, "administrator access required")
 			return
 		}
+		if !h.allowAdministrationRequest(w, r) {
+			return
+		}
 		next.ServeHTTP(w, r)
 	}))
+}
+
+func (h *Handler) adminAccessController() *adminaccess.Controller {
+	if h.AdminAccess != nil {
+		return h.AdminAccess
+	}
+	return adminaccess.NewController(h.DB, nil)
+}
+
+func (h *Handler) allowAdministrationRequest(w http.ResponseWriter, r *http.Request) bool {
+	decision, err := h.adminAccessController().Decide(r)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "administration access policy lookup failed")
+		return false
+	}
+	if !decision.Allowed {
+		httpx.Error(w, http.StatusForbidden, "administration access is not allowed from this IP address")
+		return false
+	}
+	return true
 }

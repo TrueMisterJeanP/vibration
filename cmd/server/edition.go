@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"chat-pwa-go/internal/adminaccess"
 	"chat-pwa-go/internal/auth"
 	"chat-pwa-go/internal/config"
 	database "chat-pwa-go/internal/db"
@@ -31,6 +32,7 @@ type editionRouteDeps struct {
 	DatabaseBackupDir        string
 	AllowDatabaseDestructive bool
 	DatabaseMaintenance      databaseMaintenance
+	AdminAccess              *adminaccess.Controller
 }
 
 type federationWorkerConfig struct {

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="vibration-logo-title">
+  <title id="vibration-logo-title">Vibration</title>
+  <defs>
+    <linearGradient id="vibration-green" x1="18" y1="12" x2="112" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1b9276"/>
+      <stop offset="1" stop-color="#106b57"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#vibration-green)"/>
+  <path d="M64 42 86 64 64 86 42 64Z" fill="none" stroke="#fff" stroke-width="4" stroke-linejoin="miter"/>
+</svg>

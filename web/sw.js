@@ -1,8 +1,8 @@
-const CACHE = "chat-pwa-go-v396";
+const CACHE = "chat-pwa-go-v412";
 const SHELL = [
-  "/", "/index.html", "/login.html", "/link-device.html", "/share.html", "/css/style.css?v=group-clean-overlap-v396",
-  "/js/app.js?v=community-1-0-27-v396", "/js/call-negotiation.js?v=community-1-0-27-v396", "/js/api.js?v=community-1-0-27-v396", "/js/crypto.js?v=community-1-0-27-v396", "/js/websocket.js?v=community-1-0-27-v396", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=group-clean-overlap-v396",
-  "/js/notifications.js?v=community-1-0-27-v396", "/js/device-vault.js?v=trusted-device-v300", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js?v=community-1-0-27-v396", "/js/ui.js?v=community-1-0-27-v396", "/js/message-links.js?v=message-links-v341", "/js/share.js?v=conversation-search-v326", "/js/login.js?v=community-1-0-27-v396", "/js/link-device.js?v=community-1-0-27-v396", "/js/qr-scanner.js?v=qr-scanner-v296", "/manifest.json?v=desktop-titlebar-v252",
+  "/", "/index.html", "/login.html", "/link-device.html", "/share.html", "/css/style.css?v=group-clean-overlap-v405",
+  "/js/app.js?v=community-1-0-28-v412", "/js/call-negotiation.js?v=community-1-0-28-v412", "/js/api.js?v=community-1-0-28-v412", "/js/crypto.js?v=community-1-0-28-v412", "/js/websocket.js?v=community-1-0-28-v412", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=group-clean-overlap-v405",
+  "/js/notifications.js?v=community-1-0-28-v412", "/js/device-vault.js?v=trusted-device-v300", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js?v=community-1-0-28-v412", "/js/ui.js?v=community-1-0-28-v412", "/js/message-links.js?v=message-links-v341", "/js/share.js?v=conversation-search-v326", "/js/login.js?v=community-1-0-28-v412", "/js/link-device.js?v=community-1-0-28-v412", "/js/qr-scanner.js?v=qr-scanner-v296", "/manifest.json?v=dock-borderless-v406",
   "/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2",
   "/vendor/jsqr/jsQR.js?v=qr-scanner-v296",
   "/js/pdf-preview-compat.js?v=ios17-pdf-v199",
@@ -20,9 +20,9 @@ const SHELL = [
   "/vendor/exceljs/exceljs.min.js?v=office-preview-v254",
   "/vendor/pptx-preview/pptx-preview.umd.js?v=office-preview-v254",
   "/vendor/html2canvas/html2canvas.min.js?v=office-faithful-preview-v265",
-  "/icons/icon-192.png", "/icons/icon-512.png", "/icons/person.svg", "/icons/group.svg",
+  "/icons/vibration.svg", "/icons/vibration-mark.svg", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-192.png?v=dock-borderless-v406", "/icons/icon-512.png?v=dock-borderless-v406", "/icons/person.svg", "/icons/group.svg",
 ];
-const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=community-1-0-27-v396", "/js/i18n.js?v=community-1-0-27-v396"];
+const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=community-1-0-28-v412", "/js/i18n.js?v=community-1-0-28-v412"];
 const STARTUP_CACHE_PATHS = new Set(["/", "/index.html", "/css/style.css", "/js/theme.js"]);
 const ADMIN_CACHE_PATHS = new Set(["/admin.html", "/js/admin.js", "/js/api.js", "/js/ui.js", "/js/i18n.js"]);
 

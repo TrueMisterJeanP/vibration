@@ -3,10 +3,10 @@
 Application de messagerie web installable, responsive et chiffrée côté navigateur. Le serveur Go assure l’authentification, le routage REST/WebSocket, la persistance SQLite et les notifications Web Push, sans jamais déchiffrer les messages, noms de groupes ou fichiers.
 
 <p align="center">
-  <img src="docs/interface-community-v1.0.26.png" alt="Interface fictive de Vibration Community avec discussions de démonstration, sondage, fichier et messages épinglés" width="900">
+  <img src="docs/interface-community-v1.0.28.png" alt="Interface fictive de Vibration Community avec profil et discussions de démonstration" width="900">
 </p>
 
-<p align="center"><strong>Vibration Community 1.0.27</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
+<p align="center"><strong>Vibration Community 1.0.28</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
 
 ## Philosophie
 
@@ -103,6 +103,14 @@ Le périmètre des appels et groupes fédérés est détaillé dans [Community e
 
 ## Nouveautés
 
+### Community 1.0.28
+
+- **Ouverture des conversations sans scintillement** : la liste des messages n’apparaît qu’une fois les messages, pièces jointes et aperçus nécessaires chargés ; aucun état vide ni libellé de chargement intermédiaire ne s’affiche.
+- **Actions visuelles épurées** : les fonds ovales ou circulaires superflus ont été retirés des actions de message, des réactions et des boutons de fermeture dans les thèmes clair et sombre.
+- **Écran de démarrage mobile corrigé** : le motif Vibration retrouve sa forme simple et sa couleur adaptée, notamment blanche en thème sombre.
+- **Aperçu Community anonymisé** : l’illustration du projet reprend la nouvelle interface avec un profil et des conversations entièrement fictifs.
+- **Cache PWA v412** : les scripts, styles et traductions sont renouvelés ensemble pour garantir le déploiement immédiat de cette version.
+
 ### Community 1.0.27
 
 - **Interface Vibration harmonisée** : la messagerie, les formulaires et les différentes rubriques adoptent une présentation claire et cohérente, fidèle à la nouvelle maquette de référence.
@@ -110,7 +118,7 @@ Le périmètre des appels et groupes fédérés est détaillé dans [Community e
 - **Conversations plus lisibles** : dates et heures sont alignées à droite, les noms interactifs utilisent la couleur principale du texte et les en-têtes illustrés distinguent Mes notes, les échanges directs et les groupes.
 - **Recherche plus explicite** : l’ajout d’un contact ou d’un membre indique désormais un exemple de nom, de rôle et de code privé.
 - **Appels audio épurés** : le partage d’écran n’est proposé que pendant un appel vidéo.
-- **Cache PWA v396** : les scripts, styles et traductions de cette version sont renouvelés ensemble pour garantir son déploiement immédiat.
+- **Cache PWA v399** : les scripts, styles et traductions de cette version sont renouvelés ensemble pour garantir son déploiement immédiat.
 
 ### Community 1.0.26
 
@@ -565,6 +573,7 @@ Variables d’environnement :
 | `VAPID_SUBJECT` | `admin@example.com` | adresse de contact VAPID, sans préfixe `mailto:` |
 | `AUTH_RATE_LIMIT_PER_MINUTE` | `20` | nombre maximal de tentatives de connexion ou inscription par minute, par IP et nom d’utilisateur |
 | `CLIENT_ORIGINS` | vide | origines web explicites autorisées à appeler l’API et le WebSocket, séparées par des virgules ; le joker `*` est refusé |
+| `TRUSTED_PROXY_CIDRS` | `127.0.0.0/8, ::1/128` | adresses ou réseaux des reverse proxies autorisés à transmettre l’IP réelle via `X-Forwarded-For`/`X-Real-IP` |
 | `WEBRTC_TURN_URLS` | vide | serveurs TURN privés, séparés par des virgules (Enterprise) |
 | `WEBRTC_TURN_USERNAME` | vide | identifiant TURN (Enterprise) |
 | `WEBRTC_TURN_CREDENTIAL` | vide | secret TURN (Enterprise) ; jamais journalisé ni renvoyé par l’API d’administration |
@@ -583,6 +592,10 @@ go run -tags community ./cmd/server
 ```
 
 Le serveur doit être placé derrière un reverse proxy HTTPS ; `SECURE_COOKIES=true` active aussi l’en-tête HSTS. L'édition Community garde les inscriptions ouvertes par conception.
+
+Dans l’édition Enterprise, **Administration > Configuration > Accès à Administration et Gestion** permet d’autoriser toutes les IP, uniquement les IP locales, ou une liste d’adresses/réseaux IPv4 et IPv6. Le serveur applique cette politique à chaque API sensible et le client masque le menu lorsque l’IP est refusée. L’enregistrement refuse toute règle qui exclurait immédiatement l’adresse IP de l’administrateur courant.
+
+Si le reverse proxy s’exécute sur la même machine, les plages de boucle locale approuvées par défaut suffisent. Si le proxy se trouve sur un autre hôte ou réseau Docker, renseigner uniquement son adresse ou son CIDR dans `TRUSTED_PROXY_CIDRS`. Ne jamais y placer une plage de clients : un en-tête d’IP fourni par une connexion non approuvée est volontairement ignoré.
 
 ### Sauvegarde et restauration depuis l’administration
 

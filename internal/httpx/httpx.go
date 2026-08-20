@@ -25,7 +25,9 @@ func Error(w http.ResponseWriter, status int, message string) {
 
 func frenchErrorMessage(status int, message string) string {
 	if translated, ok := map[string]string{
-		"a banned user cannot become administrator": "Un utilisateur banni ne peut pas devenir administrateur.",
+		"administration access is not allowed from this IP address": "Cette adresse IP n’est pas autorisée à accéder à Administration ou Gestion.",
+		"administration access policy lookup failed":                "La consultation de la politique d’accès IP a échoué.",
+		"a banned user cannot become administrator":                 "Un utilisateur banni ne peut pas devenir administrateur.",
 		"account banned":                                  "Ce compte est banni.",
 		"administrator access required":                   "Un accès administrateur est requis.",
 		"administrator account is protected":              "Ce compte administrateur est protégé.",
@@ -53,6 +55,8 @@ func frenchErrorMessage(status int, message string) string {
 		"calendar feed not found":                         "Flux calendrier introuvable.",
 		"cross-site request denied":                       "La requête provenant d’un autre site a été refusée.",
 		"current password is incorrect":                   "Le mot de passe actuel est incorrect.",
+		"current IP address must remain authorized":       "L’adresse IP actuelle doit rester autorisée afin de ne pas bloquer votre accès.",
+		"client IP address could not be determined":       "L’adresse IP actuelle n’a pas pu être déterminée.",
 		"database connection failed":                      "La connexion à la base de données a échoué.",
 		"database copy failed":                            "La recopie de la base de données a échoué.",
 		"delete failed":                                   "La suppression a échoué.",
@@ -103,6 +107,7 @@ func frenchErrorMessage(status int, message string) string {
 		"invalid invitation contact":                      "Les coordonnées de l’invitation sont invalides.",
 		"invalid invitation email":                        "L’adresse e-mail de l’invitation est invalide.",
 		"invalid invitation expiration":                   "La durée de validité de l’invitation est invalide.",
+		"invalid administration access policy":            "La politique d’accès IP à Administration et Gestion est invalide.",
 		"invalid file quotas":                             "Les quotas de fichiers sont invalides.",
 		"invalid JSON body":                               "Les données envoyées sont invalides.",
 		"invalid member":                                  "Le membre est invalide.",

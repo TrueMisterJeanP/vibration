@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"chat-pwa-go/internal/adminaccess"
 	"chat-pwa-go/internal/auth"
 	calendarfeed "chat-pwa-go/internal/calendar"
 	"chat-pwa-go/internal/callsig"
@@ -48,10 +49,16 @@ func main() {
 	defer db.Close()
 
 	hub := ws.NewHub()
+	trustedProxies, err := adminaccess.ParseTrustedProxies(cfg.TrustedProxyCIDRs)
+	if err != nil {
+		log.Fatal(err)
+	}
+	adminAccess := adminaccess.NewController(db, trustedProxies)
 	authHandler := &auth.Handler{
 		DB: db, Hub: hub, SecureCookies: cfg.SecureCookies, CookieSameSite: sameSiteMode(cfg.SessionSameSite), DisableRegistration: editionDisableRegistration(cfg.DisableRegistration),
 		DisableInvitationCode: editionDisableInvitationCode(),
 		AuthLimiter:           auth.NewRateLimiter(cfg.AuthRateLimitPerMinute, time.Minute),
+		AdminAccess:           adminAccess,
 	}
 	pushHandler, err := push.New(db, cfg.DataDir, cfg.VAPIDSubject)
 	if err != nil {
@@ -74,6 +81,7 @@ func main() {
 		ConfiguredDatabase: configuredDatabase, RestartCommand: cfg.ServiceRestartCommand,
 		DatabaseBackupDir: cfg.DatabaseBackupDir, AllowDatabaseDestructive: cfg.AllowDatabaseDestructive,
 		DatabaseMaintenance: databaseMaintenance,
+		AdminAccess:         adminAccess,
 	}
 
 	mux := http.NewServeMux()

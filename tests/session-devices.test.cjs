@@ -5,6 +5,8 @@ const path = require("node:path");
 const root = path.join(__dirname, "..");
 const loginHTML = fs.readFileSync(path.join(root, "web/login.html"), "utf8");
 const linkHTML = fs.readFileSync(path.join(root, "web/link-device.html"), "utf8");
+assert.match(linkHTML, /<img class="brand-app-icon" src="\/icons\/vibration\.svg" alt="">/);
+assert.doesNotMatch(linkHTML, /<span>◈<\/span>/);
 const profileHTML = fs.readFileSync(path.join(root, "web/index.html"), "utf8");
 const login = fs.readFileSync(path.join(root, "web/js/login.js"), "utf8");
 const link = fs.readFileSync(path.join(root, "web/js/link-device.js"), "utf8");

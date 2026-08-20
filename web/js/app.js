@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-27-v396";
+import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-28-v412";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -19,7 +19,7 @@ import {
   verifyMessagePayload,
   unwrapGroupKey,
   wrapGroupKey,
-} from "./crypto.js?v=community-1-0-27-v396";
+} from "./crypto.js?v=community-1-0-28-v412";
 import {
   forgetRememberedIdentity,
 	forgetTrustedDeviceCredential,
@@ -40,10 +40,10 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=community-1-0-27-v396";
-import { ChatSocket } from "./websocket.js?v=community-1-0-27-v396";
-import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-27-v396";
-import { locale, t } from "./i18n.js?v=community-1-0-27-v396";
+} from "./notifications.js?v=community-1-0-28-v412";
+import { ChatSocket } from "./websocket.js?v=community-1-0-28-v412";
+import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-28-v412";
+import { locale, t } from "./i18n.js?v=community-1-0-28-v412";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
 import { nonWhiteImageBounds } from "./file-preview-image.js?v=ios17-pdf-v199";
 import {
@@ -71,7 +71,7 @@ import {
   sameCallIdentity,
   shouldOfferAfterAccept,
   shouldOfferInGroup,
-} from "./call-negotiation.js?v=community-1-0-27-v396";
+} from "./call-negotiation.js?v=community-1-0-28-v412";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
 import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
@@ -100,7 +100,7 @@ const GLOBAL_FILES_PAGE_SIZE = 40;
 const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
 const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "community-1-0-27-v396";
+const APP_BUILD = "community-1-0-28-v412";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
 const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;
@@ -188,6 +188,7 @@ let ios17PDFJSModule;
 let conversationRenderVersion = 0;
 let conversationListRenderKey = "";
 let conversationSelectionVersion = 0;
+let messagePreviewReadinessVersion = 0;
 let conversationInfoLoadVersion = 0;
 let globalFilesLoadVersion = 0;
 let globalFilesPreloadScheduled = false;
@@ -866,12 +867,7 @@ async function boot() {
     elements.shell.hidden = false;
     elements.conversationListLoading.textContent = t("Chargement des discussions…");
     updateIdentityLabel();
-    const adminLink = document.querySelector("#admin-link");
-    const canOpenAdmin = state.edition.admin_panel && (state.me.is_admin || state.me.is_manager);
-    adminLink.hidden = !canOpenAdmin;
-    adminLink.querySelector(".admin-link-label").textContent = t(state.me.is_manager && !state.me.is_admin ? "Gestion" : "Administration");
-    adminLink.addEventListener("click", prepareAdminNavigation);
-    if (canOpenAdmin) bindAdminPanelPreload(adminLink);
+    updateAdminLinkAvailability();
     appShellPrepared = true;
   }
   if (!state.privateKey || !state.signingPrivateKey) await unlock();
@@ -2975,6 +2971,36 @@ let adminNavigationPending = false;
 let adminPanelPreload = null;
 let adminPanelPreloadScheduled = false;
 let adminShellPreloaded = false;
+let adminLinkNavigationBound = false;
+let adminLinkPreloadBound = false;
+
+function updateAdminLinkAvailability() {
+  const adminLink = document.querySelector("#admin-link");
+  const canOpenAdmin = Boolean(state.edition?.admin_panel && state.me?.admin_access_allowed && (state.me?.is_admin || state.me?.is_manager));
+  adminLink.hidden = !canOpenAdmin;
+  adminLink.querySelector(".admin-link-label").textContent = t(state.me?.is_manager && !state.me?.is_admin ? "Gestion" : "Administration");
+  if (!adminLinkNavigationBound) {
+    adminLink.addEventListener("click", prepareAdminNavigation);
+    adminLinkNavigationBound = true;
+  }
+  if (canOpenAdmin && !adminLinkPreloadBound) {
+    bindAdminPanelPreload(adminLink);
+    adminLinkPreloadBound = true;
+  }
+  if (!canOpenAdmin) sessionStorage.removeItem(ADMIN_BOOTSTRAP_CACHE_KEY);
+}
+
+async function refreshAdminLinkAvailability() {
+  if (!state.me || !state.edition?.admin_panel) return;
+  const latest = await api("/api/me");
+  state.me = {
+    ...state.me,
+    is_admin: latest.is_admin,
+    is_manager: latest.is_manager,
+    admin_access_allowed: latest.admin_access_allowed,
+  };
+  updateAdminLinkAvailability();
+}
 
 function bindAdminPanelPreload(link) {
   warmAdminShell();
@@ -2988,7 +3014,7 @@ function warmAdminShell() {
   adminShellPreloaded = true;
   for (const [rel, href] of [
     ["prefetch", "/admin.html?from=chat"],
-    ["modulepreload", "/js/admin.js?v=community-1-0-27-v396"],
+    ["modulepreload", "/js/admin.js?v=community-1-0-28-v412"],
   ]) {
     const link = document.createElement("link");
     link.rel = rel;
@@ -3008,7 +3034,7 @@ function cachedAdminBootstrapIsFresh() {
 }
 
 function preloadAdminPanel() {
-  if (!state.edition?.admin_panel || (!state.me?.is_admin && !state.me?.is_manager)) return Promise.resolve();
+  if (!state.edition?.admin_panel || !state.me?.admin_access_allowed || (!state.me?.is_admin && !state.me?.is_manager)) return Promise.resolve();
   warmAdminShell();
   if (cachedAdminBootstrapIsFresh()) return Promise.resolve();
   if (adminPanelPreload) return adminPanelPreload;
@@ -3028,7 +3054,7 @@ function preloadAdminPanel() {
 
 function scheduleAdminPanelPreload() {
   if (adminPanelPreloadScheduled || cachedAdminBootstrapIsFresh() ||
-      !state.edition?.admin_panel || (!state.me?.is_admin && !state.me?.is_manager)) return;
+      !state.edition?.admin_panel || !state.me?.admin_access_allowed || (!state.me?.is_admin && !state.me?.is_manager)) return;
   adminPanelPreloadScheduled = true;
   const run = () => {
     adminPanelPreloadScheduled = false;
@@ -4133,6 +4159,7 @@ function createNoConversationState() {
 function closeCurrentConversation(conversationID) {
   if (!sameID(state.current?.id, conversationID)) return;
   closeReactionPicker();
+  clearMessagePreviewReadiness();
   clearCallState(conversationID);
   state.current = null;
   clearFileCache();
@@ -4529,22 +4556,18 @@ async function selectConversation(conversation, targetMessageID = null) {
   const conversationChanged = !sameID(state.current?.id, conversation.id);
   closeReactionPicker();
   if (conversationChanged) {
+    const transitionInProgress = elements.messages.classList.contains("message-previews-pending");
+    clearMessagePreviewReadiness({ preserveSnapshot: transitionInProgress });
+    if (transitionInProgress) elements.messages.replaceChildren();
+    else preserveCurrentMessageList();
     clearVoiceDraft();
     clearFileCache();
-    const loading = document.createElement("div");
-    loading.id = "empty-chat";
-    loading.textContent = t("Chargement…");
-    elements.messages.replaceChildren(loading);
+    beginMessagePreviewReadiness();
   }
   state.current = conversation;
   conversation.unread_count = 0;
   const listed = state.conversations.find((item) => sameID(item.id, selectedID));
   if (listed) listed.unread_count = 0;
-  elements.shell.classList.remove("sidebar-open");
-  const sidebarButton = document.querySelector("#open-sidebar-logo");
-  sidebarButton.setAttribute("aria-expanded", "false");
-  sidebarButton.setAttribute("aria-label", t("Afficher les contacts, groupes et conversations"));
-  sidebarButton.title = t("Afficher les contacts et groupes");
   const rememberedDisplay = state.conversationDisplays.get(String(selectedID));
   if (rememberedDisplay) {
     renderConversationHeader(conversation, rememberedDisplay);
@@ -4554,12 +4577,6 @@ async function selectConversation(conversation, targetMessageID = null) {
     elements.chatAvatar.hidden = true;
     setConversationInfoTrigger(null);
     renderMobileNavigationAvatar();
-  }
-  if (conversationChanged && !targetMessageID && !conversation.last_message_at) {
-    const empty = document.createElement("div");
-    empty.id = "empty-chat";
-    empty.textContent = t("Aucun message. Écrivez le premier message chiffré.");
-    elements.messages.replaceChildren(createConversationExchangeState(conversation, empty));
   }
   renderTypingIndicator(elements.typing, null);
   renderTypingIndicator(elements.threadTyping, null);
@@ -4576,8 +4593,11 @@ async function selectConversation(conversation, targetMessageID = null) {
   elements.audioCallButton.disabled = true;
   elements.videoCallButton.disabled = true;
 
+  const messageLoadOptions = {
+    waitForPreviews: conversationChanged,
+  };
   let messagesLoading = membersWereVerified
-    ? loadMessages(targetMessageID).then(() => null, (error) => error)
+    ? loadMessages(targetMessageID, true, messageLoadOptions).then(() => null, (error) => error)
     : null;
   try {
     await getMembers(conversation.id, {
@@ -4601,7 +4621,7 @@ async function selectConversation(conversation, targetMessageID = null) {
     return;
   }
   if (!messagesLoading) {
-    messagesLoading = loadMessages(targetMessageID).then(() => null, (error) => error);
+    messagesLoading = loadMessages(targetMessageID, true, messageLoadOptions).then(() => null, (error) => error);
   }
   elements.input.disabled = false;
   elements.send.disabled = false;
@@ -4632,6 +4652,11 @@ async function selectConversation(conversation, targetMessageID = null) {
   const [, messageLoadError] = await Promise.all([renderConversations(), messagesLoading]);
   if (selectionVersion !== conversationSelectionVersion || !sameID(state.current?.id, selectedID)) return;
   if (messageLoadError) throw messageLoadError;
+  elements.shell.classList.remove("sidebar-open");
+  const sidebarButton = document.querySelector("#open-sidebar-logo");
+  sidebarButton.setAttribute("aria-expanded", "false");
+  sidebarButton.setAttribute("aria-label", t("Afficher les contacts, groupes et conversations"));
+  sidebarButton.title = t("Afficher les contacts et groupes");
   if (!elements.pinnedPanel.hidden) await loadPinnedMessages();
   if (selectionVersion !== conversationSelectionVersion || !sameID(state.current?.id, selectedID)) return;
   updateCallUI();
@@ -6757,7 +6782,7 @@ async function handleCallSignal(event) {
   }
 }
 
-async function loadMessages(targetMessageID = null, useCache = true) {
+async function loadMessages(targetMessageID = null, useCache = true, { waitForPreviews = false } = {}) {
   const conversation = state.current;
   if (!conversation) return;
   const conversationID = conversation.id;
@@ -6765,27 +6790,37 @@ async function loadMessages(targetMessageID = null, useCache = true) {
   let cachedDisplayed = false;
   let displayedMessages = null;
   let prepared = null;
+  let fallbackMessages = null;
+  let fallbackDecrypted = null;
   if (!targetMessageID && useCache) {
     prepared = preparedConversationMessages(conversation);
     if (prepared && sameID(state.current?.id, conversationID)) {
-      try {
-        await renderMessages(prepared.messages, conversation, prepared.decrypted);
-        cachedDisplayed = true;
-        displayedMessages = prepared.messages;
-        await scrollMessagesToLatest(conversationID);
-      } catch (error) {
-        console.warn("Affichage du préchargement impossible", error);
+      fallbackMessages = prepared.messages;
+      fallbackDecrypted = prepared.decrypted;
+      const preparedIsFresh = Date.now() - prepared.loadedAt <= BACKGROUND_PRELOAD_NETWORK_FRESH_MS;
+      if (!waitForPreviews || preparedIsFresh) {
+        try {
+          await renderMessages(prepared.messages, conversation, prepared.decrypted, { waitForPreviews });
+          cachedDisplayed = true;
+          displayedMessages = prepared.messages;
+          await scrollMessagesToLatest(conversationID);
+        } catch (error) {
+          console.warn("Affichage du préchargement impossible", error);
+        }
       }
     } else {
       const cachedMessages = await state.cache?.getMessages(conversationID);
       if (cachedMessages?.length && sameID(state.current?.id, conversationID)) {
-        try {
-          await renderMessages(cachedMessages, conversation);
-          cachedDisplayed = true;
-          displayedMessages = cachedMessages;
-          await scrollMessagesToLatest(conversationID);
-        } catch (error) {
-          console.warn("Affichage du cache local impossible", error);
+        fallbackMessages = cachedMessages;
+        if (!waitForPreviews) {
+          try {
+            await renderMessages(cachedMessages, conversation, null, { waitForPreviews });
+            cachedDisplayed = true;
+            displayedMessages = cachedMessages;
+            await scrollMessagesToLatest(conversationID);
+          } catch (error) {
+            console.warn("Affichage du cache local impossible", error);
+          }
         }
       }
     }
@@ -6803,14 +6838,14 @@ async function loadMessages(targetMessageID = null, useCache = true) {
         .sort((left, right) => Number(left.id) - Number(right.id));
       state.cache?.putMessages(messages);
     } else {
-      if (useCache && prepared && Date.now() - prepared.loadedAt <= BACKGROUND_PRELOAD_NETWORK_FRESH_MS) return;
+      if (useCache && prepared && cachedDisplayed && Date.now() - prepared.loadedAt <= BACKGROUND_PRELOAD_NETWORK_FRESH_MS) return;
       if (useCache) {
         const pending = state.conversationPreloads.get(conversationPreloadKey(conversationID));
         if (pending) {
           prepared = await pending.catch(() => null);
           if (!sameID(state.current?.id, conversationID)) return;
           if (prepared) {
-            await renderMessages(prepared.messages, conversation, prepared.decrypted);
+            await renderMessages(prepared.messages, conversation, prepared.decrypted, { waitForPreviews });
             return;
           }
         }
@@ -6827,12 +6862,19 @@ async function loadMessages(targetMessageID = null, useCache = true) {
       updateRenderedMessageStatuses(messages);
       return;
     }
-    await renderMessages(messages, conversation);
+    await renderMessages(messages, conversation, null, { waitForPreviews });
   } catch (error) {
+    if (!cachedDisplayed && waitForPreviews && fallbackMessages && sameID(state.current?.id, conversationID)) {
+      await renderMessages(fallbackMessages, conversation, fallbackDecrypted, { waitForPreviews: true });
+      await scrollMessagesToLatest(conversationID);
+      console.warn("Synchronisation de la discussion impossible, cache local affiché", error);
+      return;
+    }
     if (cachedDisplayed && sameID(state.current?.id, conversationID)) {
       console.warn("Synchronisation de la discussion impossible, cache local conservé", error);
       return;
     }
+    if (sameID(state.current?.id, conversationID)) clearMessagePreviewReadiness();
     throw error;
   }
 }
@@ -6848,9 +6890,13 @@ function updateRenderedMessageStatuses(messages) {
   }
 }
 
-async function renderMessages(messages, conversation, preparedDecrypted = null) {
+async function renderMessages(messages, conversation, preparedDecrypted = null, { waitForPreviews = false } = {}) {
   const conversationID = conversation.id;
   if (!sameID(state.current?.id, conversationID)) return;
+  const readinessVersion = waitForPreviews ? beginMessagePreviewReadiness() : 0;
+  if (!waitForPreviews && !elements.messages.classList.contains("message-previews-pending")) {
+    clearMessagePreviewReadiness();
+  }
   clearRenderedFilePreviews();
   clearConversationMessageExpirations(conversationID);
   state.messageClears.set(conversationID, new Map());
@@ -6859,6 +6905,7 @@ async function renderMessages(messages, conversation, preparedDecrypted = null) 
     empty.id = "empty-chat";
     empty.textContent = t("Aucun message. Écrivez le premier message chiffré.");
     elements.messages.replaceChildren(createConversationExchangeState(conversation, empty));
+    if (waitForPreviews) finishMessagePreviewReadiness(readinessVersion, conversationID);
     return;
   }
   const decrypted = preparedDecrypted || await Promise.all(messages.map(async (message) => {
@@ -6903,7 +6950,12 @@ async function renderMessages(messages, conversation, preparedDecrypted = null) 
   const conversationExchangeState = createConversationExchangeState(conversation);
   if (conversationExchangeState) fragment.append(conversationExchangeState);
   elements.messages.replaceChildren(fragment);
-  for (const [message, preview, key] of previews) scheduleFilePreview(message, preview, key);
+  if (waitForPreviews) {
+    await prepareVisibleFilePreviews(previews, conversationID);
+    finishMessagePreviewReadiness(readinessVersion, conversationID);
+  } else {
+    for (const [message, preview, key] of previews) scheduleFilePreview(message, preview, key);
+  }
 }
 
 async function decryptMessageContent(message, key) {
@@ -9761,16 +9813,102 @@ function prefetchRecentFullFilePreviews(
   }
 }
 
+function nextMessagePreviewFrame() {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function clearMessageListTransitionSnapshot() {
+  elements.chatWorkspace.querySelector(".message-list-transition-snapshot")?.remove();
+}
+
+function preserveCurrentMessageList() {
+  clearMessageListTransitionSnapshot();
+  if (!elements.messages.hasChildNodes()) return;
+  const snapshot = document.createElement("div");
+  snapshot.className = "message-list-transition-snapshot";
+  snapshot.setAttribute("aria-hidden", "true");
+  const scrollTop = elements.messages.scrollTop;
+  while (elements.messages.firstChild) snapshot.append(elements.messages.firstChild);
+  snapshot.querySelectorAll("[id]").forEach((element) => element.removeAttribute("id"));
+  elements.chatWorkspace.prepend(snapshot);
+  snapshot.scrollTop = scrollTop;
+}
+
+function beginMessagePreviewReadiness() {
+  const version = ++messagePreviewReadinessVersion;
+  elements.messages.classList.add("message-previews-pending");
+  elements.messages.setAttribute("aria-busy", "true");
+  return version;
+}
+
+function clearMessagePreviewReadiness({ preserveSnapshot = false } = {}) {
+  messagePreviewReadinessVersion++;
+  if (!preserveSnapshot) clearMessageListTransitionSnapshot();
+  elements.messages.classList.remove("message-previews-pending");
+  elements.messages.removeAttribute("aria-busy");
+}
+
+function finishMessagePreviewReadiness(version, conversationID) {
+  if (version !== messagePreviewReadinessVersion || !sameID(state.current?.id, conversationID)) return;
+  clearMessageListTransitionSnapshot();
+  elements.messages.classList.remove("message-previews-pending");
+  elements.messages.removeAttribute("aria-busy");
+}
+
+function filePreviewIsVisible(container) {
+  const target = container.closest(".file-attachment") || container;
+  const viewport = elements.messages.getBoundingClientRect();
+  const bounds = target.getBoundingClientRect();
+  return bounds.bottom >= viewport.top && bounds.top <= viewport.bottom;
+}
+
+function waitForPreviewImage(image, timeoutMS = 8000) {
+  if (image.complete) {
+    return typeof image.decode === "function" ? image.decode().catch(() => {}) : Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timeout);
+      image.removeEventListener("load", finish);
+      image.removeEventListener("error", finish);
+      resolve();
+    };
+    const timeout = setTimeout(finish, timeoutMS);
+    image.addEventListener("load", finish, { once: true });
+    image.addEventListener("error", finish, { once: true });
+  });
+}
+
+async function waitForFilePreviewPaint(container) {
+  await Promise.all([...container.querySelectorAll("img")].map((image) => waitForPreviewImage(image)));
+  await nextMessagePreviewFrame();
+}
+
+async function prepareVisibleFilePreviews(previews, conversationID) {
+  await nextMessagePreviewFrame();
+  if (!sameID(state.current?.id, conversationID)) return;
+  const visible = [];
+  for (const preview of previews) {
+    if (filePreviewIsVisible(preview[1])) visible.push(preview);
+    else scheduleFilePreview(...preview);
+  }
+  await Promise.allSettled(visible.map(async ([message, container, key]) => {
+    await renderFilePreview(message, container, key);
+    if (container.isConnected) await waitForFilePreviewPaint(container);
+  }));
+  if (sameID(state.current?.id, conversationID)) await nextMessagePreviewFrame();
+}
+
 function scheduleFilePreview(message, container, key) {
   if (!("IntersectionObserver" in window)) {
-    renderFilePreview(message, container, key);
+    void renderFilePreview(message, container, key);
     return;
   }
   const observer = new IntersectionObserver((entries) => {
     if (!entries.some((entry) => entry.isIntersecting)) return;
     observer.disconnect();
     state.filePreviewObservers.delete(observer);
-    renderFilePreview(message, container, key);
+    void renderFilePreview(message, container, key);
   }, { root: elements.messages, rootMargin: "1200px 0px" });
   state.filePreviewObservers.add(observer);
   observer.observe(container.closest(".file-attachment") || container);
@@ -10765,4 +10903,5 @@ window.addEventListener("pagehide", finishAdminNavigation);
 window.addEventListener("online", retryIncompleteBoot);
 window.addEventListener("pageshow", retryIncompleteBoot);
 window.addEventListener("focus", retryIncompleteBoot);
+window.addEventListener("focus", () => refreshAdminLinkAvailability().catch(() => {}));
 document.addEventListener("visibilitychange", retryIncompleteBoot);

@@ -31,6 +31,7 @@ type Config struct {
 	AuthRateLimitPerMinute      int
 	MetricsToken                string
 	ClientOrigins               []string
+	TrustedProxyCIDRs           []string
 	ServiceRestartCommand       []string
 	WebRTCICEServers            []ICEServer
 	WebRTCPublicFallbacks       []string
@@ -187,6 +188,7 @@ func Load() (Config, error) {
 		AuthRateLimitPerMinute:        envInt("AUTH_RATE_LIMIT_PER_MINUTE", 20),
 		MetricsToken:                  strings.TrimSpace(os.Getenv("METRICS_TOKEN")),
 		ClientOrigins:                 clientOrigins,
+		TrustedProxyCIDRs:             envList("TRUSTED_PROXY_CIDRS"),
 		ServiceRestartCommand:         envFields("SERVICE_RESTART_COMMAND"),
 		WebRTCICEServers:              webRTCICEServers(),
 		WebRTCPublicFallbacks:         webRTCPublicFallbackURLs(),

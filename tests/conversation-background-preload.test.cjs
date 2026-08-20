@@ -39,11 +39,11 @@ assert.match(refreshAll, /await renderConversations\(\);[\s\S]*Promise\.all/);
 assert.match(refreshAll, /await renderConversations\(\{ freshMembers: true \}\);[\s\S]*?scheduleBackgroundConversationPreloads\(conversations\)/);
 
 assert.ok(
-  selectConversation.indexOf("loadMessages(targetMessageID)") < selectConversation.indexOf("await resolveConversationDisplay"),
+  selectConversation.indexOf("loadMessages(targetMessageID, true, messageLoadOptions)") < selectConversation.indexOf("await resolveConversationDisplay"),
   "les messages préparés doivent être rendus pendant la transition",
 );
 assert.match(loadMessages, /preparedConversationMessages\(conversation\)/);
-assert.match(loadMessages, /renderMessages\(prepared\.messages, conversation, prepared\.decrypted\)/);
+assert.match(loadMessages, /renderMessages\(prepared\.messages, conversation, prepared\.decrypted, \{ waitForPreviews \}\)/);
 assert.match(loadMessages, /state\.conversationPreloads\.get\(conversationPreloadKey\(conversationID\)\)/);
 assert.match(loadMessages, /sameMessageSnapshots\(displayedMessages, messages, \["status"\]\)/);
 assert.match(loadMessages, /updateRenderedMessageStatuses\(messages\);[\s\S]*return;/);

@@ -79,6 +79,14 @@ async function load(language) {
     pt: ["Eliminar definitivamente esta cópia de segurança?", "Cópia de segurança eliminada"],
     de: ["Diese Sicherung dauerhaft löschen?", "Sicherung gelöscht"],
   };
+  const expectedAdminAccess = {
+    en: ["Access to Administration and Management", "All local and public IP addresses", "Local IP addresses only", "Only the listed IP addresses or networks", "IP access to Administration and Management saved.", "Current IP address: 203.0.113.25 · allowed.", "IP address 203.0.113.25 is not authorized to open Administration or Management.", "This IP address is not authorized to access Administration or Management.", "IP access policy for Administration and Management changed"],
+    fr: ["Accès à Administration et Gestion", "Toutes les adresses IP locales et publiques", "Uniquement les adresses IP locales", "Uniquement les adresses IP ou réseaux indiqués", "Accès IP à Administration et Gestion enregistré.", "Adresse IP actuelle : 203.0.113.25 · autorisée.", "L’adresse IP 203.0.113.25 n’est pas autorisée à ouvrir Administration ou Gestion.", "Cette adresse IP n’est pas autorisée à accéder à Administration ou Gestion.", "Politique d’accès IP à Administration et Gestion modifiée"],
+    es: ["Acceso a Administración y Gestión", "Todas las direcciones IP locales y públicas", "Solo direcciones IP locales", "Solo las direcciones IP o redes indicadas", "Acceso por IP a Administración y Gestión guardado.", "Dirección IP actual: 203.0.113.25 · permitida.", "La dirección IP 203.0.113.25 no está autorizada para abrir Administración o Gestión.", "Esta dirección IP no está autorizada para acceder a Administración o Gestión.", "Política de acceso por IP a Administración y Gestión modificada"],
+    it: ["Accesso ad Amministrazione e Gestione", "Tutti gli indirizzi IP locali e pubblici", "Solo indirizzi IP locali", "Solo gli indirizzi IP o le reti indicati", "Accesso IP ad Amministrazione e Gestione salvato.", "Indirizzo IP attuale: 203.0.113.25 · autorizzato.", "L’indirizzo IP 203.0.113.25 non è autorizzato ad aprire Amministrazione o Gestione.", "Questo indirizzo IP non è autorizzato ad accedere ad Amministrazione o Gestione.", "Politica di accesso IP ad Amministrazione e Gestione modificata"],
+    pt: ["Acesso à Administração e Gestão", "Todos os endereços IP locais e públicos", "Apenas endereços IP locais", "Apenas os endereços IP ou redes indicados", "Acesso por IP à Administração e Gestão guardado.", "Endereço IP atual: 203.0.113.25 · autorizado.", "O endereço IP 203.0.113.25 não está autorizado a abrir a Administração ou Gestão.", "Este endereço IP não está autorizado a aceder à Administração ou Gestão.", "Política de acesso por IP à Administração e Gestão alterada"],
+    de: ["Zugriff auf Administration und Verwaltung", "Alle lokalen und öffentlichen IP-Adressen", "Nur lokale IP-Adressen", "Nur die angegebenen IP-Adressen oder Netzwerke", "IP-Zugriff auf Administration und Verwaltung gespeichert.", "Aktuelle IP-Adresse: 203.0.113.25 · zugelassen.", "Die IP-Adresse 203.0.113.25 ist nicht zum Öffnen von Administration oder Verwaltung zugelassen.", "Diese IP-Adresse ist nicht für den Zugriff auf Administration oder Verwaltung zugelassen.", "IP-Zugriffsrichtlinie für Administration und Verwaltung geändert"],
+  };
 
   for (const [language, label] of Object.entries(expected)) {
     const i18n = await load(`${language}-TEST`);
@@ -101,6 +109,17 @@ async function load(language) {
       i18n.t("Supprimer définitivement cette sauvegarde ?"),
       i18n.t("Sauvegarde supprimée"),
     ], expectedBackupDeletion[language]);
+    assert.deepEqual([
+      i18n.t("Accès à Administration et Gestion"),
+      i18n.t("Toutes les adresses IP locales et publiques"),
+      i18n.t("Uniquement les adresses IP locales"),
+      i18n.t("Uniquement les adresses IP ou réseaux indiqués"),
+      i18n.t("Accès IP à Administration et Gestion enregistré."),
+      i18n.t("Adresse IP actuelle : {ip} · autorisée.", { ip: "203.0.113.25" }),
+      i18n.t("L’adresse IP {ip} n’est pas autorisée à ouvrir Administration ou Gestion.", { ip: "203.0.113.25" }),
+      i18n.t("Cette adresse IP n’est pas autorisée à accéder à Administration ou Gestion."),
+      i18n.t("Politique d’accès IP à Administration et Gestion modifiée"),
+    ], expectedAdminAccess[language]);
     assert.deepEqual([
       i18n.t("Mes notes"),
       i18n.t("Messages et fichiers personnels"),

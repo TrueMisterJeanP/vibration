@@ -6,27 +6,29 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1b5260">
-  <meta name="vibration-build" content="community-1-0-27-v396">
+  <meta name="vibration-build" content="community-1-0-28-v412">
   <style>
     :root { --avatar-bg: #1b5260; --avatar-fg: #a9fff4; background-color: #1b5260; }
     html[data-theme="light"] { --avatar-bg: #c9e7e4; --avatar-fg: #075e57; background-color: #c9e7e4; }
     html.ios-pwa-starting, html.ios-pwa-starting body { background: var(--avatar-bg); }
     #startup-splash { display: none; }
     html.ios-pwa-starting #startup-splash:not([hidden]) { position: fixed; z-index: 100; top: 0; left: 0; display: block; width: var(--startup-screen-width, 100vw); min-width: 100vw; height: var(--startup-screen-height, 100vh); min-height: 100vh; overflow: hidden; background: var(--avatar-bg); }
-    #startup-splash svg { position: absolute; top: var(--startup-symbol-y, 0); left: var(--startup-symbol-x, calc((100vw - 120px) / 2)); display: block; width: 120px; height: 120px; visibility: hidden; fill: none; stroke: var(--avatar-fg); stroke-width: 1.25; stroke-linejoin: miter; animation: none; transition: none; }
-    html.ios-pwa-splash-positioned #startup-splash svg { visibility: visible; }
+    #startup-splash img { position: absolute; top: var(--startup-symbol-y, 0); left: var(--startup-symbol-x, calc((100vw - 120px) / 2)); display: block; width: 120px; height: 120px; visibility: hidden; animation: none; transition: none; }
+    html[data-theme="dark"] #startup-splash img { filter: brightness(0) invert(1); }
+    html.ios-pwa-splash-positioned #startup-splash img { visibility: visible; }
   </style>
-  <script src="/js/theme.js?v=group-clean-overlap-v396"></script>
+  <script src="/js/theme.js?v=group-clean-overlap-v405"></script>
   <title>Vibration</title>
-  <link rel="manifest" href="/manifest.json?v=desktop-titlebar-v252">
-  <link rel="icon" href="/icons/icon-192.png">
-  <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/css/style.css?v=group-clean-overlap-v396">
+  <link rel="manifest" href="/manifest.json?v=dock-borderless-v406">
+  <link rel="icon" type="image/svg+xml" href="/icons/vibration.svg">
+  <link rel="alternate icon" href="/icons/icon-192.png?v=dock-borderless-v406">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png?v=dock-borderless-v406">
+  <link rel="stylesheet" href="/css/style.css?v=group-clean-overlap-v405">
 </head>
 <body>
   <div class="desktop-titlebar-drag-region" data-tauri-drag-region aria-hidden="true" data-title="Vibration"></div>
   <div id="startup-splash" role="status" aria-label="Chargement de Vibration">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 20 12 12 20 4 12Z"></path></svg>
+    <img src="/icons/vibration-mark.svg" alt="">
   </div>
   <main id="app-shell" class="sidebar-open" hidden>
     <aside id="sidebar">
@@ -612,6 +614,6 @@
   <div id="toasts" aria-live="polite"></div>
   <script src="/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2"></script>
   <script src="/vendor/jsqr/jsQR.js?v=qr-scanner-v296"></script>
-  <script type="module" src="/js/app.js?v=community-1-0-27-v396"></script>
+  <script type="module" src="/js/app.js?v=community-1-0-28-v412"></script>
 </body>
 </html>

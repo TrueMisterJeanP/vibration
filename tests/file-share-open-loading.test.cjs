@@ -28,6 +28,15 @@ assert.match(
 );
 assert.match(globalFileRow, /file-share-button global-file-share/);
 assert.match(globalFileRow, /file-share-button global-file-unshare/);
+assert.match(
+  css,
+  /:root\[data-theme="light"\] \.global-file-share\s*\{[^}]*border-color:\s*#b7d5d2;[^}]*background:\s*#ffffff;/,
+);
+assert.match(
+  css,
+  /:root\[data-theme="light"\] \.global-file-share:hover,[\s\S]*\.global-file-share:focus-visible\s*\{[^}]*border-color:\s*#8bbdb7;[^}]*background:\s*#f2faf8;/,
+);
+assert.doesNotMatch(css, /:root\[data-theme="light"\] \.global-file-share \.file-share-icon/);
 assert.doesNotMatch(
   globalFileRow,
   /globalFilesDialog\.close\(\)/,

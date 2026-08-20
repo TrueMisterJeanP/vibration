@@ -19,8 +19,9 @@ assert.match(app, /function retryIncompleteBoot\(\) \{\s*if \(appReady \|\| boot
 assert.match(refreshAll, /const request = \(path, options = \{\}\) => api\(path, requestTimeoutMS > 0/);
 assert.match(refreshAll, /request\("\/api\/contacts"\)/);
 assert.match(refreshAll, /request\("\/api\/conversations"\)/);
-assert.match(worker, /chat-pwa-go-v396/);
-assert.match(worker, /\/js\/api\.js\?v=community-1-0-27-v396/);
+const workerCacheVersion = Number(worker.match(/chat-pwa-go-v(\d+)/)?.[1]);
+assert.ok(workerCacheVersion >= 412, "le cache applicatif doit inclure les traductions du contrôle d’accès IP");
+assert.match(worker, /\/js\/api\.js\?v=community-1-0-28-v412/);
 
 (async () => {
   const originals = new Map(["window", "location", "localStorage", "fetch"].map((name) => [

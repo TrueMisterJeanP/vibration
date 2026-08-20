@@ -30,6 +30,8 @@ assert.match(css, /#message-input\s*\{[^}]*height:\s*44px[^}]*min-height:\s*44px
 assert.match(css, /--group-action:\s*#075e57/);
 assert.match(css, /\.actions #group-button\s*\{[^}]*background:\s*var\(--group-action\)[^}]*color:\s*#ffffff/);
 assert.match(css, /\.profile-trigger strong\s*\{[^}]*color:\s*var\(--group-action\)/);
+assert.match(css, /\.admin-link\s*\{[^}]*grid-template-columns:\s*1\.65rem minmax\(0, 1fr\) 1\.25rem;/);
+assert.match(css, /\.admin-link \.sidebar-action-icon\s*\{[^}]*width:\s*1\.55rem;[^}]*height:\s*1\.55rem;[^}]*padding:\s*\.08rem;/);
 
 const revealStart = app.indexOf("function revealConversationLists()");
 const revealEnd = app.indexOf("function refreshCarnetInBackground()", revealStart);

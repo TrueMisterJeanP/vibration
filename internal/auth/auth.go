@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"chat-pwa-go/internal/adminaccess"
 	"chat-pwa-go/internal/httpx"
 	"chat-pwa-go/internal/invitationstore"
 	"chat-pwa-go/internal/messageauth"
@@ -41,6 +42,7 @@ type Handler struct {
 	DisableRegistration   bool
 	DisableInvitationCode bool
 	AuthLimiter           *RateLimiter
+	AdminAccess           *adminaccess.Controller
 	// SessionActivityInterval overrides the throttling window for
 	// `sessions.last_seen_at` writes. Zero uses sessionActivityInterval.
 	SessionActivityInterval time.Duration
@@ -87,6 +89,7 @@ type User struct {
 	HasDiscoveryCode    bool    `json:"has_discovery_code"`
 	IsAdmin             bool    `json:"is_admin"`
 	IsManager           bool    `json:"is_manager"`
+	AdminAccessAllowed  bool    `json:"admin_access_allowed"`
 	IsBanned            bool    `json:"is_banned"`
 	CreatedAt           string  `json:"created_at"`
 }
@@ -553,6 +556,10 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user.HasDiscoveryCode = discoveryCodeHash.Valid && discoveryCodeHash.String != ""
+	if user.IsAdmin || user.IsManager {
+		decision, accessErr := h.adminAccessController().Decide(r)
+		user.AdminAccessAllowed = accessErr == nil && decision.Allowed
+	}
 	httpx.JSON(w, http.StatusOK, user)
 }
 

@@ -19,8 +19,8 @@ const mobileSelection = app.slice(
   app.indexOf("async function renderPersonalConversation"),
 );
 
-assert.match(selectConversation, /elements\.messages\.replaceChildren\(loading\)/);
-assert.match(selectConversation, /loading\.textContent = t\("Chargement…"\)/);
+assert.match(selectConversation, /transitionInProgress[\s\S]*preserveCurrentMessageList\(\);[\s\S]*beginMessagePreviewReadiness\(\)/);
+assert.doesNotMatch(selectConversation, /loading\.textContent|elements\.messages\.replaceChildren\(loading\)/);
 assert.match(app, /function createConversationExchangeState\(conversation, empty = null\)/);
 assert.match(app, /conversation\?\.is_personal[\s\S]*\? "notes"/);
 assert.match(app, /conversation\?\.type === "group"/);
@@ -32,8 +32,8 @@ assert.match(app, /M9 5h9a2 2 0 0 1 2 2v6[\s\S]*M7 9H6a2 2/);
 assert.match(app, /M6 5h12a2 2 0 0 1 2 2v7[\s\S]*l-5 4v-4H6/);
 assert.equal(
   (app.match(/createConversationExchangeState\((?:state\.current|conversation)(?:, empty)?\)/g) || []).length,
-  5,
-  "le schéma adapté doit être conservé dans les discussions privées et de groupe, vides ou alimentées",
+  4,
+  "le schéma adapté doit être conservé après le chargement des discussions privées et de groupe",
 );
 assert.match(css, /\.conversation-exchange-state > #empty-chat/);
 assert.match(css, /\.conversation-exchange-intro/);
@@ -54,8 +54,8 @@ assert.match(css, /\.no-conversation-state > #empty-chat/);
 assert.match(css, /\.conversation-exchange-icon\.no-conversation-icon svg/);
 assert.match(app, /let conversationSelectionVersion = 0;/);
 assert.ok(
-  selectConversation.indexOf('elements.shell.classList.remove("sidebar-open")') < selectConversation.indexOf("await getMembers"),
-  "le premier clic doit fermer le volet avant toute attente réseau",
+  selectConversation.indexOf("const [, messageLoadError] = await Promise.all") < selectConversation.indexOf('elements.shell.classList.remove("sidebar-open")'),
+  "le volet mobile ne doit se fermer qu’après le chargement complet des messages",
 );
 assert.match(app, /function markConversationMembersVerified\(conversationID\)/);
 assert.match(app, /verifiedConversationMembers: new Set\(\)/);
@@ -68,9 +68,10 @@ assert.ok(
   selectConversation.indexOf("renderConversationHeader(conversation, rememberedDisplay)") < selectConversation.indexOf("await getMembers"),
   "l’en-tête mémorisé doit être affiché sans attendre le réseau",
 );
-assert.ok(
-  selectConversation.indexOf('empty.textContent = t("Aucun message. Écrivez le premier message chiffré.")') < selectConversation.indexOf("await getMembers"),
-  "une nouvelle discussion vide doit s’afficher sans attendre le réseau",
+assert.doesNotMatch(
+  selectConversation,
+  /empty\.textContent = t\("Aucun message\. Écrivez le premier message chiffré\."\)/,
+  "une discussion vide ne doit être révélée qu’après le chargement des messages",
 );
 assert.match(selectConversation, /fresh: !membersWereVerified/);
 assert.match(selectConversation, /if \(selectionVersion !== conversationSelectionVersion\) return;/);
@@ -79,8 +80,8 @@ assert.match(loadMessages, /const conversationID = conversation\.id;/);
 assert.match(loadMessages, /if \(!sameID\(state\.current\?\.id, conversationID\)\) return;/);
 assert.match(loadMessages, /getMessageKey\(message, conversation\)/);
 assert.match(loadMessages, /messageClearCache\(conversationID\)/);
-assert.match(loadMessages, /renderMessages\(prepared\.messages, conversation, prepared\.decrypted\);[\s\S]*scrollMessagesToLatest\(conversationID\)/);
-assert.match(loadMessages, /renderMessages\(cachedMessages, conversation\);[\s\S]*scrollMessagesToLatest\(conversationID\)/);
+assert.match(loadMessages, /renderMessages\(prepared\.messages, conversation, prepared\.decrypted, \{ waitForPreviews \}\);[\s\S]*scrollMessagesToLatest\(conversationID\)/);
+assert.match(loadMessages, /renderMessages\(cachedMessages, conversation, null, \{ waitForPreviews \}\);[\s\S]*scrollMessagesToLatest\(conversationID\)/);
 assert.match(selectConversation, /if \(targetMessageID\) \{[\s\S]*revealMessage\(targetMessageID\)[\s\S]*\} else \{[\s\S]*scrollMessagesToLatest\(selectedID\)/);
 assert.match(app, /async function scrollMessagesToLatest\(conversationID\) \{[\s\S]*scrollToBottom\(\);[\s\S]*requestAnimationFrame\(resolve\)[\s\S]*scrollToBottom\(\);/);
 assert.match(mobileSelection, /querySelectorAll\("\.conversation-item\.active"\)[\s\S]*button\.classList\.add\("active"\)/);
