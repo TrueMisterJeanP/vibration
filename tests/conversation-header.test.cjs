@@ -92,7 +92,15 @@ assert.match(css, /\.chat-conversation-avatar\s*\{[^}]*background: var\(--avatar
 assert.match(css, /\.chat-conversation-avatar img\s*\{/);
 assert.match(css, /\.personal-note-avatar\s*\{[^}]*border-radius: \.75rem;[^}]*background: rgb\(32 199 181 \/ \.13\);/);
 assert.match(css, /\.conversation-item\.personal-conversation-item:not\(\.active\)\s*\{[^}]*background: #0d2c33;/);
-assert.match(css, /:root\[data-theme="light"\] \.conversation-item\.personal-conversation-item:not\(\.active\)\s*\{[^}]*background: #f8fdfc;/);
+const personalNotesLightRules = [...css.matchAll(
+  /:root\[data-theme="light"\] \.conversation-item\.personal-conversation-item:not\(\.active\)\s*\{([^}]*)\}/g,
+)];
+assert.ok(personalNotesLightRules.length > 0, "the light theme must style the personal notes entry");
+assert.match(
+  personalNotesLightRules.at(-1)[1],
+  /background:\s*#fcfcfd/,
+  "the last light-theme rule must keep the personal notes entry distinct from the sidebar",
+);
 assert.match(css, /\.brand-logo-button\.has-conversation-avatar\.personal-note-avatar\s*\{/);
 assert.match(css, /\.personal-note-avatar svg\s*\{/);
 assert.match(css, /--avatar-bg: #1b5260;[\s\S]*--avatar-fg: #a9fff4;/);
@@ -104,7 +112,7 @@ assert.match(css, /\.profile-avatar-preview\s*\{[^}]*background: var\(--avatar-b
 assert.match(css, /\.group-avatar-preview-icon\s*\{[^}]*stroke: currentColor;/);
 assert.match(css, /\.call-banner-status\s*\{[^}]*display: inline-flex;[^}]*align-items: center;[^}]*justify-content: flex-start;[^}]*gap: \.45rem;/);
 assert.match(app, /function renderGroupAvatarPreview\(container, avatar\)/);
-assert.match(css, /:root\[data-theme="light"\]\s*\{ --avatar-bg: #c9e7e4; --avatar-fg: #075e57; \}/);
+assert.match(css, /:root\[data-theme="light"\]\s*\{ --avatar-bg: #dfe5e8; --avatar-fg: #075e57; \}/);
 assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.chat-conversation-avatar \{ display: none; \}/);
 assert.match(css, /\.composer-box:focus-within\s*\{[^}]*border-color:\s*var\(--line\);[^}]*box-shadow:\s*none;/);
 assert.match(css, /#message-input:focus,[\s\S]*#message-input:focus-visible\s*\{[^}]*outline:\s*none;[^}]*box-shadow:\s*none;/);

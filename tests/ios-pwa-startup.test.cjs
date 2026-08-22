@@ -36,7 +36,7 @@ assert.match(splashMark, /stroke="#16836a"/);
 assert.doesNotMatch(splashMark, /<rect\b/, "l’écran de démarrage doit afficher le losange seul");
 const criticalSplashStyle = html.slice(html.indexOf("<style>"), html.indexOf("</style>"));
 assert.match(criticalSplashStyle, /:root\s*\{[^}]*background-color:\s*#1b5260/);
-assert.match(criticalSplashStyle, /html\[data-theme="light"\]\s*\{[^}]*background-color:\s*#c9e7e4/);
+assert.match(criticalSplashStyle, /html\[data-theme="light"\]\s*\{[^}]*--avatar-bg:\s*#dfe5e8[^}]*background-color:\s*#dfe5e8/);
 assert.match(criticalSplashStyle, /html\.ios-pwa-starting,\s*html\.ios-pwa-starting body\s*\{[^}]*background:\s*var\(--avatar-bg\)/);
 assert.match(criticalSplashStyle, /#startup-splash\s*\{\s*display:\s*none/);
 assert.match(criticalSplashStyle, /html\.ios-pwa-starting #startup-splash:not\(\[hidden\]\)\s*\{[^}]*position:\s*fixed[^}]*top:\s*0[^}]*width:\s*var\(--startup-screen-width, 100vw\)[^}]*height:\s*var\(--startup-screen-height, 100vh\)/);
@@ -54,7 +54,7 @@ assert.match(css, /#startup-splash img\s*\{[^}]*top:\s*var\(--startup-symbol-y, 
 assert.match(css, /html\[data-theme="dark"\] #startup-splash img\s*\{[^}]*filter:\s*brightness\(0\) invert\(1\)/);
 assert.doesNotMatch(css.match(/#startup-splash img\s*\{([^}]*)\}/)?.[1] || "", /safe-area-inset-top/);
 assert.match(app, /function dismissStartupSplash\(\)[\s\S]*classList\.remove\("ios-pwa-starting", "ios-pwa-splash-positioned"\)[\s\S]*startup-splash/);
-assert.match(theme, /startupColor = resolved === "light" \? "#c9e7e4" : "#1b5260"/);
+assert.match(theme, /startupColor = resolved === "light" \? "#dfe5e8" : "#1b5260"/);
 assert.match(theme, /classList\.contains\("ios-pwa-starting"\)[\s\S]*\? startupColor/);
 assert.match(app, /classList\.remove\("ios-pwa-starting", "ios-pwa-splash-positioned"\);\s*window\.ChatTheme\?\.refresh\(\)/);
 const cachedRender = refreshAll.slice(0, refreshAll.indexOf("try {"));

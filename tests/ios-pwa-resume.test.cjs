@@ -32,11 +32,11 @@ assert.match(app, /if \(dialog\?\.open\) dialog\.close\(\)/);
 assert.match(foreground, /Date\.now\(\) - appHiddenAt >= 3000/);
 assert.match(foreground, /refreshConversationListOnForeground\(\{ reconnectSocket: suspended \}\)/);
 assert.match(foreground, /if \(reconnectSocket\) state\.socket\?\.reconnect\(\)/);
-assert.match(notifications, /register\("\/sw\.js\?v=community-1-0-28-v412"\)/);
+assert.match(notifications, /register\("\/sw\.js\?v=community-1-0-29-v418"\)/);
 assert.ok(Number(worker.match(/chat-pwa-go-v(\d+)/)?.[1]) >= 412);
-assert.match(worker, /\/js\/app\.js\?v=community-1-0-28-v412/);
-assert.match(worker, /\/js\/notifications\.js\?v=community-1-0-28-v412/);
-assert.match(worker, /\/js\/websocket\.js\?v=community-1-0-28-v412/);
+assert.match(worker, /\/js\/app\.js\?v=community-1-0-29-v418/);
+assert.match(worker, /\/js\/notifications\.js\?v=community-1-0-29-v418/);
+assert.match(worker, /\/js\/websocket\.js\?v=community-1-0-29-v418/);
 
 const executableWebSocketSource = websocketSource.replace(
   /^import[^\n]+\n/,

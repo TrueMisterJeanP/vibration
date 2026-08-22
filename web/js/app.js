@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-28-v412";
+import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-29-v418";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -19,7 +19,7 @@ import {
   verifyMessagePayload,
   unwrapGroupKey,
   wrapGroupKey,
-} from "./crypto.js?v=community-1-0-28-v412";
+} from "./crypto.js?v=community-1-0-29-v418";
 import {
   forgetRememberedIdentity,
 	forgetTrustedDeviceCredential,
@@ -40,10 +40,10 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=community-1-0-28-v412";
-import { ChatSocket } from "./websocket.js?v=community-1-0-28-v412";
-import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-28-v412";
-import { locale, t } from "./i18n.js?v=community-1-0-28-v412";
+} from "./notifications.js?v=community-1-0-29-v418";
+import { ChatSocket } from "./websocket.js?v=community-1-0-29-v418";
+import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-29-v418";
+import { locale, t } from "./i18n.js?v=community-1-0-29-v418";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
 import { nonWhiteImageBounds } from "./file-preview-image.js?v=ios17-pdf-v199";
 import {
@@ -71,7 +71,7 @@ import {
   sameCallIdentity,
   shouldOfferAfterAccept,
   shouldOfferInGroup,
-} from "./call-negotiation.js?v=community-1-0-28-v412";
+} from "./call-negotiation.js?v=community-1-0-29-v418";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
 import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
@@ -100,7 +100,7 @@ const GLOBAL_FILES_PAGE_SIZE = 40;
 const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
 const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "community-1-0-28-v412";
+const APP_BUILD = "community-1-0-29-v418";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
 const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;
@@ -231,7 +231,8 @@ const elements = {
   personalConversationPreview: document.querySelector("#personal-conversation-preview"),
   personalConversationTime: document.querySelector("#personal-conversation-time"),
   personalConversationUnread: document.querySelector("#personal-conversation-unread"),
-  messages: document.querySelector("#message-list"),
+  messageScroller: document.querySelector("#message-list"),
+  messages: document.querySelector("#message-list-content"),
   chatWorkspace: document.querySelector("#chat-workspace"),
   pinnedPanel: document.querySelector("#pinned-panel"),
   pinnedMessages: document.querySelector("#pinned-message-list"),
@@ -1249,7 +1250,10 @@ function bindUI() {
     });
   };
   const setSidebarOpen = (open) => {
-    if (open) pauseMessageVideos();
+    if (open) {
+      pauseMessageVideos();
+      blurComposerBeforeMobileConversationTransition();
+    }
     elements.shell.classList.toggle("sidebar-open", open);
     sidebarButton.setAttribute("aria-expanded", String(open));
     sidebarButton.setAttribute("aria-label", t(open
@@ -3014,7 +3018,7 @@ function warmAdminShell() {
   adminShellPreloaded = true;
   for (const [rel, href] of [
     ["prefetch", "/admin.html?from=chat"],
-    ["modulepreload", "/js/admin.js?v=community-1-0-28-v412"],
+    ["modulepreload", "/js/admin.js?v=community-1-0-29-v418"],
   ]) {
     const link = document.createElement("link");
     link.rel = rel;
@@ -4545,6 +4549,25 @@ function compactPreviewText(value) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
+function isMobileConversationLayout() {
+  return window.matchMedia("(max-width: 720px)").matches;
+}
+
+function blurComposerBeforeMobileConversationTransition() {
+  if (isMobileConversationLayout() && document.activeElement === elements.input) {
+    elements.input.blur();
+  }
+}
+
+function focusComposerAfterConversationSelection() {
+  // The mobile chat panel is animated with transform. Focusing its textarea
+  // while that animation is running leaves iOS WebKit's nested scroll view in
+  // the focused layer until another tap. Mobile users focus explicitly by
+  // tapping the composer; desktop keeps the keyboard-oriented shortcut.
+  if (isMobileConversationLayout()) return;
+  elements.input.focus({ preventScroll: true });
+}
+
 async function selectConversation(conversation, targetMessageID = null) {
   if (conversation.role === "pending") {
     toast("Acceptez cette invitation avant d’ouvrir le groupe.", "error");
@@ -4556,7 +4579,7 @@ async function selectConversation(conversation, targetMessageID = null) {
   const conversationChanged = !sameID(state.current?.id, conversation.id);
   closeReactionPicker();
   if (conversationChanged) {
-    const transitionInProgress = elements.messages.classList.contains("message-previews-pending");
+    const transitionInProgress = elements.messageScroller.classList.contains("message-previews-pending");
     clearMessagePreviewReadiness({ preserveSnapshot: transitionInProgress });
     if (transitionInProgress) elements.messages.replaceChildren();
     else preserveCurrentMessageList();
@@ -4652,6 +4675,7 @@ async function selectConversation(conversation, targetMessageID = null) {
   const [, messageLoadError] = await Promise.all([renderConversations(), messagesLoading]);
   if (selectionVersion !== conversationSelectionVersion || !sameID(state.current?.id, selectedID)) return;
   if (messageLoadError) throw messageLoadError;
+  blurComposerBeforeMobileConversationTransition();
   elements.shell.classList.remove("sidebar-open");
   const sidebarButton = document.querySelector("#open-sidebar-logo");
   sidebarButton.setAttribute("aria-expanded", "false");
@@ -4660,7 +4684,7 @@ async function selectConversation(conversation, targetMessageID = null) {
   if (!elements.pinnedPanel.hidden) await loadPinnedMessages();
   if (selectionVersion !== conversationSelectionVersion || !sameID(state.current?.id, selectedID)) return;
   updateCallUI();
-  elements.input.focus({ preventScroll: true });
+  focusComposerAfterConversationSelection();
   if (targetMessageID) {
     await revealMessage(targetMessageID);
   } else {
@@ -6894,7 +6918,7 @@ async function renderMessages(messages, conversation, preparedDecrypted = null, 
   const conversationID = conversation.id;
   if (!sameID(state.current?.id, conversationID)) return;
   const readinessVersion = waitForPreviews ? beginMessagePreviewReadiness() : 0;
-  if (!waitForPreviews && !elements.messages.classList.contains("message-previews-pending")) {
+  if (!waitForPreviews && !elements.messageScroller.classList.contains("message-previews-pending")) {
     clearMessagePreviewReadiness();
   }
   clearRenderedFilePreviews();
@@ -7080,7 +7104,7 @@ function closeReactionPicker({ restoreFocus = false } = {}) {
   document.removeEventListener("click", onOutsideClick);
   document.removeEventListener("keydown", onKeyDown);
   window.removeEventListener("resize", onViewportChange);
-  elements.messages.removeEventListener("scroll", onViewportChange);
+  elements.messageScroller.removeEventListener("scroll", onViewportChange);
   anchor?.setAttribute("aria-expanded", "false");
   picker.remove();
   if (restoreFocus && anchor?.isConnected) anchor.focus({ preventScroll: true });
@@ -7155,7 +7179,7 @@ function openReactionPicker(message, anchor) {
   activeReactionPicker = { picker, anchor, messageID: message.id, outsideTimer, onOutsideClick, onKeyDown, onViewportChange };
   document.addEventListener("keydown", onKeyDown);
   window.addEventListener("resize", onViewportChange);
-  elements.messages.addEventListener("scroll", onViewportChange);
+  elements.messageScroller.addEventListener("scroll", onViewportChange);
   positionReactionPicker(picker, anchor);
   grid.querySelector("button")?.focus({ preventScroll: true });
 }
@@ -9827,8 +9851,11 @@ function preserveCurrentMessageList() {
   const snapshot = document.createElement("div");
   snapshot.className = "message-list-transition-snapshot";
   snapshot.setAttribute("aria-hidden", "true");
-  const scrollTop = elements.messages.scrollTop;
-  while (elements.messages.firstChild) snapshot.append(elements.messages.firstChild);
+  const content = document.createElement("div");
+  content.className = "message-list-transition-content";
+  const scrollTop = elements.messageScroller.scrollTop;
+  while (elements.messages.firstChild) content.append(elements.messages.firstChild);
+  snapshot.append(content);
   snapshot.querySelectorAll("[id]").forEach((element) => element.removeAttribute("id"));
   elements.chatWorkspace.prepend(snapshot);
   snapshot.scrollTop = scrollTop;
@@ -9836,28 +9863,28 @@ function preserveCurrentMessageList() {
 
 function beginMessagePreviewReadiness() {
   const version = ++messagePreviewReadinessVersion;
-  elements.messages.classList.add("message-previews-pending");
-  elements.messages.setAttribute("aria-busy", "true");
+  elements.messageScroller.classList.add("message-previews-pending");
+  elements.messageScroller.setAttribute("aria-busy", "true");
   return version;
 }
 
 function clearMessagePreviewReadiness({ preserveSnapshot = false } = {}) {
   messagePreviewReadinessVersion++;
   if (!preserveSnapshot) clearMessageListTransitionSnapshot();
-  elements.messages.classList.remove("message-previews-pending");
-  elements.messages.removeAttribute("aria-busy");
+  elements.messageScroller.classList.remove("message-previews-pending");
+  elements.messageScroller.removeAttribute("aria-busy");
 }
 
 function finishMessagePreviewReadiness(version, conversationID) {
   if (version !== messagePreviewReadinessVersion || !sameID(state.current?.id, conversationID)) return;
   clearMessageListTransitionSnapshot();
-  elements.messages.classList.remove("message-previews-pending");
-  elements.messages.removeAttribute("aria-busy");
+  elements.messageScroller.classList.remove("message-previews-pending");
+  elements.messageScroller.removeAttribute("aria-busy");
 }
 
 function filePreviewIsVisible(container) {
   const target = container.closest(".file-attachment") || container;
-  const viewport = elements.messages.getBoundingClientRect();
+  const viewport = elements.messageScroller.getBoundingClientRect();
   const bounds = target.getBoundingClientRect();
   return bounds.bottom >= viewport.top && bounds.top <= viewport.bottom;
 }
@@ -9909,7 +9936,7 @@ function scheduleFilePreview(message, container, key) {
     observer.disconnect();
     state.filePreviewObservers.delete(observer);
     void renderFilePreview(message, container, key);
-  }, { root: elements.messages, rootMargin: "1200px 0px" });
+  }, { root: elements.messageScroller, rootMargin: "1200px 0px" });
   state.filePreviewObservers.add(observer);
   observer.observe(container.closest(".file-attachment") || container);
 }
@@ -9944,7 +9971,7 @@ function scheduleReplyFilePreview(replyPreview, container, conversation) {
     observer.disconnect();
     state.filePreviewObservers.delete(observer);
     void render();
-  }, { root: elements.messages, rootMargin: "1200px 0px" });
+  }, { root: elements.messageScroller, rootMargin: "1200px 0px" });
   state.filePreviewObservers.add(observer);
   observer.observe(container.closest(".message-reply-preview") || container);
 }
@@ -10867,13 +10894,12 @@ function sendTyping() {
 }
 
 function scrollToBottom() {
-  elements.messages.scrollTop = 0;
+  elements.messageScroller.scrollTop = elements.messageScroller.scrollHeight;
 }
 
 async function scrollMessagesToLatest(conversationID) {
-  // Firefox conserve parfois l'ancien scrollTop négatif d'un conteneur
-  // column-reverse lorsque le placeholder est remplacé. Deux frames laissent
-  // le moteur recalculer la hauteur, l'ordre CSS et la transition du panneau.
+  // Deux frames laissent les moteurs recalculer la hauteur du contenu Flex,
+  // les aperçus de fichiers et la transition du panneau avant l'ancrage bas.
   scrollToBottom();
   for (let frame = 0; frame < 2; frame += 1) {
     await new Promise((resolve) => requestAnimationFrame(resolve));

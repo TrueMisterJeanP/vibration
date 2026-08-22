@@ -22,6 +22,7 @@ src-tauri/
 /cmd/loadtest/
 /docs/scaling-1000-users.md
 /rapport-charge-*.json
+/livrables_inpi/
 /tests/admin-file-storage.test.cjs
 /tests/admin-database-backup.test.cjs
 /tests/admin-invitations.test.cjs

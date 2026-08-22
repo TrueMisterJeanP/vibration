@@ -1,15 +1,15 @@
 <!doctype html>
-<html lang="fr">
+<html lang="fr" class="chat-app-page">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1b5260">
-  <meta name="vibration-build" content="community-1-0-28-v412">
+  <meta name="vibration-build" content="community-1-0-29-v418">
   <style>
     :root { --avatar-bg: #1b5260; --avatar-fg: #a9fff4; background-color: #1b5260; }
-    html[data-theme="light"] { --avatar-bg: #c9e7e4; --avatar-fg: #075e57; background-color: #c9e7e4; }
+    html[data-theme="light"] { --avatar-bg: #dfe5e8; --avatar-fg: #075e57; background-color: #dfe5e8; }
     html.ios-pwa-starting, html.ios-pwa-starting body { background: var(--avatar-bg); }
     #startup-splash { display: none; }
     html.ios-pwa-starting #startup-splash:not([hidden]) { position: fixed; z-index: 100; top: 0; left: 0; display: block; width: var(--startup-screen-width, 100vw); min-width: 100vw; height: var(--startup-screen-height, 100vh); min-height: 100vh; overflow: hidden; background: var(--avatar-bg); }
@@ -23,7 +23,7 @@
   <link rel="icon" type="image/svg+xml" href="/icons/vibration.svg">
   <link rel="alternate icon" href="/icons/icon-192.png?v=dock-borderless-v406">
   <link rel="apple-touch-icon" href="/icons/icon-192.png?v=dock-borderless-v406">
-  <link rel="stylesheet" href="/css/style.css?v=group-clean-overlap-v405">
+  <link rel="stylesheet" href="/css/style.css?v=community-1-0-29-v418">
 </head>
 <body>
   <div class="desktop-titlebar-drag-region" data-tauri-drag-region aria-hidden="true" data-title="Vibration"></div>
@@ -63,7 +63,7 @@
             placeholder="Rechercher une discussion" aria-label="Rechercher une discussion">
           <kbd class="conversation-search-shortcut" aria-hidden="true">⌘K</kbd>
         </div>
-        <p id="personal-conversation-heading" class="conversation-section-heading" hidden>Épinglées</p>
+        <p id="personal-conversation-heading" class="conversation-section-heading" hidden>FIL PERSONNEL</p>
         <button id="personal-conversation-button" class="conversation-item personal-conversation-item" type="button" hidden>
           <span class="avatar personal-note-avatar" aria-hidden="true">
             <svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="16" rx="2"></rect><path d="M8 3v5M12 3v5M16 3v5M8 11h8M8 14h8M8 17h8"></path></svg>
@@ -102,18 +102,20 @@
       </header>
       <div id="chat-workspace">
         <div id="message-list">
-          <div class="no-conversation-state">
-            <span class="conversation-exchange-icon no-conversation-icon" aria-hidden="true">
-              <svg viewBox="0 0 120 120" focusable="false"><path d="M60 22 98 60 60 98 22 60Z"></path></svg>
-            </span>
-            <div class="no-conversation-copy">
-              <strong>Aucune conversation ouverte</strong>
-              <div id="empty-chat">Sélectionnez une discussion à gauche ou démarrez-en une nouvelle.</div>
-            </div>
-            <div class="no-conversation-actions" aria-label="Démarrer une conversation">
-              <button type="button" data-empty-action="contact"><span aria-hidden="true">＋</span> Nouvelle discussion</button>
-              <button class="outline" type="button" data-empty-action="group">Créer un groupe</button>
-              <button class="outline" type="button" data-empty-action="notes">Ouvrir mes notes</button>
+          <div id="message-list-content">
+            <div class="no-conversation-state">
+              <span class="conversation-exchange-icon no-conversation-icon" aria-hidden="true">
+                <svg viewBox="0 0 120 120" focusable="false"><path d="M60 22 98 60 60 98 22 60Z"></path></svg>
+              </span>
+              <div class="no-conversation-copy">
+                <strong>Aucune conversation ouverte</strong>
+                <div id="empty-chat">Sélectionnez une discussion à gauche ou démarrez-en une nouvelle.</div>
+              </div>
+              <div class="no-conversation-actions" aria-label="Démarrer une conversation">
+                <button type="button" data-empty-action="contact"><span aria-hidden="true">＋</span> Nouvelle discussion</button>
+                <button class="outline" type="button" data-empty-action="group">Créer un groupe</button>
+                <button class="outline" type="button" data-empty-action="notes">Ouvrir mes notes</button>
+              </div>
             </div>
           </div>
         </div>
@@ -614,6 +616,6 @@
   <div id="toasts" aria-live="polite"></div>
   <script src="/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2"></script>
   <script src="/vendor/jsqr/jsQR.js?v=qr-scanner-v296"></script>
-  <script type="module" src="/js/app.js?v=community-1-0-28-v412"></script>
+  <script type="module" src="/js/app.js?v=community-1-0-29-v418"></script>
 </body>
 </html>

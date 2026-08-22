@@ -6,7 +6,7 @@ Application de messagerie web installable, responsive et chiffrée côté naviga
   <img src="docs/interface-community-v1.0.28.png" alt="Interface fictive de Vibration Community avec profil et discussions de démonstration" width="900">
 </p>
 
-<p align="center"><strong>Vibration Community 1.0.28</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
+<p align="center"><strong>Vibration Community 1.0.29</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
 
 ## Philosophie
 
@@ -103,6 +103,14 @@ L’édition Enterprise reprend toutes les fonctionnalités de Community et ajou
 Le périmètre des appels et groupes fédérés est détaillé dans [Community et Enterprise](COMMUNITY_VS_ENTERPRISE.md). L’offre Enterprise est présentée sur [vibration-shop.appbox.fr](https://vibration-shop.appbox.fr).
 
 ## Nouveautés
+
+### Community 1.0.29
+
+- **Navigation iPhone et iPad stabilisée** : la coque de l’application reste calée sur la zone visible et ne glisse plus lorsqu’un clavier ou un changement d’orientation modifie le viewport.
+- **Défilement des messages fiabilisé sur iOS** : la zone de défilement est séparée du contenu inversé, ce qui conserve l’ancrage sur les messages récents sans saut ni blocage tactile.
+- **Transitions mobiles plus naturelles** : le champ de saisie perd proprement le focus avant un changement de panneau, la conversation ne force plus le clavier à l’ouverture et l’animation est plus rapide.
+- **Téléchargement de partage immédiat** : le bouton reste utilisable dès l’ouverture du lien, y compris pendant la reconnaissance de session, sans déclencher ensuite un second téléchargement automatique.
+- **Cache PWA v418** : les pages, styles, scripts et traductions sont renouvelés ensemble pour déployer immédiatement cette version.
 
 ### Community 1.0.28
 

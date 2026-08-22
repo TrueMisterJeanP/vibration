@@ -13,7 +13,7 @@ const rows = [
   ["+ Groupe", "+ Group", "+ Grupo", "+ Gruppo", "+ Grupo", "+ Gruppe"],
   ["Rechercher une discussion", "Search conversations", "Buscar conversaciones", "Cerca conversazioni", "Pesquisar conversas", "Unterhaltungen suchen"],
   ["Aucune discussion trouvée", "No conversations found", "No se encontraron conversaciones", "Nessuna conversazione trovata", "Nenhuma conversa encontrada", "Keine Unterhaltungen gefunden"],
-  ["Épinglées", "Pinned", "Fijadas", "In evidenza", "Afixadas", "Angeheftet"],
+  ["FIL PERSONNEL", "PERSONAL FEED", "HILO PERSONAL", "FEED PERSONALE", "FEED PESSOAL", "PERSÖNLICHER FEED"],
   ["Discussions", "Conversations", "Conversaciones", "Conversazioni", "Conversas", "Unterhaltungen"],
   ["Hier", "Yesterday", "Ayer", "Ieri", "Ontem", "Gestern"],
   ["Aucune conversation ouverte", "No open conversation", "Ninguna conversación abierta", "Nessuna conversazione aperta", "Nenhuma conversa aberta", "Keine Unterhaltung geöffnet"],

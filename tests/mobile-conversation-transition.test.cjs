@@ -12,7 +12,7 @@ assert.match(mobile, /#sidebar\s*\{[\s\S]*?z-index:\s*1;[\s\S]*?transform:\s*tra
 assert.match(mobile, /#chat-panel\s*\{[\s\S]*?z-index:\s*2;[\s\S]*?transform:\s*translateX\(0\)/);
 assert.match(mobile, /#app-shell\.sidebar-open #sidebar\s*\{\s*transform:\s*translateX\(0\)/);
 assert.match(mobile, /#app-shell\.sidebar-open #chat-panel\s*\{[\s\S]*?transform:\s*translateX\(100%\)/);
-assert.match(mobile, /transition:\s*transform \.8s cubic-bezier\(\.32, \.72, 0, 1\)/);
+assert.match(mobile, /transition:\s*transform \.28s cubic-bezier\(\.32, \.72, 0, 1\)/);
 assert.match(css, /#chat-panel\s*\{[^}]*background-color:\s*#071b24/);
 assert.match(css, /:root\[data-theme="light"\] #chat-panel\s*\{[^}]*background-color:\s*#f2f8f8/);
 assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?#sidebar,[\s\S]*?#chat-panel\s*\{\s*transition:\s*none/);

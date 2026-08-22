@@ -64,7 +64,7 @@ assert.match(previewReadiness, /await renderFilePreview\(message, container, key
 assert.match(previewReadiness, /else scheduleFilePreview\(\.\.\.preview\)/);
 assert.match(app, /function clearMessagePreviewReadiness\([^)]*preserveSnapshot = false[^)]*\)[\s\S]*messagePreviewReadinessVersion\+\+;[\s\S]*classList\.remove\("message-previews-pending"\)/);
 assert.doesNotMatch(app, /messagePreviewLoading/);
-assert.match(app, /function preserveCurrentMessageList\(\)[\s\S]*while \(elements\.messages\.firstChild\) snapshot\.append\(elements\.messages\.firstChild\)/);
+assert.match(app, /function preserveCurrentMessageList\(\)[\s\S]*while \(elements\.messages\.firstChild\) content\.append\(elements\.messages\.firstChild\)[\s\S]*snapshot\.append\(content\)/);
 assert.match(app, /snapshot\.querySelectorAll\("\[id\]"\)[\s\S]*removeAttribute\("id"\)/);
 assert.match(app, /function finishMessagePreviewReadiness[\s\S]*clearMessageListTransitionSnapshot\(\)[\s\S]*classList\.remove\("message-previews-pending"\)/);
 

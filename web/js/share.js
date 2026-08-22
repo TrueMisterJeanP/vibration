@@ -22,6 +22,11 @@ let fileMIME = "application/octet-stream";
 let fileIV = "";
 let fileSize = 0;
 let downloading = false;
+let sharePreparation = null;
+let manualDownloadRequested = false;
+let automaticDownloadTimer = null;
+
+const AUTOMATIC_DOWNLOAD_DELAY_MS = 2000;
 
 const serverShareErrors = new Map([
   ["file share not found", "Ce fichier partagé n’est pas disponible."],
@@ -102,7 +107,7 @@ async function downloadSharedFile(automatic = false) {
   }
 }
 
-async function init() {
+async function prepareSharedFile() {
   try { sessionStorage.setItem(RETURN_STORAGE_KEY, location.href); } catch {}
   token = new URLSearchParams(location.search).get("token") || "";
   const exportedKey = new URLSearchParams(location.hash.slice(1)).get("key") || "";
@@ -125,16 +130,50 @@ async function init() {
   elements.meta.textContent = `${formatSize(metadata.size)} · ${fileMIME}`;
   elements.expiry.textContent = t("Lien valable jusqu’au {date}.", { date: new Intl.DateTimeFormat(locale, { dateStyle: "long", timeStyle: "short" }).format(new Date(metadata.expires_at)) });
   elements.download.setAttribute("aria-label", t("Télécharger {name}", { name: fileName }));
-  elements.download.disabled = false;
-  elements.download.addEventListener("click", () => downloadSharedFile(false));
+}
 
-  const session = await fetch("/api/me", { credentials: "include", cache: "no-store" }).catch(() => null);
+async function requestSharedFileDownload(automatic = false) {
+  if (automatic && manualDownloadRequested) return;
+  if (!automatic) {
+    manualDownloadRequested = true;
+    if (automaticDownloadTimer !== null) {
+      clearTimeout(automaticDownloadTimer);
+      automaticDownloadTimer = null;
+    }
+    elements.error.textContent = "";
+    elements.status.textContent = t("Préparation du téléchargement…");
+  }
+
+  try {
+    await sharePreparation;
+  } catch {
+    return;
+  }
+  if (automatic && manualDownloadRequested) return;
+  await downloadSharedFile(automatic);
+}
+
+async function init() {
+  sharePreparation = prepareSharedFile();
+  const sessionRequest = fetch("/api/me", { credentials: "include", cache: "no-store" }).catch(() => null);
+  await sharePreparation;
+
+  const session = await sessionRequest;
   if (session?.ok) {
     document.querySelector(".share-auth-actions").hidden = true;
-    elements.status.textContent = t("Session reconnue. Le téléchargement va démarrer.");
-    await downloadSharedFile(true);
+    if (!manualDownloadRequested) {
+      elements.status.textContent = t("Session reconnue. Le téléchargement va démarrer.");
+      automaticDownloadTimer = setTimeout(() => {
+        automaticDownloadTimer = null;
+        void requestSharedFileDownload(true);
+      }, AUTOMATIC_DOWNLOAD_DELAY_MS);
+    }
   }
 }
+
+elements.download.addEventListener("click", () => {
+  void requestSharedFileDownload(false);
+});
 
 init().catch((error) => {
   elements.name.textContent = t("Fichier indisponible");

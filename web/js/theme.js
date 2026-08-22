@@ -96,7 +96,7 @@
     document.documentElement.style.colorScheme = resolved;
     const themeColor = document.querySelector('meta[name="theme-color"]');
     if (themeColor) {
-      const startupColor = resolved === "light" ? "#c9e7e4" : "#1b5260";
+      const startupColor = resolved === "light" ? "#dfe5e8" : "#1b5260";
       themeColor.content = document.documentElement.classList.contains("ios-pwa-starting")
         ? startupColor
         : resolved === "light" ? "#c9e7e4" : "#0f766e";
