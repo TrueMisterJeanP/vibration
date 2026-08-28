@@ -91,15 +91,29 @@ assert.ok(
 assert.match(css, /\.chat-conversation-avatar\s*\{[^}]*background: var\(--avatar-bg\);[^}]*color: var\(--avatar-fg\);/);
 assert.match(css, /\.chat-conversation-avatar img\s*\{/);
 assert.match(css, /\.personal-note-avatar\s*\{[^}]*border-radius: \.75rem;[^}]*background: rgb\(32 199 181 \/ \.13\);/);
-assert.match(css, /\.conversation-item\.personal-conversation-item:not\(\.active\)\s*\{[^}]*background: #0d2c33;/);
+assert.match(
+  css,
+  /\.conversation-item\.personal-conversation-item:not\(\.active\)\s*\{[^}]*background:\s*var\(--panel-2\);[^}]*box-shadow:\s*none;/,
+  "inactive personal notes must keep the selected-conversation surface without a shadow",
+);
 const personalNotesLightRules = [...css.matchAll(
   /:root\[data-theme="light"\] \.conversation-item\.personal-conversation-item:not\(\.active\)\s*\{([^}]*)\}/g,
 )];
 assert.ok(personalNotesLightRules.length > 0, "the light theme must style the personal notes entry");
 assert.match(
   personalNotesLightRules.at(-1)[1],
-  /background:\s*#fcfcfd/,
-  "the last light-theme rule must keep the personal notes entry distinct from the sidebar",
+  /background:\s*var\(--panel\);[\s\S]*box-shadow:\s*none/,
+  "inactive personal notes must keep the selected-conversation surface and remain flat in the light theme",
+);
+assert.match(
+  css,
+  /\.conversation-item\.active,[\s\S]*\.conversation-item\.active:hover\s*\{[^}]*background:\s*var\(--panel-2\);[^}]*box-shadow:/,
+  "dark selected conversations must use the contrasted secondary panel",
+);
+assert.match(
+  css,
+  /:root\[data-theme="light"\] \.conversation-item\.active,[\s\S]*:root\[data-theme="light"\] \.conversation-item\.active:hover\s*\{[^}]*background:\s*var\(--panel\);[^}]*box-shadow:/,
+  "light selected conversations must retain the white panel surface",
 );
 assert.match(css, /\.brand-logo-button\.has-conversation-avatar\.personal-note-avatar\s*\{/);
 assert.match(css, /\.personal-note-avatar svg\s*\{/);

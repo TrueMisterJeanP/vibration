@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#1b5260">
-  <meta name="vibration-build" content="community-1-0-29-v418">
+  <meta name="vibration-build" content="community-1-0-29-v424">
   <style>
     :root { --avatar-bg: #1b5260; --avatar-fg: #a9fff4; background-color: #1b5260; }
     html[data-theme="light"] { --avatar-bg: #dfe5e8; --avatar-fg: #075e57; background-color: #dfe5e8; }
@@ -23,7 +23,7 @@
   <link rel="icon" type="image/svg+xml" href="/icons/vibration.svg">
   <link rel="alternate icon" href="/icons/icon-192.png?v=dock-borderless-v406">
   <link rel="apple-touch-icon" href="/icons/icon-192.png?v=dock-borderless-v406">
-  <link rel="stylesheet" href="/css/style.css?v=community-1-0-29-v418">
+  <link rel="stylesheet" href="/css/style.css?v=community-1-0-29-v424">
 </head>
 <body>
   <div class="desktop-titlebar-drag-region" data-tauri-drag-region aria-hidden="true" data-title="Vibration"></div>
@@ -182,9 +182,16 @@
           <audio id="voice-draft-audio" controls preload="auto"></audio>
           <button id="voice-draft-clear" type="button" aria-label="Supprimer le message vocal">×</button>
         </div>
+        <div id="file-draft" class="file-draft" hidden>
+          <div class="file-draft-header">
+            <span>Pièces jointes en attente</span>
+            <button id="file-draft-clear" type="button">Tout supprimer</button>
+          </div>
+          <div id="file-draft-list" class="file-draft-list"></div>
+        </div>
         <div class="composer-box">
           <div class="composer-tools">
-          <label class="file-picker" title="Envoyer un fichier" aria-label="Envoyer un fichier"><svg class="composer-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m20.5 11.5-8.9 8.9a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.9-2.8l8.5-8.5"></path></svg><input id="file-input" type="file" hidden></label>
+          <label class="file-picker" title="Ajouter des fichiers" aria-label="Ajouter des fichiers"><svg class="composer-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m20.5 11.5-8.9 8.9a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.9-2.8l8.5-8.5"></path></svg><input id="file-input" type="file" multiple disabled hidden></label>
           <button id="emoji-button" class="composer-tool-button" type="button" title="Ajouter un emoji"
             aria-label="Ajouter un emoji" aria-expanded="false" aria-controls="emoji-picker" disabled><svg class="composer-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><circle cx="9" cy="9" r="1" class="icon-dot"></circle><circle cx="15" cy="9" r="1" class="icon-dot"></circle></svg></button>
           <button id="voice-button" class="composer-tool-button" type="button" title="Enregistrer un message vocal"
@@ -616,6 +623,6 @@
   <div id="toasts" aria-live="polite"></div>
   <script src="/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2"></script>
   <script src="/vendor/jsqr/jsQR.js?v=qr-scanner-v296"></script>
-  <script type="module" src="/js/app.js?v=community-1-0-29-v418"></script>
+  <script type="module" src="/js/app.js?v=community-1-0-29-v424"></script>
 </body>
 </html>

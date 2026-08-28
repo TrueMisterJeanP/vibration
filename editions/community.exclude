@@ -4,6 +4,7 @@
 /image.png
 node_modules/
 dist/
+/deploy/
 /data/chat.db
 /data/chat.db-*
 /data/app_secret

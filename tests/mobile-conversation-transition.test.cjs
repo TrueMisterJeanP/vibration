@@ -3,9 +3,18 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const css = fs.readFileSync(path.join(__dirname, "../web/css/style.css"), "utf8");
+const app = fs.readFileSync(path.join(__dirname, "../web/js/app.js"), "utf8");
 const mobile = css.slice(
   css.indexOf("@media (max-width: 720px)"),
   css.indexOf("@media (max-width: 380px)"),
+);
+const setSidebarOpen = app.slice(
+  app.indexOf("const setSidebarOpen ="),
+  app.indexOf("const mobileLayout =", app.indexOf("const setSidebarOpen =")),
+);
+const closeCurrentConversation = app.slice(
+  app.indexOf("function closeCurrentConversation"),
+  app.indexOf("async function deleteConversation"),
 );
 
 assert.match(mobile, /#sidebar\s*\{[\s\S]*?z-index:\s*1;[\s\S]*?transform:\s*translateX\(-24%\)/);
@@ -16,5 +25,13 @@ assert.match(mobile, /transition:\s*transform \.28s cubic-bezier\(\.32, \.72, 0,
 assert.match(css, /#chat-panel\s*\{[^}]*background-color:\s*#071b24/);
 assert.match(css, /:root\[data-theme="light"\] #chat-panel\s*\{[^}]*background-color:\s*#f2f8f8/);
 assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?#sidebar,[\s\S]*?#chat-panel\s*\{\s*transition:\s*none/);
+assert.match(
+  setSidebarOpen,
+  /if \(open\)[\s\S]*window\.matchMedia\("\(max-width: 720px\)"\)\.matches && state\.current[\s\S]*closeCurrentConversation\(state\.current\.id, \{ preserveCall: true \}\)/,
+  "returning to the mobile list must close the conversation view",
+);
+assert.match(closeCurrentConversation, /conversationSelectionVersion \+= 1/);
+assert.match(closeCurrentConversation, /if \(!preserveCall\) clearCallState\(conversationID\)/);
+assert.match(closeCurrentConversation, /elements\.messages\.replaceChildren\(createNoConversationState\(\)\)/);
 
-console.log("Mobile conversation transition: opaque chat slides in from the right and respects reduced motion");
+console.log("Mobile conversation transition: returning to the list resets the message window without ending a call");

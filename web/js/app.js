@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-29-v418";
+import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-29-v424";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -19,7 +19,7 @@ import {
   verifyMessagePayload,
   unwrapGroupKey,
   wrapGroupKey,
-} from "./crypto.js?v=community-1-0-29-v418";
+} from "./crypto.js?v=community-1-0-29-v424";
 import {
   forgetRememberedIdentity,
 	forgetTrustedDeviceCredential,
@@ -40,10 +40,10 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=community-1-0-29-v418";
-import { ChatSocket } from "./websocket.js?v=community-1-0-29-v418";
-import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-29-v418";
-import { locale, t } from "./i18n.js?v=community-1-0-29-v418";
+} from "./notifications.js?v=community-1-0-29-v424";
+import { ChatSocket } from "./websocket.js?v=community-1-0-29-v424";
+import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-29-v424";
+import { locale, t } from "./i18n.js?v=community-1-0-29-v424";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
 import { nonWhiteImageBounds } from "./file-preview-image.js?v=ios17-pdf-v199";
 import {
@@ -71,7 +71,7 @@ import {
   sameCallIdentity,
   shouldOfferAfterAccept,
   shouldOfferInGroup,
-} from "./call-negotiation.js?v=community-1-0-29-v418";
+} from "./call-negotiation.js?v=community-1-0-29-v424";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
 import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
@@ -100,7 +100,7 @@ const GLOBAL_FILES_PAGE_SIZE = 40;
 const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
 const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "community-1-0-29-v418";
+const APP_BUILD = "community-1-0-29-v424";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
 const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;
@@ -167,6 +167,7 @@ const state = {
   call: null,
   pendingVoiceFile: null,
   pendingVoiceURL: null,
+  pendingFiles: [],
   recorder: null,
   recordingChunks: [],
   recordingStopTimer: null,
@@ -301,6 +302,9 @@ const elements = {
   input: document.querySelector("#message-input"),
   send: document.querySelector("#send-button"),
   file: document.querySelector("#file-input"),
+  fileDraft: document.querySelector("#file-draft"),
+  fileDraftList: document.querySelector("#file-draft-list"),
+  fileDraftClear: document.querySelector("#file-draft-clear"),
   voiceButton: document.querySelector("#voice-button"),
   pollButton: document.querySelector("#poll-button"),
   eventButton: document.querySelector("#event-button"),
@@ -1253,6 +1257,9 @@ function bindUI() {
     if (open) {
       pauseMessageVideos();
       blurComposerBeforeMobileConversationTransition();
+      if (window.matchMedia("(max-width: 720px)").matches && state.current) {
+        closeCurrentConversation(state.current.id, { preserveCall: true });
+      }
     }
     elements.shell.classList.toggle("sidebar-open", open);
     sidebarButton.setAttribute("aria-expanded", String(open));
@@ -1278,7 +1285,7 @@ function bindUI() {
   syncResponsiveLayout(mobileLayout);
   sidebarButton.onclick = () => setSidebarOpen(!elements.shell.classList.contains("sidebar-open"));
   elements.composer.addEventListener("submit", sendMessage);
-  elements.file.addEventListener("change", sendFile);
+  elements.file.addEventListener("change", stageFiles);
   elements.voiceButton.addEventListener("click", toggleVoiceRecording);
   elements.pollButton.onclick = () => {
     try {
@@ -1359,9 +1366,12 @@ function bindUI() {
   document.addEventListener("fullscreenchange", handleCallFullscreenChange);
   document.addEventListener("webkitfullscreenchange", handleCallFullscreenChange);
   elements.voiceDraftClear.addEventListener("click", clearVoiceDraft);
+  elements.fileDraftClear.addEventListener("click", clearPendingFiles);
   elements.replyClear.addEventListener("click", clearReplyTarget);
   bindExpirationDialog();
-  elements.input.addEventListener("input", sendTyping);
+  elements.input.addEventListener("input", handleMessageInput);
+  window.addEventListener("resize", resizeMessageInput);
+  resizeMessageInput();
   elements.conversationSearch.addEventListener("input", applyConversationSearch);
   document.addEventListener("keydown", (event) => {
     if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "k") return;
@@ -3018,7 +3028,7 @@ function warmAdminShell() {
   adminShellPreloaded = true;
   for (const [rel, href] of [
     ["prefetch", "/admin.html?from=chat"],
-    ["modulepreload", "/js/admin.js?v=community-1-0-29-v418"],
+    ["modulepreload", "/js/admin.js?v=community-1-0-29-v424"],
   ]) {
     const link = document.createElement("link");
     link.rel = rel;
@@ -4160,18 +4170,22 @@ function createNoConversationState() {
   return container;
 }
 
-function closeCurrentConversation(conversationID) {
+function closeCurrentConversation(conversationID, { preserveCall = false } = {}) {
   if (!sameID(state.current?.id, conversationID)) return;
+  conversationSelectionVersion += 1;
   closeReactionPicker();
   clearMessagePreviewReadiness();
-  clearCallState(conversationID);
+  if (!preserveCall) clearCallState(conversationID);
   state.current = null;
   clearFileCache();
   state.messageClears.delete(conversationID);
   clearConversationMessageExpirations(conversationID);
   elements.input.value = "";
+  resizeMessageInput();
   elements.input.disabled = true;
   elements.send.disabled = true;
+  elements.file.disabled = true;
+  clearPendingFiles();
   elements.emojiButton.disabled = true;
   elements.pollButton.disabled = true;
   elements.eventButton.disabled = true;
@@ -4584,6 +4598,7 @@ async function selectConversation(conversation, targetMessageID = null) {
     if (transitionInProgress) elements.messages.replaceChildren();
     else preserveCurrentMessageList();
     clearVoiceDraft();
+    clearPendingFiles();
     clearFileCache();
     beginMessagePreviewReadiness();
   }
@@ -4608,6 +4623,7 @@ async function selectConversation(conversation, targetMessageID = null) {
   const canInteractImmediately = membersWereVerified && !conversation.rotation_required;
   elements.input.disabled = !canInteractImmediately;
   elements.send.disabled = !canInteractImmediately;
+  elements.file.disabled = !canInteractImmediately;
   elements.emojiButton.disabled = !canInteractImmediately;
   elements.voiceButton.disabled = !canInteractImmediately;
   elements.pollButton.disabled = !canInteractImmediately;
@@ -4648,6 +4664,7 @@ async function selectConversation(conversation, targetMessageID = null) {
   }
   elements.input.disabled = false;
   elements.send.disabled = false;
+  elements.file.disabled = false;
   elements.emojiButton.disabled = false;
   elements.voiceButton.disabled = false;
   elements.pollButton.disabled = false;
@@ -4656,6 +4673,7 @@ async function selectConversation(conversation, targetMessageID = null) {
   if (conversation.rotation_required) {
     elements.input.disabled = true;
     elements.send.disabled = true;
+    elements.file.disabled = true;
     elements.voiceButton.disabled = true;
     elements.pollButton.disabled = true;
     elements.eventButton.disabled = true;
@@ -8508,59 +8526,155 @@ function calendarDayKey(date) {
 
 async function sendMessage(event) {
   event.preventDefault();
+  const conversation = state.current;
   const text = elements.input.value.trim();
-  if (!state.current) return;
-  if (state.pendingVoiceFile) {
-    const file = state.pendingVoiceFile;
-    clearVoiceDraft();
-    setBusy(elements.send, true, "…");
-    try {
-      const sent = await sendEncryptedFile(file, "Message vocal chiffré envoyé.");
-      if (!sent) setVoiceDraft(file);
-    } finally {
-      setBusy(elements.send, false);
-    }
-    return;
-  }
-  if (!text) return;
+  const pendingFiles = [...state.pendingFiles];
+  const pendingVoiceFile = state.pendingVoiceFile;
+  if (!conversation || (!text && !pendingFiles.length && !pendingVoiceFile)) return;
+
+  const conversationID = conversation.id;
+  const replyTo = state.replyTo?.id || null;
   elements.input.value = "";
+  resizeMessageInput();
+  state.pendingFiles = [];
+  renderPendingFiles();
+  if (pendingVoiceFile) clearVoiceDraft();
   setBusy(elements.send, true, "…");
+  elements.file.disabled = true;
+
+  let textSent = false;
+  let pendingVoiceFailed = false;
+  const failedFiles = [];
   try {
-    const key = await getConversationKey(state.current);
-    const encrypted = await encryptText(key, text);
-    const keyEpoch = conversationKeyEpoch(state.current);
-    const replyTo = state.replyTo?.id || null;
-    const signature = await messageSignature("text", state.current.id, {
-      encrypted_content: encrypted.data, iv: encrypted.iv, key_epoch: keyEpoch, reply_to: replyTo,
-    });
-    const message = await api(`/api/conversations/${state.current.id}/messages`, {
-      method: "POST",
-      body: {
-        encrypted_content: encrypted.data,
-        iv: encrypted.iv,
-        reply_to: replyTo,
-        expires_in_seconds: state.messageExpirationSeconds,
-        key_epoch: keyEpoch,
-        ...signature,
-      },
-    });
-    clearReplyTarget();
-    await appendMessage(message);
-    await refreshConversationList();
-    state.socket.send({ type: "typing", conversation_id: state.current.id, typing: false });
+    if (text) {
+      await sendEncryptedText(text, conversation, replyTo);
+      textSent = true;
+      clearReplyTarget();
+      state.socket.send({ type: "typing", conversation_id: conversationID, typing: false });
+    }
+
+    if (pendingVoiceFile) {
+      pendingVoiceFailed = !(await sendEncryptedFile(pendingVoiceFile, "", conversation));
+    }
+    for (const file of pendingFiles) {
+      if (!(await sendEncryptedFile(file, "", conversation))) failedFiles.push(file);
+    }
+
+    const sentFileCount = pendingFiles.length - failedFiles.length;
+    if (pendingVoiceFile && !pendingVoiceFailed && !pendingFiles.length) {
+      toast(t("Message vocal chiffré envoyé."), "success");
+    } else if (sentFileCount === 1) {
+      toast(t("Fichier chiffré envoyé."), "success");
+    } else if (sentFileCount > 1) {
+      toast(t("{count} fichiers chiffrés envoyés.", { count: sentFileCount }), "success");
+    }
   } catch (error) {
-    elements.input.value = text;
+    if (!textSent && sameID(state.current?.id, conversationID)) {
+      elements.input.value = text;
+      resizeMessageInput();
+    }
+    failedFiles.push(...pendingFiles);
+    pendingVoiceFailed = Boolean(pendingVoiceFile);
     toast(frenchErrorMessage(error), "error");
   } finally {
+    if (sameID(state.current?.id, conversationID)) {
+      if (failedFiles.length) {
+        state.pendingFiles.push(...failedFiles.filter((file, index) => failedFiles.indexOf(file) === index));
+        renderPendingFiles();
+      }
+      if (pendingVoiceFailed) setVoiceDraft(pendingVoiceFile);
+    }
     setBusy(elements.send, false);
+    if (elements.input.disabled || !state.current || state.current.rotation_required) elements.send.disabled = true;
+    elements.file.disabled = elements.input.disabled || !state.current || state.current.rotation_required;
   }
 }
 
-async function sendFile(event) {
-  const file = event.target.files[0];
+async function sendEncryptedText(text, conversation, replyTo = null) {
+  const key = await getConversationKey(conversation);
+  const encrypted = await encryptText(key, text);
+  const keyEpoch = conversationKeyEpoch(conversation);
+  const signature = await messageSignature("text", conversation.id, {
+    encrypted_content: encrypted.data, iv: encrypted.iv, key_epoch: keyEpoch, reply_to: replyTo,
+  });
+  const message = await api(`/api/conversations/${conversation.id}/messages`, {
+    method: "POST",
+    body: {
+      encrypted_content: encrypted.data,
+      iv: encrypted.iv,
+      reply_to: replyTo,
+      expires_in_seconds: state.messageExpirationSeconds,
+      key_epoch: keyEpoch,
+      ...signature,
+    },
+  });
+  await appendMessage(message);
+  await refreshConversationList();
+  return message;
+}
+
+function stageFiles(event) {
+  const selectedFiles = [...(event.target.files || [])];
   event.target.value = "";
-  if (!file || !state.current) return;
-  await sendEncryptedFile(file, "Fichier chiffré envoyé.");
+  if (!selectedFiles.length || !state.current) return;
+
+  const maxFileSize = Number(state.fileQuotas?.max_file_size || 25 * 1024 * 1024);
+  const maxUserStorage = Number(state.fileQuotas?.max_user_storage || 1024 * 1024 * 1024);
+  const usedStorage = Number(state.fileQuotas?.used_storage || 0);
+  let pendingSize = state.pendingFiles.reduce((total, file) => total + file.size + 16, 0);
+  let added = 0;
+  for (const file of selectedFiles) {
+    if (file.size > maxFileSize) {
+      toast(t("{name} dépasse la limite de {limit}.", { name: file.name, limit: formatFileQuotaSize(maxFileSize) }), "error");
+      continue;
+    }
+    if (usedStorage + pendingSize + file.size + 16 > maxUserStorage) {
+      toast(t("Le quota de fichiers ne permet pas d’ajouter {name}.", { name: file.name }), "error");
+      continue;
+    }
+    state.pendingFiles.push(file);
+    pendingSize += file.size + 16;
+    added += 1;
+  }
+  renderPendingFiles();
+  if (added === 1) toast(t("Fichier prêt à envoyer."));
+  if (added > 1) toast(t("{count} fichiers prêts à envoyer.", { count: added }));
+}
+
+function renderPendingFiles() {
+  elements.fileDraftList.replaceChildren();
+  for (const file of state.pendingFiles) {
+    const item = document.createElement("div");
+    item.className = "file-draft-item";
+    item.append(materialFileIcon(fileKindIcon(normalizedFileMIME(file.type, file.name))));
+
+    const details = document.createElement("span");
+    const name = document.createElement("strong");
+    name.textContent = file.name;
+    const size = document.createElement("small");
+    size.textContent = formatFileSize(file.size);
+    details.append(name, size);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.title = t("Retirer {name}", { name: file.name });
+    remove.setAttribute("aria-label", remove.title);
+    remove.addEventListener("click", () => {
+      const index = state.pendingFiles.indexOf(file);
+      if (index >= 0) state.pendingFiles.splice(index, 1);
+      renderPendingFiles();
+    });
+    item.append(details, remove);
+    elements.fileDraftList.append(item);
+  }
+  elements.fileDraft.hidden = state.pendingFiles.length === 0;
+}
+
+function clearPendingFiles() {
+  state.pendingFiles = [];
+  elements.file.value = "";
+  renderPendingFiles();
 }
 
 const FILE_PREVIEW_MAX_BYTES = 512 * 1024;
@@ -8850,7 +8964,7 @@ async function encryptFileBytes(key, bytes) {
   return { iv: bytesToBase64(iv), data };
 }
 
-async function sendEncryptedFile(file, successMessage) {
+async function sendEncryptedFile(file, successMessage, conversation = state.current) {
   const maxFileSize = Number(state.fileQuotas?.max_file_size || 25 * 1024 * 1024);
   const maxUserStorage = Number(state.fileQuotas?.max_user_storage || 1024 * 1024 * 1024);
   const usedStorage = Number(state.fileQuotas?.used_storage || 0);
@@ -8862,10 +8976,8 @@ async function sendEncryptedFile(file, successMessage) {
     toast("Le quota total de fichiers de votre compte est atteint.", "error");
     return false;
   }
-  const conversation = state.current;
   if (!conversation) return false;
   const expiresInSeconds = state.messageExpirationSeconds;
-  toast("Chiffrement et envoi du fichier…");
   try {
     const key = await getConversationKey(conversation);
     const data = await file.arrayBuffer();
@@ -8905,11 +9017,11 @@ async function sendEncryptedFile(file, successMessage) {
     });
     invalidateGlobalFilesIndex();
     scheduleGlobalFilesPreload();
-    state.fileQuotas.used_storage = usedStorage + data.byteLength + 16;
+    if (state.fileQuotas) state.fileQuotas.used_storage = usedStorage + data.byteLength + 16;
     updateProfileStorage();
     await appendMessage(message);
     await refreshConversationList();
-    toast(successMessage, "success");
+    if (successMessage) toast(successMessage, "success");
     return true;
   } catch (error) {
     toast(frenchErrorMessage(error), "error");
@@ -10879,6 +10991,23 @@ async function handleSocketEvent(event) {
       }
     }
   }
+}
+
+function resizeMessageInput() {
+  const input = elements.input;
+  input.style.height = "auto";
+  const maximumHeight = Number.parseFloat(window.getComputedStyle(input).maxHeight);
+  const contentHeight = input.scrollHeight;
+  const height = Number.isFinite(maximumHeight)
+    ? Math.min(contentHeight, maximumHeight)
+    : contentHeight;
+  input.style.height = `${height}px`;
+  input.style.overflowY = contentHeight > height ? "auto" : "hidden";
+}
+
+function handleMessageInput() {
+  resizeMessageInput();
+  sendTyping();
 }
 
 function sendTyping() {
