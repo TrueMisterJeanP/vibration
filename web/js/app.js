@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-29-v424";
+import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-29-v427";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -19,7 +19,7 @@ import {
   verifyMessagePayload,
   unwrapGroupKey,
   wrapGroupKey,
-} from "./crypto.js?v=community-1-0-29-v424";
+} from "./crypto.js?v=community-1-0-29-v427";
 import {
   forgetRememberedIdentity,
 	forgetTrustedDeviceCredential,
@@ -40,10 +40,10 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=community-1-0-29-v424";
-import { ChatSocket } from "./websocket.js?v=community-1-0-29-v424";
-import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-29-v424";
-import { locale, t } from "./i18n.js?v=community-1-0-29-v424";
+} from "./notifications.js?v=community-1-0-29-v427";
+import { ChatSocket } from "./websocket.js?v=community-1-0-29-v427";
+import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-29-v427";
+import { locale, t } from "./i18n.js?v=community-1-0-29-v427";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
 import { nonWhiteImageBounds } from "./file-preview-image.js?v=ios17-pdf-v199";
 import {
@@ -71,7 +71,7 @@ import {
   sameCallIdentity,
   shouldOfferAfterAccept,
   shouldOfferInGroup,
-} from "./call-negotiation.js?v=community-1-0-29-v424";
+} from "./call-negotiation.js?v=community-1-0-29-v427";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
 import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
@@ -90,6 +90,9 @@ const CALL_ICE_RESTART_TIMEOUT_MS = 15000;
 const CALL_ICE_RESTART_MAX_ATTEMPTS = 2;
 const BOOT_API_TIMEOUT_MS = 8000;
 const FILE_PREVIEW_PREFETCH_BUDGET_BYTES = 8 * 1024 * 1024;
+const PINNED_PREVIEW_PREFETCH_LIMIT = 4;
+const MESSAGE_PREVIEW_REVEAL_PASSES = 4;
+const MESSAGE_PREVIEW_REVEAL_BUDGET_MS = 8000;
 const BACKGROUND_CONVERSATION_PRELOAD_LIMIT = 6;
 const BACKGROUND_CONVERSATION_PRELOAD_CONCURRENCY = 2;
 const BACKGROUND_THUMBNAIL_PRELOAD_CONCURRENCY = 2;
@@ -100,7 +103,7 @@ const GLOBAL_FILES_PAGE_SIZE = 40;
 const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
 const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "community-1-0-29-v424";
+const APP_BUILD = "community-1-0-29-v427";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
 const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;
@@ -156,6 +159,8 @@ const state = {
   messageExpiryTimers: new Map(),
   messageAppendTasks: new Map(),
   filePreviewObservers: new Set(),
+  pendingFilePreviews: new Map(),
+  filePreviewRenders: new Map(),
   previewURLs: new Set(),
   fileCacheGeneration: 0,
   callConfig: null,
@@ -693,6 +698,8 @@ function clearRenderedFilePreviews() {
   clearOfficePreviewResources();
   for (const observer of state.filePreviewObservers) observer.disconnect();
   state.filePreviewObservers.clear();
+  state.pendingFilePreviews.clear();
+  state.filePreviewRenders.clear();
   for (const url of state.previewURLs) URL.revokeObjectURL(url);
   state.previewURLs.clear();
 }
@@ -1371,6 +1378,8 @@ function bindUI() {
   bindExpirationDialog();
   elements.input.addEventListener("input", handleMessageInput);
   window.addEventListener("resize", resizeMessageInput);
+  window.addEventListener("resize", keepMessagesAnchoredWhileResizing);
+  elements.messageScroller.addEventListener("scroll", trackMessageBottomAnchor, { passive: true });
   resizeMessageInput();
   elements.conversationSearch.addEventListener("input", applyConversationSearch);
   document.addEventListener("keydown", (event) => {
@@ -3028,7 +3037,7 @@ function warmAdminShell() {
   adminShellPreloaded = true;
   for (const [rel, href] of [
     ["prefetch", "/admin.html?from=chat"],
-    ["modulepreload", "/js/admin.js?v=community-1-0-29-v424"],
+    ["modulepreload", "/js/admin.js?v=community-1-0-29-v427"],
   ]) {
     const link = document.createElement("link");
     link.rel = rel;
@@ -3402,11 +3411,22 @@ async function toggleConversationFavorite(conversation, button) {
   }
 }
 
+function socketIsConnected() {
+  return state.socket?.socket?.readyState === WebSocket.OPEN;
+}
+
 function handleAppFocus() {
   if (!appReady) {
     retryIncompleteBoot();
     return;
   }
+  // Reprendre le focus ne fait rien manquer : tant que la fenêtre est restée
+  // visible et le socket ouvert, les évènements sont arrivés en direct.
+  // Actualiser reconstruirait toute la liste et déplacerait la lecture pour
+  // rien. Le passage en arrière-plan reste couvert par
+  // handleAppVisibilityChange, et une coupure du socket par son écouteur
+  // « status », qui resynchronise à la reconnexion.
+  if (!document.hidden && socketIsConnected()) return;
   refreshConversationListOnForeground();
 }
 
@@ -4635,9 +4655,17 @@ async function selectConversation(conversation, targetMessageID = null) {
   const messageLoadOptions = {
     waitForPreviews: conversationChanged,
   };
-  let messagesLoading = membersWereVerified
-    ? loadMessages(targetMessageID, true, messageLoadOptions).then(() => null, (error) => error)
-    : null;
+  // Re-cliquer sur la discussion déjà affichée ne doit rien reconstruire : les
+  // messages sont là et le socket les tient à jour. Les rebâtir ferait sauter
+  // la liste le temps que les aperçus se refassent, pour un résultat
+  // identique. Le cadrage sur le dernier message a lieu plus bas, comme pour
+  // n’importe quelle sélection.
+  const messagesAlreadyDisplayed = !conversationChanged && !targetMessageID
+    && renderedConversationIsDisplayed(selectedID);
+  const startMessageLoad = () => (messagesAlreadyDisplayed
+    ? Promise.resolve(null)
+    : loadMessages(targetMessageID, true, messageLoadOptions).then(() => null, (error) => error));
+  let messagesLoading = membersWereVerified ? startMessageLoad() : null;
   try {
     await getMembers(conversation.id, {
       fresh: !membersWereVerified,
@@ -4659,9 +4687,7 @@ async function selectConversation(conversation, targetMessageID = null) {
     }
     return;
   }
-  if (!messagesLoading) {
-    messagesLoading = loadMessages(targetMessageID, true, messageLoadOptions).then(() => null, (error) => error);
-  }
+  if (!messagesLoading) messagesLoading = startMessageLoad();
   elements.input.disabled = false;
   elements.send.disabled = false;
   elements.file.disabled = false;
@@ -6842,7 +6868,10 @@ async function loadMessages(targetMessageID = null, useCache = true, { waitForPr
       const preparedIsFresh = Date.now() - prepared.loadedAt <= BACKGROUND_PRELOAD_NETWORK_FRESH_MS;
       if (!waitForPreviews || preparedIsFresh) {
         try {
-          await renderMessages(prepared.messages, conversation, prepared.decrypted, { waitForPreviews });
+          await renderMessages(prepared.messages, conversation, prepared.decrypted, {
+            waitForPreviews,
+            positionMessages: scrollToBottom,
+          });
           cachedDisplayed = true;
           displayedMessages = prepared.messages;
           await scrollMessagesToLatest(conversationID);
@@ -6856,7 +6885,10 @@ async function loadMessages(targetMessageID = null, useCache = true, { waitForPr
         fallbackMessages = cachedMessages;
         if (!waitForPreviews) {
           try {
-            await renderMessages(cachedMessages, conversation, null, { waitForPreviews });
+            await renderMessages(cachedMessages, conversation, null, {
+              waitForPreviews,
+              positionMessages: scrollToBottom,
+            });
             cachedDisplayed = true;
             displayedMessages = cachedMessages;
             await scrollMessagesToLatest(conversationID);
@@ -6887,7 +6919,10 @@ async function loadMessages(targetMessageID = null, useCache = true, { waitForPr
           prepared = await pending.catch(() => null);
           if (!sameID(state.current?.id, conversationID)) return;
           if (prepared) {
-            await renderMessages(prepared.messages, conversation, prepared.decrypted, { waitForPreviews });
+            await renderMessages(prepared.messages, conversation, prepared.decrypted, {
+              waitForPreviews,
+              positionMessages: scrollToBottom,
+            });
             return;
           }
         }
@@ -6902,12 +6937,29 @@ async function loadMessages(targetMessageID = null, useCache = true, { waitForPr
     // actuel évite ce second rendu sans masquer les véritables changements.
     if (cachedDisplayed && sameMessageSnapshots(displayedMessages, messages, ["status"])) {
       updateRenderedMessageStatuses(messages);
+      if (targetMessageID && waitForPreviews) await waitForRenderedMessageFilePreview(targetMessageID);
       return;
     }
-    await renderMessages(messages, conversation, null, { waitForPreviews });
+    const anchor = targetMessageID ? null : captureMessageScrollAnchor();
+    await renderMessages(messages, conversation, null, {
+      waitForPreviews,
+      requiredPreviewMessageID: targetMessageID,
+      positionMessages: targetMessageID
+        ? () => alignRenderedMessage(targetMessageID)
+        : () => restoreMessageScrollAnchor(anchor),
+    });
+    // Les aperçus différés se rendent encore après coup : laisser la hauteur
+    // se stabiliser avant de considérer la discussion posée sur son dernier
+    // message.
+    if (anchor?.bottom && sameID(state.current?.id, conversationID)) {
+      await scrollMessagesToLatest(conversationID);
+    }
   } catch (error) {
     if (!cachedDisplayed && waitForPreviews && fallbackMessages && sameID(state.current?.id, conversationID)) {
-      await renderMessages(fallbackMessages, conversation, fallbackDecrypted, { waitForPreviews: true });
+      await renderMessages(fallbackMessages, conversation, fallbackDecrypted, {
+        waitForPreviews: true,
+        positionMessages: scrollToBottom,
+      });
       await scrollMessagesToLatest(conversationID);
       console.warn("Synchronisation de la discussion impossible, cache local affiché", error);
       return;
@@ -6932,7 +6984,12 @@ function updateRenderedMessageStatuses(messages) {
   }
 }
 
-async function renderMessages(messages, conversation, preparedDecrypted = null, { waitForPreviews = false } = {}) {
+async function renderMessages(
+  messages,
+  conversation,
+  preparedDecrypted = null,
+  { waitForPreviews = false, requiredPreviewMessageID = null, positionMessages = null } = {},
+) {
   const conversationID = conversation.id;
   if (!sameID(state.current?.id, conversationID)) return;
   const readinessVersion = waitForPreviews ? beginMessagePreviewReadiness() : 0;
@@ -6947,6 +7004,7 @@ async function renderMessages(messages, conversation, preparedDecrypted = null, 
     empty.id = "empty-chat";
     empty.textContent = t("Aucun message. Écrivez le premier message chiffré.");
     elements.messages.replaceChildren(createConversationExchangeState(conversation, empty));
+    elements.messages.dataset.conversationId = String(conversationID);
     if (waitForPreviews) finishMessagePreviewReadiness(readinessVersion, conversationID);
     return;
   }
@@ -6992,9 +7050,17 @@ async function renderMessages(messages, conversation, preparedDecrypted = null, 
   const conversationExchangeState = createConversationExchangeState(conversation);
   if (conversationExchangeState) fragment.append(conversationExchangeState);
   elements.messages.replaceChildren(fragment);
-  if (waitForPreviews) {
-    await prepareVisibleFilePreviews(previews, conversationID);
-    finishMessagePreviewReadiness(readinessVersion, conversationID);
+  elements.messages.dataset.conversationId = String(conversationID);
+  // Cadrer la liste avant de trier les aperçus : « visible » se mesure contre
+  // la fenêtre réellement montrée. Sans ce cadrage, la liste est encore en
+  // haut et ce sont les aperçus des vieux messages qui sont attendus, pendant
+  // que ceux d’en bas — les seuls affichés — restent des cadres vides.
+  positionMessages?.();
+  if (waitForPreviews || requiredPreviewMessageID) {
+    await prepareVisibleFilePreviews(previews, conversationID, requiredPreviewMessageID, positionMessages);
+    // Dernier recadrage sur la vue complète avant de la dévoiler.
+    positionMessages?.();
+    if (waitForPreviews) finishMessagePreviewReadiness(readinessVersion, conversationID);
   } else {
     for (const [message, preview, key] of previews) scheduleFilePreview(message, preview, key);
   }
@@ -7239,6 +7305,8 @@ async function togglePinnedMessage(message) {
 function setPinnedPanelVisibility(open) {
   elements.pinnedPanel.hidden = !open;
   elements.chatWorkspace.classList.toggle("pinned-open", open);
+  resizeRenderedImagePreviews();
+  scheduleRenderedImagePreviewResize();
   elements.pinnedWindowButton.setAttribute("aria-expanded", String(open));
   elements.pinnedWindowButton.title = t(open ? "Masquer vos messages épinglés" : "Afficher vos messages épinglés");
   elements.pinnedWindowButton.setAttribute("aria-label", elements.pinnedWindowButton.title);
@@ -7282,6 +7350,48 @@ async function setPinnedPanelOpen(open) {
   return openTask;
 }
 
+async function showPinnedMessage(messageID, button) {
+  setBusy(button, true, "…");
+  try {
+    if (renderedMessageRow(messageID)) {
+      // Le message est déjà chargé : ne produire que son aperçu s’il était
+      // resté différé, panneau encore ouvert, pour qu’il soit peint en même
+      // temps que l’arrivée sur le message.
+      await ensureRenderedMessageFilePreview(messageID);
+      await setPinnedPanelOpen(false);
+    } else {
+      // Le message est hors de la fenêtre chargée : garder la discussion
+      // actuelle à l’écran pendant le rechargement et n’en dévoiler le
+      // résultat qu’une fois centré sur le message épinglé.
+      await setPinnedPanelOpen(false);
+      const restoreMessageList = holdMessageListDuringTargetedReload();
+      try {
+        await loadMessages(messageID, true, { waitForPreviews: true });
+      } catch (error) {
+        restoreMessageList();
+        throw error;
+      }
+    }
+    // Remesurer les aperçus puis cadrer la cible sans rendre la main : la
+    // fermeture du panneau et l’arrivée sur le message épinglé sont peintes
+    // ensemble, donc le message est là d’emblée, sans défilement visible.
+    resizeRenderedImagePreviews();
+    if (!alignRenderedMessage(messageID)) {
+      toast(t("Ce message épinglé n’est plus disponible dans cette discussion."), "error");
+      return;
+    }
+    // WKWebView peut encore ajuster une hauteur d’image intrinsèque après
+    // coup : corriger le cadrage à la frame suivante, toujours sans animation.
+    await nextMessagePreviewFrame();
+    resizeRenderedImagePreviews();
+    alignRenderedMessage(messageID);
+  } catch (error) {
+    toast(frenchErrorMessage(error, "Impossible de charger les messages épinglés."), "error");
+  } finally {
+    if (button.isConnected) setBusy(button, false);
+  }
+}
+
 async function loadPinnedMessages({ allowHidden = false, renderLoading = true, throwOnError = false } = {}) {
   if (!state.current || (!allowHidden && elements.pinnedPanel.hidden)) return false;
   const conversation = state.current;
@@ -7304,10 +7414,14 @@ async function loadPinnedMessages({ allowHidden = false, renderLoading = true, t
       elements.pinnedMessages.replaceChildren(empty);
       return true;
     }
-    const decrypted = await Promise.all(messages.map(async (message) => ({
-      message: messageWithCurrentUserProfile(message),
-      clear: await decryptMessageContent(message, await getMessageKey(message, conversation)),
-    })));
+    const decrypted = await Promise.all(messages.map(async (message) => {
+      const key = await getMessageKey(message, conversation);
+      return {
+        message: messageWithCurrentUserProfile(message),
+        clear: await decryptMessageContent(message, key),
+        key,
+      };
+    }));
     if (!isRelevant()) return false;
     const fragment = document.createDocumentFragment();
     for (const { message, clear } of decrypted) {
@@ -7329,11 +7443,7 @@ async function loadPinnedMessages({ allowHidden = false, renderLoading = true, t
       const show = document.createElement("button");
       show.type = "button";
       show.textContent = t("Afficher");
-      show.addEventListener("click", async () => {
-        await loadMessages(message.id);
-        await revealMessage(message.id);
-        if (window.matchMedia("(max-width: 720px)").matches) await setPinnedPanelOpen(false);
-      });
+      show.addEventListener("click", () => void showPinnedMessage(message.id, show));
       const unpin = document.createElement("button");
       unpin.type = "button";
       unpin.className = "unpin-button";
@@ -7344,6 +7454,7 @@ async function loadPinnedMessages({ allowHidden = false, renderLoading = true, t
       fragment.append(card);
     }
     elements.pinnedMessages.replaceChildren(fragment);
+    prefetchPinnedFilePreviews(decrypted);
     return true;
   } catch (error) {
     if (!isRelevant()) return false;
@@ -7355,6 +7466,37 @@ async function loadPinnedMessages({ allowHidden = false, renderLoading = true, t
     return false;
   } finally {
     if (isRelevant()) elements.pinnedMessages.removeAttribute("aria-busy");
+  }
+}
+
+// Les aperçus des messages épinglés sont chargés dès l’ouverture du panneau :
+// « Afficher » n’a alors plus rien à télécharger ni à déchiffrer. Tout passe
+// par les caches habituels, donc un aperçu déjà présent ne coûte rien.
+function prefetchPinnedFilePreviews(decrypted) {
+  let scheduled = 0;
+  let remainingBytes = FILE_PREVIEW_PREFETCH_BUDGET_BYTES;
+  for (const { message, clear, key } of decrypted) {
+    if (!message.file || message.signature_valid === false) continue;
+    const thumbnailOnly = message.file.has_preview === true;
+    // Une miniature sans taille annoncée reste bornée par le serveur.
+    const size = thumbnailOnly
+      ? Number(message.file.preview_size) || FILE_PREVIEW_MAX_BYTES
+      : Number(message.file.size) || 0;
+    if (size <= 0 || size > remainingBytes) continue;
+    if (state.pendingFilePreviews.has(String(message.id))) {
+      // Le message est rendu mais son aperçu attend un défilement jusqu’à lui :
+      // le produire maintenant, dans sa bulle déjà en place.
+      void ensureRenderedMessageFilePreview(message.id).catch(() => {});
+    } else if (thumbnailOnly) {
+      void loadDecryptedFileThumbnail(message, key).catch(() => {});
+    } else if (supportsFullFilePreview(clear || {}) && size <= FILE_PREVIEW_SOURCE_MAX_BYTES) {
+      void loadDecryptedFile(message, key).catch(() => {});
+    } else {
+      continue;
+    }
+    remainingBytes -= size;
+    scheduled++;
+    if (scheduled >= PINNED_PREVIEW_PREFETCH_LIMIT || remainingBytes <= 0) break;
   }
 }
 
@@ -8490,8 +8632,7 @@ async function openCalendarEvent(item) {
 }
 
 async function revealMessage(messageID) {
-  const row = [...elements.messages.querySelectorAll(".message-row")]
-    .find((candidate) => sameID(candidate.dataset.id, messageID));
+  const row = renderedMessageRow(messageID);
   if (!row) {
     toast(t("L’évènement n’est plus disponible dans cette discussion."), "error");
     return;
@@ -9757,6 +9898,7 @@ async function renderEncryptedFileThumbnail(message, container, key) {
       container.replaceChildren(frame);
     } else {
       container.replaceChildren(image);
+      if (previewMIME.startsWith("image/")) fitImagePreviewToAspect(container, image);
     }
     return true;
   } catch (error) {
@@ -9855,6 +9997,65 @@ function mimeEssence(mime) {
 function markPDFFilePreview(container) {
   container.classList.add("pdf-file-preview");
   container.closest(".message-row")?.classList.add("pdf-message");
+}
+
+function fittedImagePreviewSize(width, height, availableWidth) {
+  if (width <= 0 || height <= 0 || availableWidth <= 0) return null;
+  const ratio = width / height;
+  const fittedWidth = Math.min(620, availableWidth, 420 * ratio);
+  return {
+    width: Math.max(1, Math.round(fittedWidth)),
+    height: Math.max(1, Math.round(fittedWidth / ratio)),
+  };
+}
+
+function resizeFittedImagePreview(container) {
+  const sourceWidth = Number(container.dataset.imagePreviewWidth);
+  const sourceHeight = Number(container.dataset.imagePreviewHeight);
+  const attachment = container.closest(".file-attachment");
+  const size = fittedImagePreviewSize(sourceWidth, sourceHeight, attachment?.clientWidth || 0);
+  if (!size) return;
+  // WebKit can retain the old intrinsic grid height when the pinned panel
+  // changes the message width. Pixel dimensions force the parent and image to
+  // move together, so no grey letterbox or clipped intermediate frame remains.
+  container.style.width = `${size.width}px`;
+  container.style.height = `${size.height}px`;
+  container.style.aspectRatio = `${sourceWidth} / ${sourceHeight}`;
+}
+
+function resizeRenderedImagePreviews() {
+  elements.messages.querySelectorAll(".file-preview.fitted-image-preview").forEach(resizeFittedImagePreview);
+}
+
+function scheduleRenderedImagePreviewResize() {
+  requestAnimationFrame(() => requestAnimationFrame(resizeRenderedImagePreviews));
+}
+
+function fitImagePreviewToAspect(container, image) {
+  if (container.classList.contains("message-reply-file-thumb")) return;
+  const apply = () => {
+    if (!container.isConnected || image.parentElement !== container || image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+    container.dataset.imagePreviewWidth = String(image.naturalWidth);
+    container.dataset.imagePreviewHeight = String(image.naturalHeight);
+    container.classList.add("fitted-image-preview");
+    resizeFittedImagePreview(container);
+    if (!("ResizeObserver" in window)) return;
+    const attachment = container.closest(".file-attachment");
+    if (!attachment) return;
+    const observer = new ResizeObserver(() => {
+      if (!container.isConnected) {
+        observer.disconnect();
+        state.filePreviewObservers.delete(observer);
+        return;
+      }
+      resizeFittedImagePreview(container);
+      restoreMessageBottomAnchorAfterPreviewResize();
+    });
+    state.filePreviewObservers.add(observer);
+    observer.observe(attachment);
+  };
+  if (image.complete && image.naturalWidth > 0) apply();
+  else image.addEventListener("load", apply, { once: true });
 }
 
 function fitPDFPreviewToAspect(container, width, height) {
@@ -10023,18 +10224,80 @@ async function waitForFilePreviewPaint(container) {
   await nextMessagePreviewFrame();
 }
 
-async function prepareVisibleFilePreviews(previews, conversationID) {
+// La liste porte la discussion qu’elle affiche : le calque de transition la
+// vide, donc une liste sans bulle ne compte pas comme rendue.
+function renderedConversationIsDisplayed(conversationID) {
+  return sameID(elements.messages.dataset.conversationId, conversationID)
+    && Boolean(elements.messages.querySelector(".message-row"));
+}
+
+function renderedMessageRow(messageID) {
+  return [...elements.messages.querySelectorAll(".message-row")]
+    .find((candidate) => sameID(candidate.dataset.id, messageID)) || null;
+}
+
+function alignRenderedMessage(messageID) {
+  const row = renderedMessageRow(messageID);
+  if (row) row.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+  return Boolean(row);
+}
+
+// Garde la discussion en place pendant un rechargement ciblé : les messages
+// actuels passent dans le calque de transition, et la fonction retournée les
+// remet en place si le rechargement échoue.
+function holdMessageListDuringTargetedReload() {
+  const held = [...elements.messages.childNodes];
+  const identified = [...elements.messages.querySelectorAll("[id]")].map((element) => [element, element.id]);
+  preserveCurrentMessageList();
+  return () => {
+    if (!held.length || elements.messages.hasChildNodes()) return;
+    clearMessageListTransitionSnapshot();
+    elements.messages.append(...held);
+    // Le calque de transition retire les identifiants pour éviter les doublons.
+    for (const [element, id] of identified) element.id = id;
+    clearMessagePreviewReadiness();
+  };
+}
+
+async function waitForRenderedMessageFilePreview(messageID) {
+  const row = renderedMessageRow(messageID);
+  const preview = row?.querySelector(".file-preview");
+  if (preview) await waitForFilePreviewPaint(preview);
+  resizeRenderedImagePreviews();
+  await nextMessagePreviewFrame();
+}
+
+// Un aperçu rendu est bien plus haut que son cadre vide : une page Word fait
+// plusieurs centaines de pixels là où le cadre en fait 64. Après un premier
+// lot, la vue finale n’a donc plus rien à voir avec celle qui a servi à
+// choisir ce lot, et des messages réellement affichés se retrouvent avec un
+// cadre vide. On recadre et on réévalue jusqu’à ce que la vue dévoilée n’ait
+// plus d’aperçu manquant, sous une limite de passes et de temps pour qu’une
+// discussion très fournie ne bloque jamais l’affichage.
+async function prepareVisibleFilePreviews(previews, conversationID, requiredMessageID = null, positionMessages = null) {
   await nextMessagePreviewFrame();
   if (!sameID(state.current?.id, conversationID)) return;
-  const visible = [];
-  for (const preview of previews) {
-    if (filePreviewIsVisible(preview[1])) visible.push(preview);
-    else scheduleFilePreview(...preview);
+  const pending = new Map(previews.map((preview) => [preview[1], preview]));
+  const deadline = Date.now() + MESSAGE_PREVIEW_REVEAL_BUDGET_MS;
+  for (let pass = 0; pass < MESSAGE_PREVIEW_REVEAL_PASSES && pending.size; pass += 1) {
+    positionMessages?.();
+    const batch = [];
+    for (const [container, preview] of pending) {
+      if (!sameID(preview[0].id, requiredMessageID) && !filePreviewIsVisible(container)) continue;
+      batch.push(preview);
+      pending.delete(container);
+    }
+    if (!batch.length) break;
+    await Promise.allSettled(batch.map(async ([message, container, key]) => {
+      await renderFilePreview(message, container, key);
+      if (container.isConnected) await waitForFilePreviewPaint(container);
+    }));
+    if (!sameID(state.current?.id, conversationID)) return;
+    await nextMessagePreviewFrame();
+    if (Date.now() >= deadline) break;
   }
-  await Promise.allSettled(visible.map(async ([message, container, key]) => {
-    await renderFilePreview(message, container, key);
-    if (container.isConnected) await waitForFilePreviewPaint(container);
-  }));
+  // Le reste de la discussion garde son rendu différé au défilement.
+  for (const preview of pending.values()) scheduleFilePreview(...preview);
   if (sameID(state.current?.id, conversationID)) await nextMessagePreviewFrame();
 }
 
@@ -10047,10 +10310,47 @@ function scheduleFilePreview(message, container, key) {
     if (!entries.some((entry) => entry.isIntersecting)) return;
     observer.disconnect();
     state.filePreviewObservers.delete(observer);
-    void renderFilePreview(message, container, key);
+    state.pendingFilePreviews.delete(String(message.id));
+    void trackedFilePreviewRender(message, container, key);
   }, { root: elements.messageScroller, rootMargin: "1200px 0px" });
   state.filePreviewObservers.add(observer);
+  state.pendingFilePreviews.set(String(message.id), { message, container, key, observer });
   observer.observe(container.closest(".file-attachment") || container);
+}
+
+// Un rendu d’aperçu en cours est partagé : rejoindre un message épinglé pendant
+// son préchargement attend ce rendu au lieu d’en relancer un second.
+function trackedFilePreviewRender(message, container, key) {
+  const id = String(message.id);
+  const running = state.filePreviewRenders.get(id);
+  if (running) return running;
+  const render = (async () => {
+    await renderFilePreview(message, container, key);
+    if (container.isConnected) await waitForFilePreviewPaint(container);
+  })();
+  state.filePreviewRenders.set(id, render);
+  render.catch(() => {}).then(() => {
+    if (state.filePreviewRenders.get(id) === render) state.filePreviewRenders.delete(id);
+  });
+  return render;
+}
+
+// Un message hors écran garde son aperçu différé jusqu’à ce que la discussion
+// défile jusqu’à lui. Rejoindre un message épinglé ne défile pas : sans ce
+// déclenchement explicite, on arriverait sur un cadre d’aperçu vide.
+async function ensureRenderedMessageFilePreview(messageID) {
+  const id = String(messageID);
+  const running = state.filePreviewRenders.get(id);
+  if (running) {
+    await running.catch(() => {});
+    return;
+  }
+  const pending = state.pendingFilePreviews.get(id);
+  if (!pending || !pending.container.isConnected) return;
+  pending.observer.disconnect();
+  state.filePreviewObservers.delete(pending.observer);
+  state.pendingFilePreviews.delete(id);
+  await trackedFilePreviewRender(pending.message, pending.container, pending.key).catch(() => {});
 }
 
 function scheduleReplyFilePreview(replyPreview, container, conversation) {
@@ -10410,6 +10710,7 @@ async function renderFilePreview(message, container, key) {
       image.decoding = "async";
       image.loading = "eager";
       container.append(image);
+      fitImagePreviewToAspect(container, image);
       return;
     }
     if (mime === "image/svg+xml") {
@@ -10418,6 +10719,7 @@ async function renderFilePreview(message, container, key) {
       image.src = svgURL;
       image.alt = file.name;
       container.append(image);
+      fitImagePreviewToAspect(container, image);
       return;
     }
     if (mime.startsWith("video/")) {
@@ -11024,6 +11326,76 @@ function sendTyping() {
 
 function scrollToBottom() {
   elements.messageScroller.scrollTop = elements.messageScroller.scrollHeight;
+}
+
+const MESSAGE_BOTTOM_ANCHOR_TOLERANCE = 24;
+const MESSAGE_RESIZE_SETTLE_MS = 200;
+let messagesAnchoredAtBottom = true;
+let messageResizeInProgress = false;
+let messageResizeSettleTimer = 0;
+
+function messagesAreScrolledToBottom() {
+  const scroller = elements.messageScroller;
+  return scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= MESSAGE_BOTTOM_ANCHOR_TOLERANCE;
+}
+
+// Pendant un redimensionnement, le défilement bouge parce que la mise en page
+// change : ne mémoriser que les défilements voulus par l’utilisateur.
+function trackMessageBottomAnchor() {
+  if (messageResizeInProgress) return;
+  messagesAnchoredAtBottom = messagesAreScrolledToBottom();
+}
+
+// Réduire la fenêtre rétrécit les bulles, donc la hauteur des aperçus d’images :
+// la discussion glisse alors vers le haut et le dernier message n’est plus collé
+// en bas. Recoller tant que le redimensionnement dure, puis une fois stabilisé.
+function keepMessagesAnchoredWhileResizing() {
+  messageResizeInProgress = true;
+  window.clearTimeout(messageResizeSettleTimer);
+  if (messagesAnchoredAtBottom) scrollToBottom();
+  messageResizeSettleTimer = window.setTimeout(() => {
+    messageResizeInProgress = false;
+    if (!messagesAnchoredAtBottom) {
+      messagesAnchoredAtBottom = messagesAreScrolledToBottom();
+      return;
+    }
+    if (state.current) void scrollMessagesToLatest(state.current.id);
+    else scrollToBottom();
+  }, MESSAGE_RESIZE_SETTLE_MS);
+}
+
+// Les aperçus se remesurent après coup, une bulle à la fois : chaque hauteur
+// corrigée doit remettre la discussion au contact du bas.
+function restoreMessageBottomAnchorAfterPreviewResize() {
+  if (!messageResizeInProgress || !messagesAnchoredAtBottom) return;
+  scrollToBottom();
+}
+
+// Une actualisation (retour au premier plan, reconnexion, réaction, édition…)
+// reconstruit toute la liste : sans repère, la discussion repart d’une position
+// arbitraire. On note donc le message le plus bas de la vue et sa distance au
+// bas du cadre, pour le remettre exactement là après le rendu.
+function captureMessageScrollAnchor() {
+  if (messagesAreScrolledToBottom()) return { bottom: true };
+  const viewportBottom = elements.messageScroller.getBoundingClientRect().bottom;
+  let anchor = null;
+  for (const row of elements.messages.querySelectorAll(".message-row")) {
+    const top = row.getBoundingClientRect().top;
+    if (top > viewportBottom) continue;
+    if (!anchor || top > anchor.top) anchor = { id: row.dataset.id, top };
+  }
+  return anchor ? { bottom: false, id: anchor.id, offset: viewportBottom - anchor.top } : { bottom: true };
+}
+
+function restoreMessageScrollAnchor(anchor) {
+  const row = anchor && !anchor.bottom ? renderedMessageRow(anchor.id) : null;
+  if (!row) {
+    scrollToBottom();
+    return;
+  }
+  const scroller = elements.messageScroller;
+  const expectedTop = scroller.getBoundingClientRect().bottom - anchor.offset;
+  scroller.scrollTop += row.getBoundingClientRect().top - expectedTop;
 }
 
 async function scrollMessagesToLatest(conversationID) {

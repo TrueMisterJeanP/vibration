@@ -72,6 +72,8 @@ function createHarness() {
     toast(message, kind) {
       context.toastCalls.push({ message, kind });
     },
+    resizeRenderedImagePreviews() {},
+    scheduleRenderedImagePreviewResize() {},
   };
 
   vm.createContext(context);

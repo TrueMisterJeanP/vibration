@@ -106,6 +106,7 @@ Le périmètre des appels et groupes fédérés est détaillé dans [Community e
 
 ### Community 1.0.29
 
+- **Navigation vers un message épinglé stabilisée** : le panneau se ferme avant le rendu du message ciblé et le cadre d’une image suit explicitement son ratio lors de chaque changement de largeur WebKit, sans bandes grises ni recadrage intermédiaire.
 - **Champ de message adaptatif** : la zone de saisie grandit automatiquement avec les lignes du message, puis devient défilable lorsqu’elle atteint sa hauteur maximale.
 - **Retour mobile vers la liste corrigé** : toucher l’icône de discussion ferme désormais la vue courante et prépare l’écran « Aucune conversation ouverte », sans interrompre un éventuel appel actif.
 - **Discussions sélectionnées visibles en mode sombre** : le fond utilise désormais la surface secondaire contrastée, tandis que le thème clair conserve sa surface blanche.
@@ -115,7 +116,7 @@ Le périmètre des appels et groupes fédérés est détaillé dans [Community e
 - **Défilement des messages fiabilisé sur iOS** : la zone de défilement est séparée du contenu inversé, ce qui conserve l’ancrage sur les messages récents sans saut ni blocage tactile.
 - **Transitions mobiles plus naturelles** : le champ de saisie perd proprement le focus avant un changement de panneau, la conversation ne force plus le clavier à l’ouverture et l’animation est plus rapide.
 - **Téléchargement de partage immédiat** : le bouton reste utilisable dès l’ouverture du lien, y compris pendant la reconnaissance de session, sans déclencher ensuite un second téléchargement automatique.
-- **Cache PWA v424** : les pages, styles, scripts et traductions sont renouvelés ensemble pour déployer immédiatement cette version.
+- **Cache PWA v427** : les pages, styles, scripts et traductions sont renouvelés ensemble pour déployer immédiatement cette version.
 
 ### Community 1.0.28
 

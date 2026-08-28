@@ -35,8 +35,8 @@ assert.match(html, /id="startup-splash"[\s\S]*<img src="\/icons\/vibration-mark\
 assert.match(splashMark, /stroke="#16836a"/);
 assert.doesNotMatch(splashMark, /<rect\b/, "l’écran de démarrage doit afficher le losange seul");
 const criticalSplashStyle = html.slice(html.indexOf("<style>"), html.indexOf("</style>"));
-assert.match(criticalSplashStyle, /:root\s*\{[^}]*background-color:\s*#1b5260/);
-assert.match(criticalSplashStyle, /html\[data-theme="light"\]\s*\{[^}]*--avatar-bg:\s*#dfe5e8[^}]*background-color:\s*#dfe5e8/);
+assert.match(criticalSplashStyle, /:root\s*\{[^}]*background-color:\s*#0d2631/);
+assert.match(criticalSplashStyle, /html\[data-theme="light"\]\s*\{[^}]*--avatar-bg:\s*#dfe5e8[^}]*background-color:\s*#fefefe/);
 assert.match(criticalSplashStyle, /html\.ios-pwa-starting,\s*html\.ios-pwa-starting body\s*\{[^}]*background:\s*var\(--avatar-bg\)/);
 assert.match(criticalSplashStyle, /#startup-splash\s*\{\s*display:\s*none/);
 assert.match(criticalSplashStyle, /html\.ios-pwa-starting #startup-splash:not\(\[hidden\]\)\s*\{[^}]*position:\s*fixed[^}]*top:\s*0[^}]*width:\s*var\(--startup-screen-width, 100vw\)[^}]*height:\s*var\(--startup-screen-height, 100vh\)/);

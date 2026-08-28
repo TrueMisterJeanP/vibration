@@ -97,9 +97,18 @@
     const themeColor = document.querySelector('meta[name="theme-color"]');
     if (themeColor) {
       const startupColor = resolved === "light" ? "#dfe5e8" : "#1b5260";
+      // Pages that fill the screen with their own surface must hand the iOS
+      // status bar that same colour instead of the teal accent: the chat shell
+      // ends at its header, the administration panel at the page background.
+      const page = document.documentElement.classList;
+      const restingColor = page.contains("chat-app-page")
+        ? (resolved === "light" ? "#fefefe" : "#0d2631")
+        : page.contains("admin-app-page")
+          ? (resolved === "light" ? "#eef1f3" : "#071b24")
+          : (resolved === "light" ? "#c9e7e4" : "#0f766e");
       themeColor.content = document.documentElement.classList.contains("ios-pwa-starting")
         ? startupColor
-        : resolved === "light" ? "#c9e7e4" : "#0f766e";
+        : restingColor;
     }
   }
 

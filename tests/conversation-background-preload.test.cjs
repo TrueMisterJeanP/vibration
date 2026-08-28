@@ -43,7 +43,7 @@ assert.ok(
   "les messages préparés doivent être rendus pendant la transition",
 );
 assert.match(loadMessages, /preparedConversationMessages\(conversation\)/);
-assert.match(loadMessages, /renderMessages\(prepared\.messages, conversation, prepared\.decrypted, \{ waitForPreviews \}\)/);
+assert.match(loadMessages, /renderMessages\(prepared\.messages, conversation, prepared\.decrypted, \{\s*waitForPreviews,\s*positionMessages: scrollToBottom,\s*\}\)/);
 assert.match(loadMessages, /state\.conversationPreloads\.get\(conversationPreloadKey\(conversationID\)\)/);
 assert.match(loadMessages, /sameMessageSnapshots\(displayedMessages, messages, \["status"\]\)/);
 assert.match(loadMessages, /updateRenderedMessageStatuses\(messages\);[\s\S]*return;/);

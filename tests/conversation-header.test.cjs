@@ -91,19 +91,15 @@ assert.ok(
 assert.match(css, /\.chat-conversation-avatar\s*\{[^}]*background: var\(--avatar-bg\);[^}]*color: var\(--avatar-fg\);/);
 assert.match(css, /\.chat-conversation-avatar img\s*\{/);
 assert.match(css, /\.personal-note-avatar\s*\{[^}]*border-radius: \.75rem;[^}]*background: rgb\(32 199 181 \/ \.13\);/);
+assert.doesNotMatch(
+  css,
+  /\.conversation-item\.personal-conversation-item:not\(\.active\)/,
+  "inactive personal notes must reuse the unselected conversation surface, in both themes",
+);
 assert.match(
   css,
-  /\.conversation-item\.personal-conversation-item:not\(\.active\)\s*\{[^}]*background:\s*var\(--panel-2\);[^}]*box-shadow:\s*none;/,
-  "inactive personal notes must keep the selected-conversation surface without a shadow",
-);
-const personalNotesLightRules = [...css.matchAll(
-  /:root\[data-theme="light"\] \.conversation-item\.personal-conversation-item:not\(\.active\)\s*\{([^}]*)\}/g,
-)];
-assert.ok(personalNotesLightRules.length > 0, "the light theme must style the personal notes entry");
-assert.match(
-  personalNotesLightRules.at(-1)[1],
-  /background:\s*var\(--panel\);[\s\S]*box-shadow:\s*none/,
-  "inactive personal notes must keep the selected-conversation surface and remain flat in the light theme",
+  /\.conversation-item\s*\{[^}]*border:\s*1px solid transparent;[^}]*background:\s*transparent;/,
+  "unselected conversations must stay flat on the sidebar background",
 );
 assert.match(
   css,

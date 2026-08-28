@@ -1,8 +1,8 @@
-const CACHE = "chat-pwa-go-v424";
+const CACHE = "chat-pwa-go-v429";
 const SHELL = [
-  "/", "/index.html", "/login.html", "/link-device.html", "/share.html", "/css/style.css?v=community-1-0-29-v424",
-  "/js/app.js?v=community-1-0-29-v424", "/js/call-negotiation.js?v=community-1-0-29-v424", "/js/api.js?v=community-1-0-29-v424", "/js/crypto.js?v=community-1-0-29-v424", "/js/websocket.js?v=community-1-0-29-v424", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=group-clean-overlap-v405",
-  "/js/notifications.js?v=community-1-0-29-v424", "/js/device-vault.js?v=trusted-device-v300", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js?v=community-1-0-29-v424", "/js/ui.js?v=community-1-0-29-v424", "/js/message-links.js?v=message-links-v341", "/js/share.js?v=file-share-immediate-v413", "/js/login.js?v=community-1-0-29-v424", "/js/link-device.js?v=community-1-0-29-v424", "/js/qr-scanner.js?v=qr-scanner-v296", "/manifest.json?v=dock-borderless-v406",
+  "/", "/index.html", "/login.html", "/link-device.html", "/share.html", "/css/style.css?v=ios-status-bar-v429",
+  "/js/app.js?v=community-1-0-29-v427", "/js/call-negotiation.js?v=community-1-0-29-v427", "/js/api.js?v=community-1-0-29-v427", "/js/crypto.js?v=community-1-0-29-v427", "/js/websocket.js?v=community-1-0-29-v427", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=ios-status-bar-v428",
+  "/js/notifications.js?v=community-1-0-29-v427", "/js/device-vault.js?v=trusted-device-v300", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js?v=community-1-0-29-v427", "/js/ui.js?v=community-1-0-29-v427", "/js/message-links.js?v=message-links-v341", "/js/share.js?v=file-share-immediate-v413", "/js/login.js?v=community-1-0-29-v427", "/js/link-device.js?v=community-1-0-29-v427", "/js/qr-scanner.js?v=qr-scanner-v296", "/manifest.json?v=dock-borderless-v406",
   "/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2",
   "/vendor/jsqr/jsQR.js?v=qr-scanner-v296",
   "/js/pdf-preview-compat.js?v=ios17-pdf-v199",
@@ -22,7 +22,7 @@ const SHELL = [
   "/vendor/html2canvas/html2canvas.min.js?v=office-faithful-preview-v265",
   "/icons/vibration.svg", "/icons/vibration-mark.svg", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-192.png?v=dock-borderless-v406", "/icons/icon-512.png?v=dock-borderless-v406", "/icons/person.svg", "/icons/group.svg",
 ];
-const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=community-1-0-29-v424", "/js/i18n.js?v=community-1-0-29-v424"];
+const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=community-1-0-29-v427", "/js/i18n.js?v=community-1-0-29-v427"];
 const STARTUP_CACHE_PATHS = new Set(["/", "/index.html", "/css/style.css", "/js/theme.js"]);
 const ADMIN_CACHE_PATHS = new Set(["/admin.html", "/js/admin.js", "/js/api.js", "/js/ui.js", "/js/i18n.js"]);
 
@@ -64,12 +64,24 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   if (ADMIN_CACHE_PATHS.has(url.pathname)) {
+    // "/admin.html" carries a "?from=chat" query, so it is matched and stored
+    // under its bare path to keep a single entry per document.
+    const key = url.pathname === "/admin.html" ? "/admin.html" : event.request;
+    const store = (response) => {
+      if (!response.ok) return;
+      const copy = response.clone();
+      caches.open(CACHE).then((cache) => cache.put(key, copy));
+    };
     event.respondWith(
       caches.match(event.request, { ignoreSearch: url.pathname === "/admin.html" }).then((cached) => {
-        if (cached) return cached;
+        if (cached) {
+          // Serve the cached panel instantly, but refresh it in the background
+          // so a new build reaches the administration screens too.
+          fetch(event.request).then(store).catch(() => {});
+          return cached;
+        }
         return fetch(event.request).then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+          store(response);
           return response;
         });
       }),

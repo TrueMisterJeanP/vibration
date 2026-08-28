@@ -803,6 +803,7 @@ const rows = [
   ["Contact en ligne", "Contact online", "Contacto en línea", "Contatto online", "Contacto online", "Kontakt online"],
   ["Contact hors ligne", "Contact offline", "Contacto sin conexión", "Contatto offline", "Contacto offline", "Kontakt offline"],
   ["Masquer vos messages épinglés", "Hide your pinned messages", "Ocultar tus mensajes fijados", "Nascondi i messaggi fissati", "Ocultar as suas mensagens afixadas", "Angeheftete Nachrichten ausblenden"],
+  ["Ce message épinglé n’est plus disponible dans cette discussion.", "This pinned message is no longer available in this conversation.", "Este mensaje fijado ya no está disponible en esta conversación.", "Questo messaggio fissato non è più disponibile in questa conversazione.", "Esta mensagem afixada já não está disponível nesta conversa.", "Diese angeheftete Nachricht ist in dieser Unterhaltung nicht mehr verfügbar."],
   ["Modifier le sondage", "Edit poll", "Editar encuesta", "Modifica sondaggio", "Editar sondagem", "Umfrage bearbeiten"],
   ["Modifier l’évènement", "Edit event", "Editar evento", "Modifica evento", "Editar evento", "Termin bearbeiten"],
   ["Aperçu PDF fourni par le navigateur.", "PDF preview provided by the browser.", "Vista previa PDF proporcionada por el navegador.", "Anteprima PDF fornita dal browser.", "Pré-visualização PDF fornecida pelo navegador.", "PDF-Vorschau durch den Browser."],
