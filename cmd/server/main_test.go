@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +64,57 @@ func TestLoadErrorPageUsesEmbeddedBrandedFallback(t *testing.T) {
 		if !strings.Contains(body, "Vibration") || !strings.Contains(body, "background: #ffffff") {
 			t.Fatalf("status %d did not use branded embedded page", status)
 		}
+	}
+}
+
+func TestErrorPagesSupportEveryApplicationLanguage(t *testing.T) {
+	tests := []struct {
+		language string
+		status   int
+		want     string
+	}{
+		{language: "fr", status: http.StatusNotFound, want: "Page introuvable"},
+		{language: "en", status: http.StatusNotFound, want: "Page not found"},
+		{language: "es", status: http.StatusNotFound, want: "Página no encontrada"},
+		{language: "it", status: http.StatusTooManyRequests, want: "Troppe richieste"},
+		{language: "pt", status: http.StatusTooManyRequests, want: "Demasiados pedidos"},
+		{language: "de", status: http.StatusTooManyRequests, want: "Zu viele Anfragen"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.language+"/"+strconv.Itoa(test.status), func(t *testing.T) {
+			page := loadErrorPage(filepath.Join(t.TempDir(), "missing.html"), test.status)
+			request := httptest.NewRequest(http.MethodGet, "/missing", nil)
+			request.Header.Set("Accept-Language", test.language+"-XX,"+test.language+";q=0.9")
+			response := httptest.NewRecorder()
+			page.ServeHTTP(response, request)
+
+			if response.Code != test.status {
+				t.Fatalf("status=%d, want %d", response.Code, test.status)
+			}
+			if got := response.Header().Get("Content-Language"); got != test.language {
+				t.Fatalf("Content-Language=%q, want %q", got, test.language)
+			}
+			if !strings.Contains(response.Header().Get("Vary"), "Accept-Language") {
+				t.Fatalf("Vary=%q", response.Header().Get("Vary"))
+			}
+			body := response.Body.String()
+			if !strings.Contains(body, `<html lang="`+test.language+`">`) || !strings.Contains(body, test.want) {
+				t.Fatalf("language %s was not rendered: %q", test.language, body)
+			}
+		})
+	}
+}
+
+func TestPreferredErrorLanguageHonoursQualityAndFallsBackToFrench(t *testing.T) {
+	if got := preferredErrorLanguage("nl-NL,de-DE;q=0.7,en-GB;q=0.9"); got != "en" {
+		t.Fatalf("preferred language=%q, want en", got)
+	}
+	if got := preferredErrorLanguage("nl-NL,*;q=0.5"); got != "fr" {
+		t.Fatalf("fallback language=%q, want fr", got)
+	}
+	if got := preferredErrorLanguage("en;q=0,de;q=0.8"); got != "de" {
+		t.Fatalf("zero-quality language selected: %q", got)
 	}
 }
 

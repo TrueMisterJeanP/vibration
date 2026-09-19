@@ -408,8 +408,9 @@ func securityHeaders(next http.Handler, strictTransport bool) http.Handler {
 }
 
 type errorPage struct {
-	status int
-	body   []byte
+	status    int
+	body      []byte
+	localized map[string][]byte
 }
 
 func loadErrorPage(filename string, status int) errorPage {
@@ -422,10 +423,23 @@ func loadErrorPage(filename string, status int) errorPage {
 				http.StatusText(status) + "</title><h1>" + http.StatusText(status) + "</h1></html>")
 		}
 	}
-	return errorPage{status: status, body: body}
+	return errorPage{
+		status:    status,
+		body:      body,
+		localized: localizeErrorPage(status, body),
+	}
 }
 
 func (page errorPage) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	body := page.body
+	if len(page.localized) > 0 {
+		language := preferredErrorLanguage(r.Header.Get("Accept-Language"))
+		if translated := page.localized[language]; len(translated) > 0 {
+			body = translated
+		}
+		w.Header().Set("Content-Language", language)
+		w.Header().Add("Vary", "Accept-Language")
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
@@ -433,7 +447,7 @@ func (page errorPage) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodHead {
 		return
 	}
-	_, _ = w.Write(page.body)
+	_, _ = w.Write(body)
 }
 
 func noCacheStatic(next http.Handler, files http.FileSystem, guard *requestguard.NotFoundGuard, identified func(*http.Request) bool, notFoundPage, blockedPage errorPage) http.Handler {

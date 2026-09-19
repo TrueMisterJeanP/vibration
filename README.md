@@ -6,7 +6,7 @@ Application de messagerie web installable, responsive et chiffrée côté naviga
   <img src="docs/interface-community-v1.0.29.png" alt="Interface fictive de Vibration Community avec profil et discussions anonymisés" width="900">
 </p>
 
-<p align="center"><strong>Vibration Community 1.0.32</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
+<p align="center"><strong>Vibration Community 1.0.33</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
 
 ## Philosophie
 
@@ -103,6 +103,12 @@ L’édition Enterprise reprend toutes les fonctionnalités de Community et ajou
 Le périmètre des appels et groupes fédérés est détaillé dans [Community et Enterprise](COMMUNITY_VS_ENTERPRISE.md). L’offre Enterprise est présentée sur [vibration-shop.appbox.fr](https://vibration-shop.appbox.fr).
 
 ## Nouveautés
+
+### Community 1.0.33
+
+- **Pages 404 et 429 multilingues** : les erreurs autonomes sont maintenant disponibles en français, anglais, espagnol, italien, portugais et allemand.
+- **Sélection côté serveur** : la langue est choisie avec `Accept-Language`, sans JavaScript ni ressource externe, y compris lorsque l’adresse IP est déjà bloquée.
+- **Repli fiable en français** : les langues non prises en charge conservent une page complète et lisible.
 
 ### Community 1.0.32
 
