@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -22,9 +23,11 @@ import (
 	"chat-pwa-go/internal/httpx"
 	"chat-pwa-go/internal/messages"
 	"chat-pwa-go/internal/push"
+	"chat-pwa-go/internal/requestguard"
 	"chat-pwa-go/internal/settings"
 	"chat-pwa-go/internal/users"
 	"chat-pwa-go/internal/ws"
+	webassets "chat-pwa-go/web"
 )
 
 func main() {
@@ -226,10 +229,15 @@ func main() {
 	if webDir == "" {
 		webDir = "web"
 	}
-	mux.Handle("/", noCacheStatic(http.FileServer(http.Dir(webDir)), webDir))
+	notFoundPage := loadErrorPage(webDir+"/404.html", http.StatusNotFound)
+	blockedPage := loadErrorPage(webDir+"/429.html", http.StatusTooManyRequests)
+	notFoundGuard := requestguard.NewNotFoundGuard(3, 10*time.Minute, 10*time.Minute, adminAccess.ClientIP)
+	staticFiles := http.Dir(webDir)
+	mux.Handle("/", noCacheStatic(http.FileServer(staticFiles), staticFiles, notFoundGuard, authHandler.HasActiveSession, notFoundPage, blockedPage))
 
 	policy := newOriginPolicy(cfg.ClientOrigins)
-	handler := securityHeaders(cors(originGuard(authHandler.TermsMiddleware(databaseMaintenance.Middleware(mux)), policy), policy), cfg.SecureCookies)
+	application := cors(originGuard(authHandler.TermsMiddleware(databaseMaintenance.Middleware(mux)), policy), policy)
+	handler := securityHeaders(application, cfg.SecureCookies)
 	server := &http.Server{
 		Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 90 * time.Second,
@@ -399,15 +407,117 @@ func securityHeaders(next http.Handler, strictTransport bool) http.Handler {
 	})
 }
 
-func noCacheStatic(next http.Handler, webDir string) http.Handler {
+type errorPage struct {
+	status int
+	body   []byte
+}
+
+func loadErrorPage(filename string, status int) errorPage {
+	body, err := os.ReadFile(filename)
+	if err != nil {
+		log.Printf("warning: cannot load error page %s: %v", filename, err)
+		body = webassets.ErrorPage(status)
+		if len(body) == 0 {
+			body = []byte("<!doctype html><html lang=\"fr\"><meta charset=\"utf-8\"><title>" +
+				http.StatusText(status) + "</title><h1>" + http.StatusText(status) + "</h1></html>")
+		}
+	}
+	return errorPage{status: status, body: body}
+}
+
+func (page errorPage) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	w.WriteHeader(page.status)
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = w.Write(page.body)
+}
+
+func noCacheStatic(next http.Handler, files http.FileSystem, guard *requestguard.NotFoundGuard, identified func(*http.Request) bool, notFoundPage, blockedPage errorPage) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identityChecked := false
+		isIdentified := false
+		identify := func() bool {
+			if !identityChecked {
+				identityChecked = true
+				isIdentified = identified != nil && identified(r)
+			}
+			return isIdentified
+		}
+		// The block is keyed by the effective client IP, not by a browser
+		// cookie. It therefore still applies after a browser change and also
+		// covers valid pages until the ten-minute period ends.
+		// The browser must still be able to replace an older service worker
+		// while its IP is blocked. Direct visits to /sw.js remain blocked: only
+		// the browser's dedicated update request carries this header.
+		serviceWorkerUpdate := r.URL.Path == "/sw.js" && (strings.EqualFold(r.Header.Get("Service-Worker"), "script") ||
+			strings.EqualFold(r.Header.Get("Sec-Fetch-Dest"), "serviceworker"))
+		if decision := guard.Check(r); decision.Blocked && !serviceWorkerUpdate && !identify() {
+			writeBlockedResponse(w, r, blockedPage, decision.RetryAfter)
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, ".html") || strings.HasSuffix(r.URL.Path, ".js") ||
 			strings.HasSuffix(r.URL.Path, ".css") || r.URL.Path == "/" || r.URL.Path == "/sw.js" {
 			w.Header().Set("Cache-Control", "no-cache")
 		}
-		if _, err := os.Stat(webDir + r.URL.Path); os.IsNotExist(err) && !strings.HasPrefix(r.URL.Path, "/api/") {
-			r.URL.Path = "/index.html"
+		if !staticPathExists(files, r.URL.Path) {
+			// A valid session always receives the ordinary 404 and never
+			// contributes a strike, even when another browser on the same IP
+			// has already triggered the anonymous-client block.
+			if identify() {
+				notFoundPage.ServeHTTP(w, r)
+				return
+			}
+			decision := guard.RecordMiss(r)
+			if decision.Blocked {
+				if decision.NewlyBlocked {
+					log.Printf("temporarily rate-limited unknown URLs from client %s", decision.ClientIP)
+				}
+				writeBlockedResponse(w, r, blockedPage, decision.RetryAfter)
+				return
+			}
+			notFoundPage.ServeHTTP(w, r)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func staticPathExists(files http.FileSystem, requestPath string) bool {
+	file, err := files.Open(requestPath)
+	if err != nil {
+		return false
+	}
+	info, err := file.Stat()
+	_ = file.Close()
+	if err != nil {
+		return false
+	}
+	if !info.IsDir() {
+		return true
+	}
+	index, err := files.Open(path.Join(requestPath, "index.html"))
+	if err != nil {
+		return false
+	}
+	indexInfo, statErr := index.Stat()
+	_ = index.Close()
+	return statErr == nil && !indexInfo.IsDir()
+}
+
+func writeBlockedResponse(w http.ResponseWriter, r *http.Request, page errorPage, retryAfter time.Duration) {
+	seconds := int64((retryAfter + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+	page.ServeHTTP(w, r)
 }

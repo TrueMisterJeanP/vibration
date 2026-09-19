@@ -83,8 +83,10 @@ assert.match(app, /positionMessages: targetMessageID\s*\? \(\) => alignRenderedM
 // Le badge « Épinglé » doit rester lisible sur les bulles claires et sombres.
 assert.match(css, /\.message-pin-badge \{[^}]*color: #ffd489;[^}]*\}/);
 assert.match(css, /:root\[data-theme="light"\] \.message-pin-badge \{[^}]*color: #8a5200;[^}]*\}/);
-assert.match(css, /\.file-preview\s*\{[^}]*contain:\s*paint;/);
-assert.doesNotMatch(css, /\.file-preview\s*\{[^}]*contain:\s*layout/);
+// Aucun containment sur l'aperçu : WebKit laissait sinon des tuiles jamais
+// repeintes quand un aperçu change de taille pendant le défilement.
+assert.match(css, /\.file-preview\s*\{[^}]*overflow:\s*hidden;/);
+assert.doesNotMatch(css, /\.file-preview\s*\{[^}]*contain:/);
 assert.doesNotMatch(app, /stabilizeAspectRatio/);
 assert.match(css, /\.file-preview\.fitted-image-preview\s*\{[^}]*display:\s*block;[^}]*min-height:\s*0/);
 assert.match(css, /\.file-preview\.fitted-image-preview > img\s*\{[^}]*height:\s*100%;[^}]*max-height:\s*none/);

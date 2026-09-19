@@ -113,6 +113,35 @@ func TestMiddlewareStillRequiresApprovalWhileThrottled(t *testing.T) {
 	}
 }
 
+func TestHasActiveSessionRecognizesOnlyUsableSessions(t *testing.T) {
+	db := sessionMiddlewareTestDB(t)
+	handler := &Handler{DB: db}
+	request := httptest.NewRequest(http.MethodGet, "/missing", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: "session-token"})
+	if !handler.HasActiveSession(request) {
+		t.Fatal("valid cookie session was not recognized")
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/missing", nil)
+	request.Header.Set("Authorization", "Bearer session-token")
+	if !handler.HasActiveSession(request) {
+		t.Fatal("valid bearer session was not recognized")
+	}
+
+	past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339Nano)
+	if _, err := db.Exec(`UPDATE sessions SET expires_at=? WHERE id=?`, past, "session-token"); err != nil {
+		t.Fatal(err)
+	}
+	if handler.HasActiveSession(request) {
+		t.Fatal("expired session was recognized as active")
+	}
+
+	request.Header.Set("Authorization", "Bearer forged-token")
+	if handler.HasActiveSession(request) {
+		t.Fatal("unknown session was recognized as active")
+	}
+}
+
 func callGuarded(handler http.Handler, token string) int {
 	request := httptest.NewRequest(http.MethodGet, "/api/me", nil)
 	request.Header.Set("Authorization", "Bearer "+token)

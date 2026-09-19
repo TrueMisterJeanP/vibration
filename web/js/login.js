@@ -14,9 +14,9 @@ import {
 import {
   registerServiceWorker,
   requestNotificationPermissionOnSignIn,
-} from "./notifications.js?v=community-1-0-29-v427";
-import { frenchErrorMessage } from "./ui.js?v=community-1-0-29-v427";
-import { t, translateMultiline } from "./i18n.js?v=community-1-0-29-v427";
+} from "./notifications.js?v=community-1-0-30-v464";
+import { frenchErrorMessage } from "./ui.js?v=community-1-0-30-v464";
+import { t, translateMultiline } from "./i18n.js?v=community-1-0-30-v464";
 
 const loginForm = document.querySelector("#login-form");
 const instanceForm = ensureInstanceForm();

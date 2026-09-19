@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#ffffff">
+  <title>429 — Au coin</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #ffffff;
+      color: #1e2732;
+      --accent: #16836a;
+      --line: #d5dce0;
+      --muted: #7d8993;
+      --danger: #b84050;
+      --danger-soft: #fae4e7;
+      --shadow: 0 1.1rem 3.2rem rgb(28 39 49 / .13);
+    }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 1rem;
+      background: #ffffff;
+    }
+    main {
+      width: min(100%, 460px);
+      padding: clamp(1.5rem, 5vw, 2.2rem);
+      border: 1px solid var(--line);
+      border-radius: 1rem;
+      background: #ffffff;
+      box-shadow: var(--shadow);
+      text-align: center;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: .7rem;
+      margin-bottom: 2rem;
+      text-align: left;
+    }
+    .brand-icon {
+      width: 3rem;
+      height: 3rem;
+      flex: 0 0 3rem;
+      border-radius: .8rem;
+      box-shadow: 0 .35rem .9rem rgb(24 92 91 / .18);
+    }
+    .brand div { display: grid; }
+    .brand strong { color: #1e2732; }
+    .brand small { color: var(--muted); }
+    .status {
+      display: inline-block;
+      margin: 0;
+      padding: .35rem .65rem;
+      border-radius: 999px;
+      background: var(--danger-soft);
+      color: var(--danger);
+      font-size: .78rem;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .code {
+      margin: 1.2rem 0 .6rem;
+      color: var(--danger);
+      font: 800 clamp(4.5rem, 18vw, 7.5rem)/.85 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: -.08em;
+    }
+    h1 { margin: 0 0 .75rem; color: #1e2732; font-size: clamp(1.55rem, 5vw, 2rem); line-height: 1.15; }
+    p { margin: 0; color: var(--muted); font-size: 1rem; line-height: 1.6; }
+    p strong { color: #1e2732; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand">
+      <svg class="brand-icon" viewBox="0 0 128 128" aria-hidden="true" focusable="false">
+        <defs><linearGradient id="vibration-green" x1="18" y1="12" x2="112" y2="120" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#1b9276"/><stop offset="1" stop-color="#106b57"/></linearGradient></defs>
+        <rect width="128" height="128" rx="28" fill="url(#vibration-green)"/>
+        <path d="M64 42 86 64 64 86 42 64Z" fill="none" stroke="#fff" stroke-width="4" stroke-linejoin="miter"/>
+      </svg>
+      <div><strong>Vibration</strong><small>Messagerie chiffrée de bout en bout</small></div>
+    </div>
+    <p class="status">Trop de requêtes</p>
+    <p class="code" aria-label="Erreur 429">429</p>
+    <h1>Trois fausses portes. Joli score.</h1>
+    <p>L’accès est temporairement bloqué pendant <strong>dix minutes</strong>. Vous pourrez ensuite réessayer normalement.</p>
+  </main>
+</body>
+</html>

@@ -198,6 +198,14 @@ Configuration :
         DirectoryIndex index.html
     </Directory>
 
+    # Page autonome pour les chemins inexistants. Elle conserve le statut 404.
+    ErrorDocument 404 /404.html
+
+    <Files "404.html">
+        Header always set Cache-Control "no-store"
+        Header always set X-Robots-Tag "noindex, nofollow"
+    </Files>
+
     <Files "sw.js">
         Header set Cache-Control "no-cache, no-store, must-revalidate"
     </Files>
@@ -211,6 +219,11 @@ Remplacer :
 
 - `chat.votre-domaine.fr` par le domaine réel ;
 - les chemins du certificat par ceux de votre certificat TLS.
+
+Pour bannir dix minutes une IP après trois réponses 404 en dix minutes, activer
+également la configuration Fail2ban versionnée dans
+`deploy/fail2ban/README.md`. Cette couche est nécessaire quand Apache sert les
+fichiers statiques directement, car ces requêtes n’atteignent pas le backend Go.
 
 Activer le site :
 

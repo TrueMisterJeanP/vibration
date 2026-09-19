@@ -25,7 +25,12 @@ function browserPushSupported() {
 export async function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return null;
   if (!["http:", "https:"].includes(location.protocol)) return null;
-  const registration = await navigator.serviceWorker.register("/sw.js?v=community-1-0-29-v427");
+  const registration = await navigator.serviceWorker.register("/sw.js?v=community-1-0-30-v464", {
+    // "/sw.js" est servi sans en-tête Cache-Control : sans cette option, Safari
+    // iOS peut resservir l'ancien script depuis son cache HTTP heuristique et
+    // la PWA reste bloquée sur le shell précédent.
+    updateViaCache: "none",
+  });
   // Demande immédiatement au navigateur de vérifier le nouveau shell PWA.
   // Sans cela, certains clients conservent plusieurs heures l'ancien app.js,
   // où le bouton de sondage n'est pas encore câblé.

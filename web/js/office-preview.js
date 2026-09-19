@@ -249,7 +249,7 @@ async function rasterizeOfficeElement(element, width, height) {
 
 async function htmlCanvasRenderer() {
   await loadScript(
-    `/vendor/html2canvas/html2canvas.min.js?v=office-faithful-preview-v265`,
+    `/vendor/html2canvas/html2canvas.min.js?v=office-faithful-preview-v266`,
     () => typeof globalThis.html2canvas === "function",
   );
   return globalThis.html2canvas;
@@ -1283,10 +1283,8 @@ export async function renderModernOfficePreview(file, container, options = {}) {
   const rasterOnly = options.rasterOnly === true;
   const translate = options.translate || ((value) => value);
   const locale = options.locale || "fr-FR";
-  const loading = document.createElement("span");
-  loading.className = "file-preview-loading office-preview-loading";
-  loading.textContent = translate("Chargement…");
-  container.append(loading);
+  // Aucun voyant de chargement : « aria-busy » suffit aux lecteurs d'écran, et
+  // l'aperçu est préparé d'avance pour que rien de tout cela ne soit visible.
   container.classList.add("office-file-preview", `office-${kind}-file-preview`);
   container.setAttribute("aria-busy", "true");
   // Les aperçus Office sont uniquement visuels. Dans Safari, le contenu DOCX/PPTX
@@ -1305,11 +1303,22 @@ export async function renderModernOfficePreview(file, container, options = {}) {
     } else {
       preview = await renderPowerPointPreview(file, renderContainer, compact, translate, rasterOnly);
     }
-    if (!rasterOnly) commitOfficePreviewStage(renderContainer, container);
+    if (!rasterOnly) {
+      // La rastérisation se fait dans une scène hors écran : elle peut tourner
+      // pendant que la discussion défile. Seule la pose dans la bulle change une
+      // hauteur, et elle peut donc devoir attendre.
+      if (options.awaitCommitWindow) await options.awaitCommitWindow();
+      if (!container.isConnected) return preview?.blob || null;
+      const commitContext = options.beforeCommit?.();
+      try {
+        commitOfficePreviewStage(renderContainer, container);
+      } finally {
+        options.afterCommit?.(commitContext);
+      }
+    }
     return preview?.blob || null;
   } finally {
     if (renderContainer !== container) renderContainer.remove();
-    loading.remove();
     container.removeAttribute("aria-busy");
   }
 }

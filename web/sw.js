@@ -1,14 +1,14 @@
-const CACHE = "chat-pwa-go-v429";
+const CACHE = "chat-pwa-go-v464";
 const SHELL = [
-  "/", "/index.html", "/login.html", "/link-device.html", "/share.html", "/css/style.css?v=ios-status-bar-v429",
-  "/js/app.js?v=community-1-0-29-v427", "/js/call-negotiation.js?v=community-1-0-29-v427", "/js/api.js?v=community-1-0-29-v427", "/js/crypto.js?v=community-1-0-29-v427", "/js/websocket.js?v=community-1-0-29-v427", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=ios-status-bar-v428",
-  "/js/notifications.js?v=community-1-0-29-v427", "/js/device-vault.js?v=trusted-device-v300", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js?v=community-1-0-29-v427", "/js/ui.js?v=community-1-0-29-v427", "/js/message-links.js?v=message-links-v341", "/js/share.js?v=file-share-immediate-v413", "/js/login.js?v=community-1-0-29-v427", "/js/link-device.js?v=community-1-0-29-v427", "/js/qr-scanner.js?v=qr-scanner-v296", "/manifest.json?v=dock-borderless-v406",
+  "/", "/index.html", "/login.html", "/link-device.html", "/share.html", "/css/style.css?v=sidebar-buttons-flat-v461",
+  "/js/app.js?v=community-1-0-30-v464", "/js/call-negotiation.js?v=community-1-0-30-v464", "/js/api.js?v=community-1-0-30-v464", "/js/crypto.js?v=community-1-0-30-v464", "/js/websocket.js?v=community-1-0-30-v464", "/js/keyed-task-guard.js?v=ios17-pdf-v199", "/js/theme.js?v=unified-chat-surface-v455",
+  "/js/notifications.js?v=community-1-0-30-v464", "/js/device-vault.js?v=trusted-device-v300", "/js/identity-trust.js?v=passphrase-strength-v276", "/js/i18n.js?v=community-1-0-30-v464", "/js/ui.js?v=community-1-0-30-v464", "/js/message-links.js?v=message-links-v341", "/js/share.js?v=file-share-immediate-v413", "/js/login.js?v=community-1-0-30-v464", "/js/link-device.js?v=community-1-0-30-v464", "/js/qr-scanner.js?v=qr-scanner-v296", "/manifest.json?v=dock-borderless-v406",
   "/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2",
   "/vendor/jsqr/jsQR.js?v=qr-scanner-v296",
   "/js/pdf-preview-compat.js?v=ios17-pdf-v199",
   "/js/conversation-cache.js?v=cache-v3",
   "/js/file-preview-image.js?v=ios17-pdf-v199",
-  "/js/office-preview.js?v=office-faithful-preview-v265",
+  "/js/office-preview.js?v=office-faithful-preview-v266",
   "/vendor/pdfjs/pdf.compat.mjs?v=ios17-pdf-v199",
   "/vendor/pdfjs/pdf.min.mjs?v=ios17-pdf-v199",
   "/vendor/pdfjs/pdf.worker.compat.mjs?v=ios17-pdf-v199",
@@ -19,17 +19,19 @@ const SHELL = [
   "/vendor/docx-preview/docx-preview.min.js?v=office-preview-v254",
   "/vendor/exceljs/exceljs.min.js?v=office-preview-v254",
   "/vendor/pptx-preview/pptx-preview.umd.js?v=office-preview-v254",
-  "/vendor/html2canvas/html2canvas.min.js?v=office-faithful-preview-v265",
+  "/vendor/html2canvas/html2canvas.min.js?v=office-faithful-preview-v266",
   "/icons/vibration.svg", "/icons/vibration-mark.svg", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-192.png?v=dock-borderless-v406", "/icons/icon-512.png?v=dock-borderless-v406", "/icons/person.svg", "/icons/group.svg",
 ];
-const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=community-1-0-29-v427", "/js/i18n.js?v=community-1-0-29-v427"];
+const OPTIONAL_SHELL = ["/admin.html", "/js/admin.js?v=community-1-0-30-v464", "/js/i18n.js?v=community-1-0-30-v464"];
 const STARTUP_CACHE_PATHS = new Set(["/", "/index.html", "/css/style.css", "/js/theme.js"]);
 const ADMIN_CACHE_PATHS = new Set(["/admin.html", "/js/admin.js", "/js/api.js", "/js/ui.js", "/js/i18n.js"]);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then(async (cache) => {
-    await cache.addAll(SHELL);
-    await Promise.allSettled(OPTIONAL_SHELL.map((url) => cache.add(url)));
+    // An update can happen while the client IP is rate-limited. In that case
+    // shell requests return 429; one failed preload must not prevent this new
+    // worker from installing and replacing the worker that hid the error page.
+    await Promise.allSettled([...SHELL, ...OPTIONAL_SHELL].map((url) => cache.add(url)));
   }));
   self.skipWaiting();
 });
@@ -42,6 +44,12 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.pathname.startsWith("/api/")) return;
+  if (event.request.mode === "navigate") {
+    // Let the browser perform document navigations itself. In particular,
+    // Firefox must receive the server's 404/429 document directly instead of
+    // displaying a cached application shell whose scripts are all blocked.
+    return;
+  }
   if (STARTUP_CACHE_PATHS.has(url.pathname)) {
     event.respondWith(
       caches.match(event.request).then((cached) => {
@@ -55,6 +63,7 @@ self.addEventListener("fetch", (event) => {
           return cached;
         }
         return fetch(event.request).then((response) => {
+          if (!response.ok) return response;
           const copy = response.clone();
           caches.open(CACHE).then((cache) => cache.put(event.request, copy));
           return response;
@@ -91,6 +100,9 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     fetch(event.request)
       .then((response) => {
+        // Never poison a JavaScript, stylesheet or image cache entry with an
+        // HTML 404/429 response carrying the same request URL.
+        if (!response.ok) return response;
         const copy = response.clone();
         caches.open(CACHE).then((cache) => cache.put(event.request, copy));
         return response;

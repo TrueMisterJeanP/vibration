@@ -6,7 +6,7 @@ Application de messagerie web installable, responsive et chiffrée côté naviga
   <img src="docs/interface-community-v1.0.29.png" alt="Interface fictive de Vibration Community avec profil et discussions anonymisés" width="900">
 </p>
 
-<p align="center"><strong>Vibration Community 1.0.29</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
+<p align="center"><strong>Vibration Community 1.0.30</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
 
 ## Philosophie
 
@@ -103,6 +103,15 @@ L’édition Enterprise reprend toutes les fonctionnalités de Community et ajou
 Le périmètre des appels et groupes fédérés est détaillé dans [Community et Enterprise](COMMUNITY_VS_ENTERPRISE.md). L’offre Enterprise est présentée sur [vibration-shop.appbox.fr](https://vibration-shop.appbox.fr).
 
 ## Nouveautés
+
+### Community 1.0.30
+
+- **Protection des URL inconnues** : après trois chemins erronés, un visiteur non identifié est bloqué pendant dix minutes sur son adresse IP, y compris s’il change de navigateur.
+- **Sessions identifiées toujours accessibles** : une session valide, approuvée et non bannie ne reçoit jamais le 429 de cette protection et ses erreurs de saisie ne sont pas comptabilisées.
+- **Pages d’erreur dédiées** : les réponses 404 et 429 disposent désormais de pages Vibration autonomes, non mises en cache, avec l’attente restante annoncée par `Retry-After`.
+- **Affichage 429 corrigé dans Firefox** : les navigations ne sont plus masquées par un ancien shell PWA et le service worker peut se renouveler même pendant un blocage.
+- **Lecture plus stable pendant les aperçus** : le chargement progressif des images et documents conserve la position du lecteur lorsque les dimensions des messages évoluent.
+- **Cache PWA v464** : le worker, les pages et les modules Community sont renouvelés ensemble pour déployer immédiatement cette version.
 
 ### Community 1.0.29
 

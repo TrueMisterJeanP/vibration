@@ -24,6 +24,16 @@ const source = app.slice(start, end);
 assert.ok(start >= 0 && end > start);
 assert.ok(source.includes("function keepMessagesAnchoredWhileResizing()"));
 assert.ok(source.includes("function restoreMessageBottomAnchorAfterPreviewResize()"));
+assert.ok(source.includes("function prepareReservedFilePreviewCommit(container)"));
+assert.ok(source.includes("function commitReservedFilePreview(container, commit)"));
+assert.match(
+  app,
+  /renderModernOfficePreview\(file, container, \{[\s\S]*beforeCommit: \(\) => prepareReservedFilePreviewCommit\(container\),[\s\S]*afterCommit: restoreReservedFilePreviewCommit/,
+);
+assert.match(
+  app,
+  /commitReservedFilePreview\(container, \(\) => \{[\s\S]*container\.replaceChildren\(image\)/,
+);
 
 function harness({ scrollHeight, clientHeight, scrollTop }) {
   const scroller = { scrollHeight, clientHeight, scrollTop };
@@ -123,7 +133,7 @@ assert.ok(
   loadSource.indexOf("captureMessageScrollAnchor()") < loadSource.indexOf("await renderMessages(messages"),
 );
 
-const anchorStart = app.indexOf("function captureMessageScrollAnchor()");
+const anchorStart = app.indexOf("function captureMessageScrollAnchor(");
 const anchorEnd = app.indexOf("async function scrollMessagesToLatest", anchorStart);
 const anchorSource = app.slice(anchorStart, anchorEnd);
 assert.ok(anchorStart >= 0 && anchorEnd > anchorStart);
@@ -136,6 +146,7 @@ function anchorHarness({ rows, viewportBottom, atBottom }) {
         getBoundingClientRect: () => ({ bottom: viewportBottom }),
       },
       messages: {
+        hasChildNodes: () => rows.length > 0,
         querySelectorAll: () => rows,
       },
     },
@@ -145,11 +156,21 @@ function anchorHarness({ rows, viewportBottom, atBottom }) {
       context.scrolledToLatest = true;
     },
     scrolledToLatest: false,
+    // Le repère est rejoué à la frame suivante pour rattraper ce qui se pose
+    // après l'injection : les rappels en attente sont exécutés à la demande.
+    frames: [],
+    requestAnimationFrame(callback) {
+      context.frames.push(callback);
+    },
   };
   vm.createContext(context);
   vm.runInContext(
     `${anchorSource}
-globalThis.anchorApi = { captureMessageScrollAnchor, restoreMessageScrollAnchor };`,
+globalThis.anchorApi = {
+  captureMessageScrollAnchor,
+  restoreMessageScrollAnchor,
+  commitReservedFilePreview,
+};`,
     context,
   );
   return context;
@@ -186,6 +207,29 @@ assert.equal(restored.scrolledToLatest, false);
 const lost = anchorHarness({ rows: [makeRow("9", 200)], viewportBottom: 900, atBottom: false });
 lost.anchorApi.restoreMessageScrollAnchor(heldAnchor);
 assert.equal(lost.scrolledToLatest, true);
+
+// Une prévisualisation chargée pendant que l'utilisateur remonte la discussion
+// peut changer la géométrie de la liste. Le message visible reste néanmoins à
+// la même place à l'écran au moment précis où le rendu est injecté.
+let previewTop = 400;
+const previewRow = {
+  dataset: { id: "2" },
+  getBoundingClientRect: () => ({ top: previewTop }),
+};
+const previewCommit = anchorHarness({ rows: [previewRow], viewportBottom: 900, atBottom: false });
+const previewContainer = {
+  dataset: { previewLayoutPending: "true" },
+  removeAttribute(name) {
+    if (name === "data-preview-layout-pending") delete this.dataset.previewLayoutPending;
+  },
+};
+const committed = previewCommit.anchorApi.commitReservedFilePreview(previewContainer, () => {
+  previewTop = 250;
+  return "rendered";
+});
+assert.equal(committed, "rendered");
+assert.equal(previewContainer.dataset.previewLayoutPending, undefined);
+assert.equal(previewCommit.elements.messageScroller.scrollTop, -150);
 
 console.log("Message list: bottom stays pinned on resize and refreshes keep their position");
 

@@ -1,4 +1,4 @@
-import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-29-v427";
+import { api, clearSessionToken, getInstanceURL, isDesktopClient, normalizeInstanceURL, setInstanceURL } from "./api.js?v=community-1-0-30-v464";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -19,7 +19,7 @@ import {
   verifyMessagePayload,
   unwrapGroupKey,
   wrapGroupKey,
-} from "./crypto.js?v=community-1-0-29-v427";
+} from "./crypto.js?v=community-1-0-30-v464";
 import {
   forgetRememberedIdentity,
 	forgetTrustedDeviceCredential,
@@ -40,10 +40,10 @@ import {
   showLocalTestNotification,
   syncBrowserSubscription,
   testNotification,
-} from "./notifications.js?v=community-1-0-29-v427";
-import { ChatSocket } from "./websocket.js?v=community-1-0-29-v427";
-import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-29-v427";
-import { locale, t } from "./i18n.js?v=community-1-0-29-v427";
+} from "./notifications.js?v=community-1-0-30-v464";
+import { ChatSocket } from "./websocket.js?v=community-1-0-30-v464";
+import { actionIcon, bindSwipeActions, formatMessageTime, frenchErrorMessage, materialFileIcon, renderMessage, setBusy, toast } from "./ui.js?v=community-1-0-30-v464";
+import { locale, t } from "./i18n.js?v=community-1-0-30-v464";
 import { runKeyedTask } from "./keyed-task-guard.js?v=ios17-pdf-v199";
 import { nonWhiteImageBounds } from "./file-preview-image.js?v=ios17-pdf-v199";
 import {
@@ -56,7 +56,7 @@ import {
   officeFallbackPreviewBlob,
   preloadModernOfficePreview,
   renderModernOfficePreview,
-} from "./office-preview.js?v=office-faithful-preview-v265";
+} from "./office-preview.js?v=office-faithful-preview-v266";
 import {
   CALL_EVENT_TTL_MS,
   callCapabilityMessage,
@@ -71,7 +71,7 @@ import {
   sameCallIdentity,
   shouldOfferAfterAccept,
   shouldOfferInGroup,
-} from "./call-negotiation.js?v=community-1-0-29-v427";
+} from "./call-negotiation.js?v=community-1-0-30-v464";
 import { openConversationCache, sameMessageSnapshots } from "./conversation-cache.js?v=cache-v3";
 import { decodeQRImageData, sessionApprovalTokenFromQR } from "./qr-scanner.js?v=qr-scanner-v296";
 import {
@@ -103,7 +103,7 @@ const GLOBAL_FILES_PAGE_SIZE = 40;
 const GLOBAL_FILES_SCROLL_THRESHOLD_PX = 240;
 const GLOBAL_FILES_BACKGROUND_CONCURRENCY = 2;
 const WHITEBOARD_MESSAGE_TYPE = "whiteboard";
-const APP_BUILD = "community-1-0-29-v427";
+const APP_BUILD = "community-1-0-30-v464";
 const ADMIN_RETURN_HISTORY_KEY = "vibration.admin_return_history";
 const ADMIN_BOOTSTRAP_CACHE_KEY = "vibration.admin_bootstrap";
 const ADMIN_BOOTSTRAP_MAX_AGE_MS = 60 * 1000;
@@ -3037,7 +3037,7 @@ function warmAdminShell() {
   adminShellPreloaded = true;
   for (const [rel, href] of [
     ["prefetch", "/admin.html?from=chat"],
-    ["modulepreload", "/js/admin.js?v=community-1-0-29-v427"],
+    ["modulepreload", "/js/admin.js?v=community-1-0-30-v464"],
   ]) {
     const link = document.createElement("link");
     link.rel = rel;
@@ -3523,10 +3523,9 @@ function conversationMatchesSearch(searchText, query) {
 
 function applyConversationSearch() {
   const query = elements.conversationSearch.value;
-  const candidates = [
-    elements.personalConversationButton,
-    ...elements.conversations.querySelectorAll("[data-conversation-search]"),
-  ];
+  // Le fil personnel reste toujours visible, même quand la recherche ne le vise pas.
+  elements.personalConversationButton.classList.remove("conversation-search-hidden");
+  const candidates = elements.conversations.querySelectorAll("[data-conversation-search]");
   let visibleCount = 0;
   for (const candidate of candidates) {
     const matches = conversationMatchesSearch(candidate.dataset.conversationSearch, query);
@@ -7064,6 +7063,9 @@ async function renderMessages(
   } else {
     for (const [message, preview, key] of previews) scheduleFilePreview(message, preview, key);
   }
+  // La discussion est à l’écran : préparer d’avance tout ce qu’elle contient
+  // encore, pour que remonter le fil ne montre jamais un aperçu qui se fabrique.
+  void renderRemainingFilePreviews(conversationID);
 }
 
 async function decryptMessageContent(message, key) {
@@ -9059,9 +9061,12 @@ async function officeFilePreview(file, data) {
 
 async function renderTemporaryOfficeThumbnail(container) {
   const file = { name: container.dataset.fileName || "", mime: container.dataset.fileMime || "" };
-  if (!modernOfficeKind(file)) return "";
+  const kind = modernOfficeKind(file);
+  if (!kind) return "";
   const blob = await officeFallbackPreviewBlob(file);
   if (!blob || !container.isConnected) return "";
+  await waitForMessageScrollIdle();
+  if (!container.isConnected) return "";
   const url = URL.createObjectURL(blob);
   const image = document.createElement("img");
   image.className = "office-page-preview office-fallback-preview";
@@ -9069,9 +9074,12 @@ async function renderTemporaryOfficeThumbnail(container) {
   image.alt = t("Aperçu");
   image.decoding = "async";
   image.loading = "eager";
-  container.classList.add("office-file-preview", `office-${modernOfficeKind(file)}-file-preview`);
-  container.closest(".message-row")?.classList.add("office-message");
-  container.replaceChildren(image);
+  image.style.aspectRatio = kind === "word" ? "210 / 297" : kind === "powerpoint" ? "16 / 9" : "4 / 3";
+  commitReservedFilePreview(container, () => {
+    container.classList.add("office-file-preview", `office-${kind}-file-preview`);
+    container.closest(".message-row")?.classList.add("office-message");
+    container.replaceChildren(image);
+  });
   return url;
 }
 
@@ -9867,6 +9875,17 @@ async function renderEncryptedFileThumbnail(message, container, key) {
     image.alt = previewMIME.startsWith("video/") ? t("Aperçu de la vidéo") : t("Aperçu");
     image.decoding = "async";
     image.loading = "eager";
+    // Une image injectée avant d’être décodée n’a pas encore sa hauteur : elle
+    // la prendrait après coup, hors du repère posé par l’injection, et la
+    // discussion sauterait une seconde fois. On attend donc le décodage pour
+    // que la bulle atteigne sa taille définitive d’un seul coup.
+    await waitForPreviewImage(image);
+    if (!container.isConnected) return false;
+    // Tout ce qui précède — téléchargement, déchiffrement, décodage — ne touche
+    // pas à l’affichage et se fait donc pendant le geste. Seule l’injection,
+    // qui change la hauteur du message, attend la pause.
+    await waitForMessageScrollIdle();
+    if (!container.isConnected) return false;
     if (previewMIME === "application/pdf" && !container.classList.contains("message-reply-file-thumb")) {
       markPDFFilePreview(container);
       fitPDFPreviewToAspect(container, display.width || image.naturalWidth, display.height || image.naturalHeight);
@@ -9895,10 +9914,14 @@ async function renderEncryptedFileThumbnail(message, container, key) {
         }
       });
       frame.append(image, play);
-      container.replaceChildren(frame);
+      commitReservedFilePreview(container, () => container.replaceChildren(frame));
     } else {
-      container.replaceChildren(image);
-      if (previewMIME.startsWith("image/")) fitImagePreviewToAspect(container, image);
+      // Le calage au ratio fait partie de l’injection : mesuré après le repère,
+      // il déplacerait la lecture une fois la bulle déjà en place.
+      commitReservedFilePreview(container, () => {
+        container.replaceChildren(image);
+        if (previewMIME.startsWith("image/")) fitImagePreviewToAspect(container, image);
+      });
     }
     return true;
   } catch (error) {
@@ -10114,7 +10137,6 @@ function safeFullFilePreviewSource(message, container) {
 }
 
 function renderUnavailableFilePreview(container) {
-  container.classList.add("file-preview-empty");
   const unavailable = document.createElement("div");
   unavailable.className = "file-preview-unavailable";
   const icon = document.createElement("span");
@@ -10129,7 +10151,10 @@ function renderUnavailableFilePreview(container) {
   hint.textContent = t("Le fichier reste disponible au téléchargement.");
   copy.append(label, hint);
   unavailable.append(icon, copy);
-  container.replaceChildren(unavailable);
+  commitReservedFilePreview(container, () => {
+    container.classList.add("file-preview-empty");
+    container.replaceChildren(unavailable);
+  });
 }
 
 function prefetchRecentFullFilePreviews(
@@ -10333,6 +10358,36 @@ function trackedFilePreviewRender(message, container, key) {
     if (state.filePreviewRenders.get(id) === render) state.filePreviewRenders.delete(id);
   });
   return render;
+}
+
+// L’utilisateur ne doit jamais tomber sur un aperçu en cours de préparation :
+// une fois la discussion affichée, les aperçus restants sont produits en fond,
+// du plus proche au plus éloigné de la vue, un à la fois pour ne pas saturer le
+// fil principal. Quand le défilement atteint un message, son aperçu est déjà là.
+const BACKGROUND_PREVIEW_RENDER_DELAY_MS = 40;
+let backgroundFilePreviewPass = 0;
+
+function nearestPendingFilePreviewID() {
+  const viewportTop = elements.messageScroller.getBoundingClientRect().top;
+  let nearest = null;
+  for (const [id, pending] of state.pendingFilePreviews) {
+    if (!pending.container.isConnected) continue;
+    const distance = Math.abs(pending.container.getBoundingClientRect().top - viewportTop);
+    if (!nearest || distance < nearest.distance) nearest = { id, distance };
+  }
+  return nearest?.id || null;
+}
+
+async function renderRemainingFilePreviews(conversationID) {
+  const pass = ++backgroundFilePreviewPass;
+  const stillRunning = () => pass === backgroundFilePreviewPass && sameID(state.current?.id, conversationID);
+  while (stillRunning()) {
+    const id = nearestPendingFilePreviewID();
+    if (!id) return;
+    await ensureRenderedMessageFilePreview(id).catch(() => {});
+    if (!stillRunning()) return;
+    await new Promise((resolve) => window.setTimeout(resolve, BACKGROUND_PREVIEW_RENDER_DELAY_MS));
+  }
 }
 
 // Un message hors écran garde son aperçu différé jusqu’à ce que la discussion
@@ -10558,6 +10613,8 @@ async function renderPDFPreview(file, container) {
     const releasePreviewURL = () => URL.revokeObjectURL(previewURL);
     image.addEventListener("load", releasePreviewURL, { once: true });
     image.addEventListener("error", releasePreviewURL, { once: true });
+    await waitForMessageScrollIdle();
+    if (!container.isConnected) return;
     container.append(image);
     fitPDFPreviewToAspect(container, displayedCanvas.width, displayedCanvas.height);
   } catch (error) {
@@ -10702,15 +10759,25 @@ async function renderFilePreview(message, container, key) {
     const file = await loadDecryptedFile(message, key);
     if (!container.isConnected) return;
     const mime = mimeEssence(file.mime);
-    container.replaceChildren();
+    // Keep the reserved surface or temporary Office thumbnail visible while
+    // the faithful preview renders off-screen. Its atomic commit below will
+    // replace that surface without collapsing and reopening the message.
+    await waitForMessageScrollIdle();
+    if (!container.isConnected) return;
+    if (!modernOfficeKind(file)) commitReservedFilePreview(container, () => container.replaceChildren());
     if (/^image\/(avif|bmp|gif|jpeg|png|webp)$/i.test(mime)) {
       const image = document.createElement("img");
       image.src = file.url;
       image.alt = file.name;
       image.decoding = "async";
       image.loading = "eager";
-      container.append(image);
-      fitImagePreviewToAspect(container, image);
+      await waitForPreviewImage(image);
+      await waitForMessageScrollIdle();
+      if (!container.isConnected) return;
+      commitReservedFilePreview(container, () => {
+        container.replaceChildren(image);
+        fitImagePreviewToAspect(container, image);
+      });
       return;
     }
     if (mime === "image/svg+xml") {
@@ -10718,8 +10785,13 @@ async function renderFilePreview(message, container, key) {
       const svgURL = sanitizedSVGURL(file.data);
       image.src = svgURL;
       image.alt = file.name;
-      container.append(image);
-      fitImagePreviewToAspect(container, image);
+      await waitForPreviewImage(image);
+      await waitForMessageScrollIdle();
+      if (!container.isConnected) return;
+      commitReservedFilePreview(container, () => {
+        container.replaceChildren(image);
+        fitImagePreviewToAspect(container, image);
+      });
       return;
     }
     if (mime.startsWith("video/")) {
@@ -10737,7 +10809,13 @@ async function renderFilePreview(message, container, key) {
     }
     if (modernOfficeKind(file)) {
       container.closest(".message-row")?.classList.add("office-message");
-      await renderModernOfficePreview(file, container, { locale, translate: t });
+      await renderModernOfficePreview(file, container, {
+        locale,
+        translate: t,
+        awaitCommitWindow: waitForMessageScrollIdle,
+        beforeCommit: () => prepareReservedFilePreviewCommit(container),
+        afterCommit: restoreReservedFilePreviewCommit,
+      });
       return;
     }
     if (mime.startsWith("text/") || /(?:json|xml|javascript)$/i.test(mime)) {
@@ -10745,20 +10823,23 @@ async function renderFilePreview(message, container, key) {
       const pre = document.createElement("pre");
       pre.className = "document-page-preview text-document-preview";
       pre.textContent = text;
-      container.append(pre);
+      const parts = [pre];
       if (file.data.length > 12000) {
         const note = document.createElement("small");
         note.textContent = t("Aperçu limité à la première page.");
-        container.append(note);
+        parts.push(note);
       }
+      commitReservedFilePreview(container, () => container.replaceChildren(...parts));
       return;
     }
     renderUnavailableFilePreview(container);
   } catch (error) {
     if (!container.isConnected) return;
     console.error("Chargement de l’aperçu impossible", error);
-    container.textContent = frenchErrorMessage(error, "Impossible de charger l’aperçu.");
-    container.classList.add("file-preview-error");
+    commitReservedFilePreview(container, () => {
+      container.textContent = frenchErrorMessage(error, "Impossible de charger l’aperçu.");
+      container.classList.add("file-preview-error");
+    });
   } finally {
     if (temporaryOfficeThumbnailURL) URL.revokeObjectURL(temporaryOfficeThumbnailURL);
   }
@@ -11326,6 +11407,7 @@ function sendTyping() {
 
 function scrollToBottom() {
   elements.messageScroller.scrollTop = elements.messageScroller.scrollHeight;
+  markProgrammaticMessageScroll();
 }
 
 const MESSAGE_BOTTOM_ANCHOR_TOLERANCE = 24;
@@ -11342,6 +11424,7 @@ function messagesAreScrolledToBottom() {
 // Pendant un redimensionnement, le défilement bouge parce que la mise en page
 // change : ne mémoriser que les défilements voulus par l’utilisateur.
 function trackMessageBottomAnchor() {
+  noteMessageScrollOrigin();
   if (messageResizeInProgress) return;
   messagesAnchoredAtBottom = messagesAreScrolledToBottom();
 }
@@ -11375,9 +11458,16 @@ function restoreMessageBottomAnchorAfterPreviewResize() {
 // reconstruit toute la liste : sans repère, la discussion repart d’une position
 // arbitraire. On note donc le message le plus bas de la vue et sa distance au
 // bas du cadre, pour le remettre exactement là après le rendu.
-function captureMessageScrollAnchor() {
+function captureMessageScrollAnchor(preferredRow = null) {
   if (messagesAreScrolledToBottom()) return { bottom: true };
   const viewportBottom = elements.messageScroller.getBoundingClientRect().bottom;
+  if (preferredRow?.dataset?.id) {
+    return {
+      bottom: false,
+      id: preferredRow.dataset.id,
+      offset: viewportBottom - preferredRow.getBoundingClientRect().top,
+    };
+  }
   let anchor = null;
   for (const row of elements.messages.querySelectorAll(".message-row")) {
     const top = row.getBoundingClientRect().top;
@@ -11385,6 +11475,19 @@ function captureMessageScrollAnchor() {
     if (!anchor || top > anchor.top) anchor = { id: row.dataset.id, top };
   }
   return anchor ? { bottom: false, id: anchor.id, offset: viewportBottom - anchor.top } : { bottom: true };
+}
+
+// La bulle qui reçoit l’aperçu grandit vers le bas : son propre haut ne bouge
+// pas. Tant qu’une bulle plus récente reste visible sous elle, c’est celle-là
+// que le repère retient, et tout va bien. Mais une page très haute — celle-ci
+// occupe toute la vue à elle seule — ne laisse aucune autre candidate : le
+// repère retombe alors sur la bulle en train de grandir, ne mesure aucun
+// déplacement, et ce qu’on lit descend quand même. La bulle qui la suit se
+// déplace, elle, exactement de la hauteur gagnée : c’est le bon repère.
+function reservedFilePreviewAnchorRow(container) {
+  const row = container?.closest?.(".message-row");
+  const below = row?.previousElementSibling;
+  return below?.classList?.contains("message-row") ? below : null;
 }
 
 function restoreMessageScrollAnchor(anchor) {
@@ -11396,6 +11499,113 @@ function restoreMessageScrollAnchor(anchor) {
   const scroller = elements.messageScroller;
   const expectedTop = scroller.getBoundingClientRect().bottom - anchor.offset;
   scroller.scrollTop += row.getBoundingClientRect().top - expectedTop;
+  markProgrammaticMessageScroll();
+}
+
+// Pendant un geste de défilement, c’est le compositeur de Safari qui détient la
+// position : une écriture de scrollTop depuis le fil principal est appliquée le
+// temps d’une image, puis écartée au profit de l’offset du compositeur. Cette
+// image-là est à la fois reculée et incomplètement peinte — le « recul » vu au
+// passage d’une bulle, et, quand le geste s’arrête juste après, la bande restée
+// vide sous le dernier message. Le repère ne sert donc à rien tant que la
+// discussion défile : le geste absorbe lui-même le décalage.
+// Safari émet un évènement de défilement à chaque image tant que l’inertie
+// dure : 120 ms suffisent largement à ne jamais confondre une pause avec le
+// creux entre deux évènements, et l’aperçu se pose deux fois plus tôt qu’avec
+// le seuil précédent.
+const MESSAGE_USER_SCROLL_IDLE_MS = 120;
+const MESSAGE_SCROLL_IDLE_POLL_MS = 50;
+let lastUserMessageScrollAt = 0;
+let programmaticMessageScrollTop = -1;
+
+function markProgrammaticMessageScroll() {
+  programmaticMessageScrollTop = elements.messageScroller.scrollTop;
+}
+
+// Nos propres écritures déclenchent aussi l’évènement « scroll » : les prendre
+// pour un geste ferait taire le repère sur toute la suite du rendu.
+function noteMessageScrollOrigin() {
+  const ours = programmaticMessageScrollTop >= 0
+    && Math.abs(elements.messageScroller.scrollTop - programmaticMessageScrollTop) <= 1;
+  programmaticMessageScrollTop = -1;
+  if (!ours) lastUserMessageScrollAt = Date.now();
+}
+
+function userIsScrollingMessages() {
+  return Date.now() - lastUserMessageScrollAt < MESSAGE_USER_SCROLL_IDLE_MS;
+}
+
+// Corriger le défilement pendant un geste est exclu — Safari écarte l’écriture
+// et rend une image reculée et mal peinte. Mais renoncer à corriger laisse
+// passer le décalage d’un aperçu qui s’injecte au même instant. La seule issue
+// est de ne rien déplacer du tout tant que la discussion défile : l’aperçu est
+// hors écran quand il se prépare, rien ne presse pour l’injecter. Il attend
+// donc la pause, où le repère fonctionne à nouveau.
+function waitForMessageScrollIdle() {
+  if (!userIsScrollingMessages()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const check = () => {
+      if (!userIsScrollingMessages()) {
+        resolve();
+        return;
+      }
+      window.setTimeout(check, MESSAGE_SCROLL_IDLE_POLL_MS);
+    };
+    window.setTimeout(check, MESSAGE_SCROLL_IDLE_POLL_MS);
+  });
+}
+
+// Un message change de hauteur à chaque injection d’aperçu, pas seulement à la
+// première : le cadre réservé est libéré, puis la miniature provisoire cède la
+// place au rendu fidèle, dont la page n’a pas la même hauteur. Le repère est
+// donc posé pour toute injection, sans quoi celles qui suivent font sauter la
+// lecture quand le message est au-dessus de la vue.
+function prepareReservedFilePreviewCommit(container) {
+  const anchor = elements.messages.hasChildNodes()
+    ? captureMessageScrollAnchor(reservedFilePreviewAnchorRow(container))
+    : null;
+  if (container.dataset.previewLayoutPending === "true") {
+    container.removeAttribute("data-preview-layout-pending");
+  }
+  return anchor;
+}
+
+// Une injection ne fige pas toujours la hauteur du message d’un seul coup :
+// le cadre de chargement est retiré juste après, une image finit de se poser,
+// un aperçu se remesure. Ce reste arrive une image plus tard, hors du repère,
+// et la bulle monte avant de redescendre. On rejoue donc le repère à la frame
+// suivante — jamais depuis un ResizeObserver, dont les écritures de défilement
+// laissent WebKit avec des tuiles jamais repeintes.
+function restoreReservedFilePreviewCommit(anchor) {
+  if (!anchor || userIsScrollingMessages()) return;
+  restoreMessageScrollAnchor(anchor);
+  const scroller = elements.messageScroller;
+  const settled = scroller.scrollTop;
+  requestAnimationFrame(() => {
+    // Un défilement de l’utilisateur prime sur le repère, et une liste
+    // reconstruite entre-temps n’a plus le message qui servait de repère.
+    if (userIsScrollingMessages()) return;
+    if (Math.abs(scroller.scrollTop - settled) > 1) return;
+    if (!anchor.bottom && !renderedMessageRow(anchor.id)) return;
+    restoreMessageScrollAnchor(anchor);
+  });
+}
+
+// Le fondu est porté par les enfants fraîchement injectés : la classe posée sur
+// le cadre les fait apparaître en douceur, sans que le cadre lui-même change de
+// taille ni de position.
+function revealCommittedFilePreview(container) {
+  if (container.firstElementChild) container.classList?.add("file-preview-appearing");
+}
+
+function commitReservedFilePreview(container, commit) {
+  const anchor = prepareReservedFilePreviewCommit(container);
+  try {
+    return commit();
+  } finally {
+    revealCommittedFilePreview(container);
+    restoreReservedFilePreviewCommit(anchor);
+  }
 }
 
 async function scrollMessagesToLatest(conversationID) {

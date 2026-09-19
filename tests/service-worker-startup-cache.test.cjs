@@ -8,17 +8,29 @@ const fetchHandler = worker.slice(
   worker.indexOf('self.addEventListener("fetch"'),
   worker.indexOf('self.addEventListener("push"'),
 );
+const navigationBranch = fetchHandler.slice(
+  fetchHandler.indexOf('if (event.request.mode === "navigate")'),
+  fetchHandler.indexOf("if (STARTUP_CACHE_PATHS.has"),
+);
 const startupBranch = fetchHandler.slice(
   fetchHandler.indexOf("if (STARTUP_CACHE_PATHS.has"),
   fetchHandler.indexOf("event.respondWith(\n    fetch(event.request)"),
 );
+const generalBranch = fetchHandler.slice(
+  fetchHandler.indexOf("event.respondWith(\n    fetch(event.request)"),
+);
 
 assert.match(worker, /const STARTUP_CACHE_PATHS = new Set\(\["\/", "\/index\.html", "\/css\/style\.css", "\/js\/theme\.js"\]\)/);
+assert.doesNotMatch(navigationBranch, /respondWith|fetch\(event\.request\)|caches\.match/);
+assert.match(navigationBranch, /if \(event\.request\.mode === "navigate"\) \{[\s\S]*return;/);
+assert.match(worker, /Promise\.allSettled\(\[\.\.\.SHELL, \.\.\.OPTIONAL_SHELL\]/);
 assert.ok(
   startupBranch.indexOf("caches.match(event.request)") < startupBranch.indexOf("fetch(event.request)"),
-  "l’écran de démarrage doit être lu dans Cache Storage avant toute requête réseau",
+  "les ressources de démarrage doivent rester disponibles immédiatement hors ligne",
 );
 assert.match(startupBranch, /if \(cached\) \{[\s\S]*fetch\(event\.request\)[\s\S]*return cached;/);
+assert.match(startupBranch, /if \(!response\.ok\) return response;/);
+assert.match(generalBranch, /if \(!response\.ok\) return response;[\s\S]*cache\.put\(event\.request, copy\)/);
 assert.match(worker, /"\/vendor\/hash-wasm\/argon2\.umd\.min\.js\?v=identity-v2"/);
 assert.equal(manifest.background_color, "#1b5260");
 
@@ -50,4 +62,4 @@ assert.ok(
 const cacheVersion = worker.match(/const CACHE = "chat-pwa-go-v(\d+)"/)?.[1];
 assert.ok(Number(cacheVersion) >= 313, "the cache generation must be bumped when the shell changes");
 
-console.log("Service Worker startup cache: green splash shell is served locally before the network");
+console.log("Service Worker cache: browser navigations expose HTTP errors and failed assets never poison the shell");

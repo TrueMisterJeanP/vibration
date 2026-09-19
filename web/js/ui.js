@@ -1,4 +1,4 @@
-import { locale, localizeDocument, t } from "./i18n.js?v=community-1-0-29-v427";
+import { locale, localizeDocument, t } from "./i18n.js?v=community-1-0-30-v464";
 import { messageLinkTokens } from "./message-links.js?v=message-links-v341";
 
 localizeDocument();
@@ -137,6 +137,41 @@ export function appendMessageLinks(container, value) {
     sms.setAttribute("aria-label", sms.title);
     sms.addEventListener("click", openMessageLinkWithSystemApplication);
     container.append(sms);
+  }
+}
+
+function filePreviewLayout(file) {
+  const mime = String(file?.mime || "").split(";")[0].trim().toLowerCase();
+  const extension = String(file?.name || "").split(".").pop()?.toLowerCase() || "";
+  if (
+    mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    || extension === "docx"
+  ) return "word";
+  if (
+    mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    || extension === "xlsx"
+  ) return "excel";
+  if (
+    mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    || extension === "pptx"
+  ) return "powerpoint";
+  if (mime === "application/pdf" || extension === "pdf") return "pdf";
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("video/")) return "video";
+  if (mime.startsWith("audio/")) return "audio";
+  return "generic";
+}
+
+function reserveFilePreviewLayout(row, preview, file) {
+  const layout = filePreviewLayout(file);
+  preview.dataset.previewLayout = layout;
+  if (["word", "excel", "powerpoint"].includes(layout)) {
+    preview.dataset.previewLayoutPending = "true";
+    row.classList.add("office-message");
+    preview.classList.add("office-file-preview", `office-${layout}-file-preview`);
+  } else if (layout === "pdf") {
+    row.classList.add("pdf-message");
+    preview.classList.add("pdf-file-preview");
   }
 }
 
@@ -305,9 +340,13 @@ export function renderMessage(
     title.append(name, actions);
     const preview = document.createElement("div");
     preview.className = "file-preview";
-    preview.textContent = "Chargement de l’aperçu…";
+    // Le cadre réservé reste muet : l'aperçu est préparé avant que le fil
+    // n'arrive jusqu'à lui, et un texte de chargement ne ferait qu'exposer une
+    // préparation que l'utilisateur n'a pas à voir.
+    preview.setAttribute("aria-busy", "true");
     preview.dataset.fileMime = clear?.mime || "";
     preview.dataset.fileName = clear?.name || "";
+    reserveFilePreviewLayout(row, preview, clear);
     attachment.append(title, preview);
     article.append(attachment);
     filePreview = preview;

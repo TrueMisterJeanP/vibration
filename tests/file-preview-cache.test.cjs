@@ -48,7 +48,9 @@ assert.match(
   "l’invalidation complète doit également nettoyer les ressources visuelles",
 );
 
-assert.match(ui, /preview\.textContent = "Chargement de l’aperçu…"/);
+// Le cadre réservé reste muet : aucun message de chargement ne doit être vu.
+assert.doesNotMatch(ui, /preview\.textContent = "Chargement/);
+assert.match(ui, /preview\.setAttribute\("aria-busy", "true"\);/);
 assert.match(office, /export async function preloadModernOfficePreview\(file\)/);
 assert.match(loadMessages, /prefetchRecentFileThumbnails\(decrypted\)[\s\S]*prewarmFilePreviewRenderers\(decrypted\);\s*prefetchRecentFullFilePreviews\(decrypted\)/);
 assert.match(source, /rootMargin: "1200px 0px"/);

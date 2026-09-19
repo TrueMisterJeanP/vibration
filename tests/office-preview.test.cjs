@@ -34,6 +34,8 @@ assert.match(source, /page\.style\.maxHeight = `\$\{height\}px`/);
 assert.match(source, /if \(!rasterOnly\) \{[\s\S]*fitOfficeDOMPreview\(frame, bodyContainer, naturalWidth, naturalHeight, container\)/);
 assert.match(source, /function createOfficePreviewStage\(container, kind\)/);
 assert.match(source, /commitOfficePreviewStage\(renderContainer, container\)/);
+assert.match(source, /const commitContext = options\.beforeCommit\?\.\(\)/);
+assert.match(source, /options\.afterCommit\?\.\(commitContext\)/);
 assert.match(source, /renderSingleSlide\(0\)/);
 assert.match(source, /slideCount = Number\(previewer\.slideCount\)/);
 assert.match(source, /officeDataURLPreview\(presentation\?\.thumbnail, 960, slideHeight\)/);

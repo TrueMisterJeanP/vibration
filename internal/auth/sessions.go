@@ -68,6 +68,31 @@ func SessionID(r *http.Request) string {
 	return value
 }
 
+// HasActiveSession reports whether the request carries a session that is
+// currently usable for an identified user. It is intentionally side-effect
+// free: callers such as abuse guards can exempt authenticated users without
+// updating session activity or writing an authentication error response.
+func (h *Handler) HasActiveSession(r *http.Request) bool {
+	if h == nil || h.DB == nil || r == nil {
+		return false
+	}
+	sessionID, ok := requestSessionID(r)
+	if !ok {
+		return false
+	}
+	var expires string
+	var approvedAt sql.NullString
+	var isBanned bool
+	err := h.DB.QueryRow(`SELECT s.expires_at,s.approved_at,u.is_banned
+		FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=?`, sessionID).
+		Scan(&expires, &approvedAt, &isBanned)
+	if err != nil || !approvedAt.Valid || isBanned {
+		return false
+	}
+	expiry, err := time.Parse(time.RFC3339Nano, expires)
+	return err == nil && time.Now().Before(expiry)
+}
+
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request, userID int64, persistent bool, input authRequest, trust sessionTrust) (sessionCreation, error) {
 	id, err := randomSessionToken(32)
 	if err != nil {
