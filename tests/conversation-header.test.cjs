@@ -103,8 +103,8 @@ assert.match(
 );
 assert.match(
   css,
-  /\.conversation-item\.active,[\s\S]*\.conversation-item\.active:hover\s*\{[^}]*background:\s*var\(--panel-2\);[^}]*box-shadow:/,
-  "dark selected conversations must use the contrasted secondary panel",
+  /\.conversation-item\.active,[\s\S]*\.conversation-item\.active:hover\s*\{[^}]*background:\s*var\(--sidebar-active\);[^}]*box-shadow:/,
+  "selected conversations must use the contrasted surface of the white sidebar",
 );
 assert.match(
   css,
@@ -113,17 +113,22 @@ assert.match(
 );
 assert.match(css, /\.brand-logo-button\.has-conversation-avatar\.personal-note-avatar\s*\{/);
 assert.match(css, /\.personal-note-avatar svg\s*\{/);
-assert.match(css, /--avatar-bg: #1b5260;[\s\S]*--avatar-fg: #a9fff4;/);
+assert.match(css, /--avatar-bg: #3d816b;[\s\S]*--avatar-fg: #ffffff;/);
 assert.match(css, /\.brand-logo-button\.has-conversation-avatar\s*\{[^}]*background: var\(--avatar-bg\);[^}]*color: var\(--avatar-fg\);/);
 assert.match(css, /\.avatar\s*\{[^}]*background: var\(--avatar-bg\);[^}]*color: var\(--avatar-fg\);/);
+assert.match(css, /\.message-avatar\s*\{[^}]*background: var\(--avatar-bg\);[^}]*color: var\(--avatar-fg\);/);
+assert.match(css, /\.calendar-day-event-avatar, \.global-file-conversation-avatar\s*\{[^}]*background: var\(--avatar-bg\);[^}]*color: var\(--avatar-fg\);/);
+assert.match(css, /\.carnet-avatar\s*\{[^}]*background: var\(--avatar-bg\);[^}]*color: var\(--avatar-fg\);/);
 assert.match(app, /elements\.chatAvatar\.classList\.toggle\("group-conversation-avatar", conversation\.type === "group"\)/);
 assert.match(css, /\.avatar\.group-conversation-avatar,[\s\S]*border: 2px solid var\(--group-action\);/);
 assert.match(css, /\.profile-avatar-preview\s*\{[^}]*background: var\(--avatar-bg\);/);
 assert.match(css, /\.group-avatar-preview-icon\s*\{[^}]*stroke: currentColor;/);
 assert.match(css, /\.call-banner-status\s*\{[^}]*display: inline-flex;[^}]*align-items: center;[^}]*justify-content: flex-start;[^}]*gap: \.45rem;/);
 assert.match(app, /function renderGroupAvatarPreview\(container, avatar\)/);
-assert.match(css, /:root\[data-theme="light"\]\s*\{ --avatar-bg: #dfe5e8; --avatar-fg: #075e57; \}/);
+assert.match(css, /:root\[data-theme="light"\]\s*\{ --avatar-bg: #3d816b; --avatar-fg: #ffffff; \}/);
+assert.doesNotMatch(css, /#conversation-list \.conversation-row:nth-child\(4n/);
 assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.chat-conversation-avatar \{ display: none; \}/);
+assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.sidebar-header\s*\{[^}]*height:\s*calc\(80px \+ env\(safe-area-inset-top, 0px\)\);[^}]*min-height:\s*calc\(80px \+ env\(safe-area-inset-top, 0px\)\);/);
 assert.match(css, /\.composer-box:focus-within\s*\{[^}]*border-color:\s*var\(--line\);[^}]*box-shadow:\s*none;/);
 assert.match(css, /#message-input:focus,[\s\S]*#message-input:focus-visible\s*\{[^}]*outline:\s*none;[^}]*box-shadow:\s*none;/);
 

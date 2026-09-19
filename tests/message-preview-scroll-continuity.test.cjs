@@ -31,11 +31,17 @@ assert.match(css, /\.message-reply-file-thumb \{[^}]*position: relative/);
 // jamais repeintes quand un aperçu changeait de taille pendant le défilement.
 assert.doesNotMatch(css, /\.file-preview \{[^}]*contain:/);
 
-// Le style public restauré ne rajoute aucun effet visuel à l'injection.
-assert.doesNotMatch(css, /@keyframes file-preview-appear/);
-assert.doesNotMatch(css, /\.file-preview-appearing/);
-// Toute injection reste atomique et restaure son repère de lecture.
+// L'injection étant atomique, le fondu est ce qui adoucit l'apparition. Il ne
+// doit porter que sur l'opacité : toute propriété de mise en page rejouerait le
+// décalage de défilement supprimé.
+assert.match(css, /@keyframes file-preview-appear \{ from \{ opacity: 0; \} to \{ opacity: 1; \} \}/);
+assert.match(css, /\.file-preview-appearing > \* \{ animation: file-preview-appear [^}]*\}/);
+assert.match(css, /prefers-reduced-motion: reduce\) \{ \.file-preview-appearing > \* \{ animation: none; \}/);
+const appearRule = css.match(/\.file-preview-appearing > \* \{([^}]*)\}/)[1];
+assert.doesNotMatch(appearRule, /height|width|margin|padding|transform|top|bottom/);
+// La classe est posée par l'injection ancrée elle-même, pour tous les aperçus.
 assert.match(app, /function commitReservedFilePreview\(container, commit\) \{[\s\S]*revealCommittedFilePreview\(container\);\s*restoreReservedFilePreviewCommit\(anchor\);/);
+assert.match(app, /function revealCommittedFilePreview\(container\) \{\s*if \(container\.firstElementChild\) container\.classList\?\.add\("file-preview-appearing"\);/);
 
 // Rien ne doit bouger tant que la discussion défile : l'aperçu attend la pause
 // au lieu de s'injecter sous les doigts, faute de quoi son décalage ne pourrait
