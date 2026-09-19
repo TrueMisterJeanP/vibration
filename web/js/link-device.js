@@ -1,6 +1,6 @@
-import { api } from "./api.js?v=community-1-0-32-v466";
-import { locale, t } from "./i18n.js?v=community-1-0-32-v466";
-import { frenchErrorMessage, setBusy } from "./ui.js?v=community-1-0-32-v466";
+import { api } from "./api.js?v=community-1-0-34-v467";
+import { locale, t } from "./i18n.js?v=community-1-0-34-v467";
+import { frenchErrorMessage, setBusy } from "./ui.js?v=community-1-0-34-v467";
 
 const introduction = document.querySelector("#link-device-introduction");
 const summary = document.querySelector("#link-device-summary");

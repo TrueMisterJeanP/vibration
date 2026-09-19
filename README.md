@@ -6,7 +6,7 @@ Application de messagerie web installable, responsive et chiffrée côté naviga
   <img src="docs/interface-community-v1.0.29.png" alt="Interface fictive de Vibration Community avec profil et discussions anonymisés" width="900">
 </p>
 
-<p align="center"><strong>Vibration Community 1.0.33</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
+<p align="center"><strong>Vibration Community 1.0.34</strong> · Messagerie chiffrée auto-hébergeable · Web, mobile et PWA</p>
 
 ## Philosophie
 
@@ -104,6 +104,12 @@ Le périmètre des appels et groupes fédérés est détaillé dans [Community e
 
 ## Nouveautés
 
+### Community 1.0.34
+
+- **Identifiants d’édition séparés** : les interfaces Enterprise et Community utilisent désormais chacune leur propre identifiant de build et de cache.
+- **Protection automatique de l’export** : la génération Community échoue si un identifiant Community fuit dans la source Enterprise ou si l’identifiant Enterprise subsiste dans l’export.
+- **Version 1.0.31 retirée** : son thème ne correspondait pas au thème de référence ; les versions 1.0.32 et suivantes contiennent le style corrigé.
+
 ### Community 1.0.33
 
 - **Pages 404 et 429 multilingues** : les erreurs autonomes sont maintenant disponibles en français, anglais, espagnol, italien, portugais et allemand.
@@ -118,7 +124,7 @@ Le périmètre des appels et groupes fédérés est détaillé dans [Community e
 
 ### Community 1.0.31
 
-- **Dernier style public restauré** : l’interface retrouve exactement les couleurs, surfaces, boutons et espacements présents juste avant la version 1.0.30.
+- **Version retirée** : cette version contenait un thème incorrect. Elle ne doit pas être utilisée ; installer la version 1.0.34 ou une version ultérieure.
 - **Correctifs 404 et 429 conservés** : la limitation des URL erronées, son partage entre navigateurs et l’affichage fiable du message 429 dans Firefox restent actifs.
 - **Aperçus WebKit stabilisés sans changement visuel** : seuls les ajustements de mise en page indispensables aux images et documents ont été conservés.
 - **Cache PWA v465** : le worker, les pages et les modules sont renouvelés ensemble afin de remplacer immédiatement le style incorrect mis en cache.

@@ -25,7 +25,7 @@ function browserPushSupported() {
 export async function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return null;
   if (!["http:", "https:"].includes(location.protocol)) return null;
-  const registration = await navigator.serviceWorker.register("/sw.js?v=community-1-0-32-v466", {
+  const registration = await navigator.serviceWorker.register("/sw.js?v=community-1-0-34-v467", {
     // "/sw.js" est servi sans en-tête Cache-Control : sans cette option, Safari
     // iOS peut resservir l'ancien script depuis son cache HTTP heuristique et
     // la PWA reste bloquée sur le shell précédent.
