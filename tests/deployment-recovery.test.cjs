@@ -21,7 +21,7 @@ assert.match(refreshAll, /request\("\/api\/contacts"\)/);
 assert.match(refreshAll, /request\("\/api\/conversations"\)/);
 const workerCacheVersion = Number(worker.match(/chat-pwa-go-v(\d+)/)?.[1]);
 assert.ok(workerCacheVersion >= 412, "le cache applicatif doit inclure les traductions du contrôle d’accès IP");
-assert.match(worker, /\/js\/api\.js\?v=community-1-0-30-v464/);
+assert.match(worker, /\/js\/api\.js\?v=community-1-0-31-v465/);
 
 (async () => {
   const originals = new Map(["window", "location", "localStorage", "fetch"].map((name) => [

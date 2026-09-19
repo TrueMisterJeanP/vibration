@@ -96,19 +96,19 @@
     document.documentElement.style.colorScheme = resolved;
     const themeColor = document.querySelector('meta[name="theme-color"]');
     if (themeColor) {
+      const startupColor = resolved === "light" ? "#dfe5e8" : "#1b5260";
       // Pages that fill the screen with their own surface must hand the iOS
       // status bar that same colour instead of the teal accent: the chat shell
       // ends at its header, the administration panel at the page background.
       const page = document.documentElement.classList;
       const restingColor = page.contains("chat-app-page")
-        ? (resolved === "light" ? "#ffffff" : "#071b24")
+        ? (resolved === "light" ? "#fefefe" : "#0d2631")
         : page.contains("admin-app-page")
           ? (resolved === "light" ? "#eef1f3" : "#071b24")
           : (resolved === "light" ? "#c9e7e4" : "#0f766e");
-      // iOS echantillonne "theme-color" a l'ouverture de la PWA et ignore les
-      // mises a jour ulterieures du meta : la barre d'etat gardait donc la
-      // couleur du splash. On donne la couleur de repos des le depart.
-      themeColor.content = restingColor;
+      themeColor.content = document.documentElement.classList.contains("ios-pwa-starting")
+        ? startupColor
+        : restingColor;
     }
   }
 

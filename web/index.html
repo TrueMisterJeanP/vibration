@@ -4,26 +4,26 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="theme-color" content="#071b24">
-  <meta name="vibration-build" content="community-1-0-30-v464">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0d2631">
+  <meta name="vibration-build" content="community-1-0-31-v465">
   <style>
-    :root { --avatar-bg: #3d816b; --avatar-fg: #ffffff; --startup-surface: #0d2631; background-color: #0d2631; }
-    html[data-theme="light"] { --avatar-bg: #3d816b; --avatar-fg: #ffffff; --startup-surface: #f8f9fa; background-color: #f8f9fa; }
-    html.ios-pwa-starting, html.ios-pwa-starting body { background: var(--startup-surface); }
+    :root { --avatar-bg: #1b5260; --avatar-fg: #a9fff4; background-color: #0d2631; }
+    html[data-theme="light"] { --avatar-bg: #dfe5e8; --avatar-fg: #075e57; background-color: #fefefe; }
+    html.ios-pwa-starting, html.ios-pwa-starting body { background: var(--avatar-bg); }
     #startup-splash { display: none; }
-    html.ios-pwa-starting #startup-splash:not([hidden]) { position: fixed; z-index: 100; top: 0; left: 0; display: block; width: var(--startup-screen-width, 100vw); min-width: 100vw; height: var(--startup-screen-height, 100vh); min-height: 100vh; overflow: hidden; background: var(--startup-surface); }
+    html.ios-pwa-starting #startup-splash:not([hidden]) { position: fixed; z-index: 100; top: 0; left: 0; display: block; width: var(--startup-screen-width, 100vw); min-width: 100vw; height: var(--startup-screen-height, 100vh); min-height: 100vh; overflow: hidden; background: var(--avatar-bg); }
     #startup-splash img { position: absolute; top: var(--startup-symbol-y, 0); left: var(--startup-symbol-x, calc((100vw - 120px) / 2)); display: block; width: 120px; height: 120px; visibility: hidden; animation: none; transition: none; }
     html[data-theme="dark"] #startup-splash img { filter: brightness(0) invert(1); }
     html.ios-pwa-splash-positioned #startup-splash img { visibility: visible; }
   </style>
-  <script src="/js/theme.js?v=unified-chat-surface-v455"></script>
+  <script src="/js/theme.js?v=community-1-0-31-v465"></script>
   <title>Vibration</title>
   <link rel="manifest" href="/manifest.json?v=dock-borderless-v406">
   <link rel="icon" type="image/svg+xml" href="/icons/vibration.svg">
   <link rel="alternate icon" href="/icons/icon-192.png?v=dock-borderless-v406">
   <link rel="apple-touch-icon" href="/icons/icon-192.png?v=dock-borderless-v406">
-  <link rel="stylesheet" href="/css/style.css?v=sidebar-buttons-flat-v461">
+  <link rel="stylesheet" href="/css/style.css?v=community-1-0-31-v465">
 </head>
 <body>
   <div class="desktop-titlebar-drag-region" data-tauri-drag-region aria-hidden="true" data-title="Vibration"></div>
@@ -623,6 +623,6 @@
   <div id="toasts" aria-live="polite"></div>
   <script src="/vendor/hash-wasm/argon2.umd.min.js?v=identity-v2"></script>
   <script src="/vendor/jsqr/jsQR.js?v=qr-scanner-v296"></script>
-  <script type="module" src="/js/app.js?v=community-1-0-30-v464"></script>
+  <script type="module" src="/js/app.js?v=community-1-0-31-v465"></script>
 </body>
 </html>

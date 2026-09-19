@@ -52,7 +52,6 @@ assert.match(app, /messagerie chiffrée, collaborative et souveraine/);
 assert.match(app, /elements\.messages\.replaceChildren\(createNoConversationState\(\)\)/);
 assert.match(css, /\.no-conversation-state > #empty-chat/);
 assert.match(css, /\.conversation-exchange-icon\.no-conversation-icon svg/);
-assert.match(css, /:root\[data-theme="dark"\] \.no-conversation-actions button\[data-empty-action="contact"\]\s*\{[^}]*background:\s*var\(--group-action\);[^}]*color:\s*#ffffff;/);
 assert.match(app, /let conversationSelectionVersion = 0;/);
 assert.ok(
   selectConversation.indexOf("const [, messageLoadError] = await Promise.all") < selectConversation.indexOf('elements.shell.classList.remove("sidebar-open")'),

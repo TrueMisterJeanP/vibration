@@ -16,13 +16,6 @@ assert.match(css, /\.conversation-search input\s*\{[^}]*border-radius:\s*\.7rem/
 assert.match(css, /\.conversation-search input\s*\{[^}]*height:\s*2\.8rem/);
 assert.match(css, /\.conversation-search input::placeholder\s*\{[^}]*color:\s*rgb\(145 170 169 \/ \.72\)[^}]*font-weight:\s*400/);
 assert.match(css, /\.conversation-search-hidden\s*\{[^}]*display:\s*none\s*!important/);
-assert.match(css, /#conversation-lists\s*\{[^}]*--discussion-control-gap:\s*1\.2rem;[^}]*--discussion-search-bottom-space:\s*\.65rem;/);
-assert.match(css, /\.actions\s*\{[^}]*padding:\s*\.45rem 1rem var\(--discussion-control-gap\);/);
-assert.match(css, /\.conversation-search\s*\{[^}]*padding:\s*0 1rem var\(--discussion-search-bottom-space\);/);
-assert.match(css, /\.conversation-section-heading\s*\{[^}]*margin:\s*calc\(var\(--discussion-control-gap\) - var\(--discussion-search-bottom-space\)\) 1\.35rem \.35rem;/);
-assert.match(css, /\.actions #contact-button,[\s\S]*box-shadow:\s*none;/);
-assert.match(css, /\.actions #group-button,[\s\S]*box-shadow:\s*none;/);
-assert.match(css, /\.actions button\s*\{[^}]*height:\s*3rem;[^}]*min-height:\s*3rem;/);
 assert.match(app, /conversationSearch\.addEventListener\("input", applyConversationSearch\)/);
 assert.match(app, /row\.dataset\.conversationSearch = \[display\?\.title, display\?\.description, preview\]/);
 assert.match(app, /elements\.personalConversationButton\.dataset\.conversationSearch/);

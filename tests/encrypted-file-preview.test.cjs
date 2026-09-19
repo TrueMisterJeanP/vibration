@@ -25,7 +25,7 @@ assert.match(app, /message\.file\.has_preview !== true[\s\S]*renderTemporaryOffi
 assert.match(app, /if \(!modernOfficeKind\(file\)\) commitReservedFilePreview\(container, \(\) => container\.replaceChildren\(\)\);/);
 assert.match(app, /encrypted_preview_data: preview\?\.data \|\| ""/);
 assert.match(app, /preview_iv: preview\?\.iv \|\| ""/);
-assert.match(app, /from "\.\/crypto\.js\?v=community-1-0-30-v464"/);
+assert.match(app, /from "\.\/crypto\.js\?v=community-1-0-31-v465"/);
 assert.match(app, /async function encryptFileBytes\(key, bytes\)/);
 assert.match(app, /encryptFileBytes\(key, data\)/);
 
